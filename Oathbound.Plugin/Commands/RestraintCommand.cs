@@ -934,8 +934,10 @@ public sealed class RestraintCommand
     /// fallback. The id is a stable hash of the Sub's own scan and is resolved first on the Sub's side; a
     /// label built from the Owner's imported copy of the catalog stops matching once that copy is stale, and
     /// can match several entries of the same animation - both refused as "missing, stale, or ambiguous".
+    /// A rule with neither (an unfinished editor draft) yields an empty value, which the Sub refuses the
+    /// same way, rather than throwing mid-draw.
     private static string ReadableAnimation(RestraintRuleAssignment rule) =>
-        (string.IsNullOrWhiteSpace(rule.AnimationId) ? rule.AnimationLabel : rule.AnimationId)!.Replace(',', '·');
+        (string.IsNullOrWhiteSpace(rule.AnimationId) ? rule.AnimationLabel : rule.AnimationId)?.Replace(',', '·') ?? "";
 
     private static string ReadableCustomizePreset(RestraintRuleAssignment rule) =>
         (string.IsNullOrWhiteSpace(rule.CustomizePresetLabel) ? rule.CustomizePresetId : rule.CustomizePresetLabel)!.Replace(',', '·');

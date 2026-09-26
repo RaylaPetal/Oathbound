@@ -1053,8 +1053,10 @@ public sealed class ModuleWindow : Window, IDisposable
         var duplicateDeviceName = devices.Any(d => d.Id != editingDeviceId &&
             string.Equals(d.Name, newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase))
             || config.RestraintMapping.ConfiguredMods.Any(m => string.Equals(m.Alias.Trim(), newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase));
-        var prospectiveRules = ToRules(newDeviceRuleEdit);
-        var safeDeviceCommand = CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), prospectiveRules));
+        // Only measured once the draft is complete - an unfinished rule (e.g. a mod forced pose with no
+        // animation picked yet) has nothing meaningful to measure, and Save is disabled for it anyway.
+        var safeDeviceCommand = !hasAnyRule || !boundAnimationsConfigured
+            || CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), ToRules(newDeviceRuleEdit)));
         if (duplicateDeviceName)
             IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias.");
         if (!safeDeviceCommand)
@@ -1972,9 +1974,14 @@ public sealed class ModuleWindow : Window, IDisposable
     {
         target.ForcedPose = source.ForcedPose;
         target.PoseIndex = source.PoseIndex;
+        target.ForcedPoseIsMod = source.ForcedPoseIsMod;
+        target.ForcedPoseAnimationId = source.ForcedPoseAnimationId;
         target.WalkOnly = source.WalkOnly;
         target.ActionBlock = source.ActionBlock;
         target.Gagged = source.Gagged;
+        target.GagAnimationId = source.GagAnimationId;
+        target.GagCustomizePresetId = source.GagCustomizePresetId;
+        target.GagCustomizePresetLabel = source.GagCustomizePresetLabel;
         target.ArmsCuffed = source.ArmsCuffed;
         target.ArmsCuffedAnimationId = source.ArmsCuffedAnimationId;
         target.LegsCuffed = source.LegsCuffed;
