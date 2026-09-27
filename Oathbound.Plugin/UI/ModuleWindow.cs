@@ -170,6 +170,7 @@ public sealed class ModuleWindow : Window, IDisposable
     private int toyTriggerDurationSecondsInput = 10;
     private string toyTriggerPatternNameInput = "";
     private int toyTriggerCooldownInput = 5;
+    private string? editingToyTriggerId;
 
     /// ImGui frame the Owner Sync tab was last drawn on - a gap means it was just (re)opened.
     private int lastSyncTabFrame = -10;
@@ -3372,12 +3373,28 @@ public sealed class ModuleWindow : Window, IDisposable
                     config.Save();
                 }
                 ImGui.SameLine();
+                // Long job/action filters are summarized as a count here, with the full list on hover.
+                ImGui.PushTextWrapPos(0);
                 ImGui.TextUnformatted(DescribeTrigger(rule));
+                ImGui.PopTextWrapPos();
+                var fullDescription = DescribeTrigger(rule, full: true);
+                if (ImGui.IsItemHovered() && fullDescription != DescribeTrigger(rule))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30);
+                    ImGui.TextUnformatted(fullDescription);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
+                }
+                if (ImGui.SmallButton(editingToyTriggerId == rule.Id ? $"Editing##toyTrigger{rule.Id}" : $"Edit##toyTrigger{rule.Id}"))
+                    LoadToyTriggerDraft(rule);
                 ContinueRowOrWrap(ButtonWidth("Delete"));
                 if (ImGui.SmallButton($"Delete##toyTrigger{rule.Id}"))
                 {
                     config.ToyTriggerRules.Remove(rule);
                     config.Save();
+                    if (editingToyTriggerId == rule.Id)
+                        ResetToyTriggerDraft();
                 }
 
                 if (rule.PatternName is { Length: > 0 } targetPattern && !IsKnownPatternName(config, targetPattern))
@@ -3389,7 +3406,10 @@ public sealed class ModuleWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        IconGlyph.WrappedDisabled("New trigger");
+        var editingRule = editingToyTriggerId is { } editingId ? config.ToyTriggerRules.FirstOrDefault(r => r.Id == editingId) : null;
+        if (editingToyTriggerId is not null && editingRule is null)
+            ResetToyTriggerDraft();
+        IconGlyph.WrappedDisabled(editingRule is null ? "New trigger" : "Edit trigger");
         ImGui.Spacing();
         var kindNames = new[] { "Health drops below %", "Hit by another player (damage)", "A restriction becomes active", "Spell cast on you" };
         var kindIndex = (int)toyTriggerKindInput;
@@ -3453,24 +3473,78 @@ public sealed class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Minimum time between firings of this trigger, even if its condition becomes true again sooner. A 2-second floor always applies regardless of this value.");
 
         ImGui.Spacing();
-        if (ImGui.SmallButton("Add trigger##toyTrigger"))
+        if (editingRule is not null)
         {
-            var rule = new ToyTriggerRule
+            if (ImGui.SmallButton("Save trigger##toyTrigger"))
             {
-                Enabled = true,
-                Kind = toyTriggerKindInput,
-                HealthPercentThreshold = toyTriggerHealthThresholdInput,
-                RestrictionKind = toyTriggerRestrictionKindInput,
-                SpellJobIds = toyTriggerSpellJobIdsInput.ToList(),
-                SpellActionIds = toyTriggerSpellActionIdsInput.ToList(),
-                IntensityPercent = toyTriggerUsePatternInput ? null : toyTriggerIntensityInput,
-                PatternName = toyTriggerUsePatternInput ? toyTriggerPatternNameInput.Trim() : null,
-                DurationSeconds = toyTriggerUsePatternInput || !toyTriggerHasDurationInput ? null : toyTriggerDurationSecondsInput,
-                CooldownSeconds = Math.Max(2, toyTriggerCooldownInput),
-            };
+                ApplyToyTriggerDraft(editingRule);
+                config.Save();
+                ResetToyTriggerDraft();
+            }
+            ContinueRowOrWrap(ButtonWidth("Cancel"));
+            if (ImGui.SmallButton("Cancel##toyTrigger"))
+                ResetToyTriggerDraft();
+        }
+        else if (ImGui.SmallButton("Add trigger##toyTrigger"))
+        {
+            var rule = new ToyTriggerRule { Enabled = true };
+            ApplyToyTriggerDraft(rule);
             config.ToyTriggerRules.Add(rule);
             config.Save();
         }
+    }
+
+    /// Writes the editor's working state onto a rule - a fresh one for Add, or the existing rule in place for
+    /// Save (keeping its Id and Enabled state, so the evaluator's per-rule cooldown tracking carries over).
+    private void ApplyToyTriggerDraft(ToyTriggerRule rule)
+    {
+        rule.Kind = toyTriggerKindInput;
+        rule.HealthPercentThreshold = toyTriggerHealthThresholdInput;
+        rule.RestrictionKind = toyTriggerRestrictionKindInput;
+        rule.SpellJobIds = toyTriggerSpellJobIdsInput.ToList();
+        rule.SpellActionIds = toyTriggerSpellActionIdsInput.ToList();
+        rule.IntensityPercent = toyTriggerUsePatternInput ? null : toyTriggerIntensityInput;
+        rule.PatternName = toyTriggerUsePatternInput ? toyTriggerPatternNameInput.Trim() : null;
+        rule.DurationSeconds = toyTriggerUsePatternInput || !toyTriggerHasDurationInput ? null : toyTriggerDurationSecondsInput;
+        rule.CooldownSeconds = Math.Max(2, toyTriggerCooldownInput);
+    }
+
+    private void LoadToyTriggerDraft(ToyTriggerRule rule)
+    {
+        editingToyTriggerId = rule.Id;
+        toyTriggerKindInput = rule.Kind;
+        toyTriggerHealthThresholdInput = rule.HealthPercentThreshold;
+        toyTriggerRestrictionKindInput = rule.RestrictionKind;
+        toyTriggerSpellJobIdsInput.Clear();
+        toyTriggerSpellJobIdsInput.UnionWith(rule.SpellJobIds);
+        toyTriggerSpellActionIdsInput.Clear();
+        toyTriggerSpellActionIdsInput.UnionWith(rule.SpellActionIds);
+        toyTriggerSpellJobSearch = "";
+        toyTriggerSpellActionSearch = "";
+        toyTriggerUsePatternInput = rule.PatternName is { Length: > 0 };
+        toyTriggerPatternNameInput = rule.PatternName ?? "";
+        toyTriggerIntensityInput = rule.IntensityPercent ?? 50;
+        toyTriggerHasDurationInput = rule.DurationSeconds is not null;
+        toyTriggerDurationSecondsInput = rule.DurationSeconds ?? 10;
+        toyTriggerCooldownInput = rule.CooldownSeconds;
+    }
+
+    private void ResetToyTriggerDraft()
+    {
+        editingToyTriggerId = null;
+        toyTriggerKindInput = ToyTriggerKind.HealthPercent;
+        toyTriggerHealthThresholdInput = 50;
+        toyTriggerRestrictionKindInput = RestraintRuleKind.Gagged;
+        toyTriggerSpellJobIdsInput.Clear();
+        toyTriggerSpellActionIdsInput.Clear();
+        toyTriggerSpellJobSearch = "";
+        toyTriggerSpellActionSearch = "";
+        toyTriggerUsePatternInput = false;
+        toyTriggerPatternNameInput = "";
+        toyTriggerIntensityInput = 50;
+        toyTriggerHasDurationInput = false;
+        toyTriggerDurationSecondsInput = 10;
+        toyTriggerCooldownInput = 5;
     }
 
     /// collar/toy-control "Spell cast on you": a compact multi-select of playable combat jobs (Lumina's
@@ -3542,29 +3616,34 @@ public sealed class ModuleWindow : Window, IDisposable
         BuiltInToyPatternNames.Contains(name, StringComparer.OrdinalIgnoreCase) ||
         config.ToyPatterns.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
-    private static string DescribeTrigger(ToyTriggerRule rule)
+    private static string DescribeTrigger(ToyTriggerRule rule, bool full = false)
     {
         var condition = rule.Kind switch
         {
             ToyTriggerKind.HealthPercent => $"Health <= {rule.HealthPercentThreshold}%",
             ToyTriggerKind.PlayerDamage => "Hit by another player",
             ToyTriggerKind.RestrictionActive => $"{rule.RestrictionKind} active",
-            ToyTriggerKind.SpellCastOnYou => DescribeSpellFilter(rule),
+            ToyTriggerKind.SpellCastOnYou => DescribeSpellFilter(rule, full),
             _ => rule.Kind.ToString(),
         };
         var action = rule.PatternName is { Length: > 0 } name ? $"pattern \"{name}\"" : $"{rule.IntensityPercent ?? 0}% vibrate{(rule.DurationSeconds is { } d ? $" for {d}s" : "")}";
         return $"{condition} -> {action} (cooldown {rule.CooldownSeconds}s)";
     }
 
-    private static string DescribeSpellFilter(ToyTriggerRule rule)
+    /// Compact by default: more than a few jobs/actions collapse to a count ("12 jobs") so the trigger row
+    /// stays readable; `full` lists every one (used for the row's hover tooltip).
+    private static string DescribeSpellFilter(ToyTriggerRule rule, bool full = false)
     {
+        const int maxListed = 3;
         if (rule.SpellJobIds.Count == 0 && rule.SpellActionIds.Count == 0)
             return "Any spell cast on you";
 
         var jobs = rule.SpellJobIds.Count == 0 ? "any job" :
+            !full && rule.SpellJobIds.Count > maxListed ? $"{rule.SpellJobIds.Count} jobs" :
             string.Join('/', rule.SpellJobIds.Select(id => Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>().GetRowOrDefault(id)?.Abbreviation.ExtractText() ?? id.ToString()));
         var actions = rule.SpellActionIds.Count == 0 ? "any action" :
-            string.Join('/', rule.SpellActionIds.Select(id => Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().GetRowOrDefault(id)?.Name.ExtractText() ?? id.ToString()));
+            !full && rule.SpellActionIds.Count > maxListed ? $"{rule.SpellActionIds.Count} actions" :
+            string.Join(", ", rule.SpellActionIds.Select(id => Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().GetRowOrDefault(id)?.Name.ExtractText() ?? id.ToString()));
         return $"Spell cast on you ({jobs}, {actions})";
     }
 
