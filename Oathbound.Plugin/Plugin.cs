@@ -84,6 +84,11 @@ public sealed class Plugin : IDalamudPlugin
     /// guaranteed fallback access point for QuickAccessMenu, independent of FavoritesButtonSettings.Visible.
     private readonly IDtrBarEntry favoritesDtrEntry;
 
+    /// Shown only while a toy is running (Sub: actual state; Owner: estimate from what was sent), so both
+    /// sides can see at a glance that something is playing without opening the window.
+    private readonly IDtrBarEntry toyStatusDtrEntry;
+    private long nextToyStatusDtrUpdateTicks;
+
     /// collar/onboarding: owns the guided-tutorial sequence and step index; CollarWindow only reads
     /// `CurrentStep` each frame and exposes `SetActiveModuleForTutorial` for this to call.
     public TutorialDriver TutorialDriver { get; }
@@ -126,6 +131,7 @@ public sealed class Plugin : IDalamudPlugin
     public CatalogAutoSync CatalogAutoSync { get; }
     public ChatComposer ChatComposer { get; }
     public ChatSender ChatSender { get; }
+    public OwnerToyStatusTracker OwnerToyStatus { get; }
     public ChatCommandListener ChatCommandListener { get; }
 
     public PanicHandler PanicHandler { get; }
@@ -194,6 +200,7 @@ public sealed class Plugin : IDalamudPlugin
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
         ChatComposer = new ChatComposer(Configuration);
         ChatSender = new ChatSender();
+        OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         RevocationService.PairingRevoked += QueueRestraintCleanup;
@@ -222,6 +229,10 @@ public sealed class Plugin : IDalamudPlugin
         favoritesDtrEntry.Tooltip = "Favorited Collar commands";
         favoritesDtrEntry.OnClick = _ => QuickAccessMenu.Toggle(anchorToButton: false);
         favoritesDtrEntry.Shown = true;
+
+        toyStatusDtrEntry = DtrBar.Get("Oathbound Toy Status");
+        toyStatusDtrEntry.Shown = false;
+        toyStatusDtrEntry.OnClick = _ => ModuleWindow.IsOpen = true;
 
         WindowSystem.AddWindow(CollarWindow);
         // collar/ui-organization "Sub Control window stays docked to the main window": registered
@@ -339,6 +350,8 @@ public sealed class Plugin : IDalamudPlugin
         ItemPickerWindow.Dispose();
         FavoritesBarButton.Dispose();
         favoritesDtrEntry.Remove();
+        toyStatusDtrEntry.Remove();
+        OwnerToyStatus.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         CommandManager.RemoveHandler(ShorthandCommandName);
@@ -434,6 +447,23 @@ public sealed class Plugin : IDalamudPlugin
         }
         // collar/catalog-sync automatic sync: hourly Sub rescans/publishes and Owner mailbox checks.
         CatalogAutoSync.OnFrameworkUpdate();
+        UpdateToyStatusDtr();
+    }
+
+    private void UpdateToyStatusDtr()
+    {
+        var now = Environment.TickCount64;
+        if (now < nextToyStatusDtrUpdateTicks) return;
+        nextToyStatusDtrUpdateTicks = now + 500;
+
+        if (UI.ToyStatusView.Dtr(ToyControlCommand, OwnerToyStatus.ForActivePairing) is { } status)
+        {
+            toyStatusDtrEntry.Text = status.Text;
+            toyStatusDtrEntry.Tooltip = status.Tooltip;
+            toyStatusDtrEntry.Shown = true;
+        }
+        else if (toyStatusDtrEntry.Shown)
+            toyStatusDtrEntry.Shown = false;
     }
 
     private void QueueRestraintCleanup() => Interlocked.Exchange(ref pendingRestraintCleanup, 1);

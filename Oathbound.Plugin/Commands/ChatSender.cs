@@ -32,8 +32,13 @@ public sealed class ChatSender
         }
 
         ECommons.Automation.Chat.SendMessage(text);
+        Sent?.Invoke(text);
         return true;
     }
+
+    /// Raised after each message is handed to the game - observers only (the Owner's toy status estimate),
+    /// never a path that sends anything itself.
+    public event Action<string>? Sent;
 
     /// Delay between the messages of one multi-message send, so the game registers each one rather than
     /// dropping them as sent too fast.

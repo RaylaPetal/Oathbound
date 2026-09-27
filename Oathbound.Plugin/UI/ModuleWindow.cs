@@ -171,6 +171,10 @@ public sealed class ModuleWindow : Window, IDisposable
     private string toyTriggerPatternNameInput = "";
     private int toyTriggerCooldownInput = 5;
     private string? editingToyTriggerId;
+    private readonly HashSet<uint> toyTriggerEmoteIdsInput = new();
+    private string toyTriggerEmoteSearch = "";
+    private readonly List<string> toyTriggerSourcePlayersInput = new();
+    private string toyTriggerSourcePlayerInput = "";
 
     /// ImGui frame the Owner Sync tab was last drawn on - a gap means it was just (re)opened.
     private int lastSyncTabFrame = -10;
@@ -3139,6 +3143,9 @@ public sealed class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Stops every connected device immediately, independent of anything your Owner sent - for your own peace of mind, not tied to any permission.");
         connectionBox.Dispose();
 
+        using (Section.Begin("toyStatus", "Status"))
+            ToyStatusView.DrawSub(plugin.ToyControlCommand, intiface.IsConnected);
+
         var limitsBox = Section.Begin("toyLimits", "Limits");
         var defaultMaxDuration = config.DefaultMaxDurationSeconds;
         ImGui.SetNextItemWidth(160);
@@ -3290,8 +3297,7 @@ public sealed class ModuleWindow : Window, IDisposable
                 toyPatternError = "A pattern needs a name.";
             else if (toyPatternStepsInput.Count == 0)
                 toyPatternError = "A pattern needs at least one step.";
-            else if (string.Equals(name, "weak", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "medium", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(name, "strong", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "pulse", StringComparison.OrdinalIgnoreCase))
+            else if (ToyControlCommand.IsBuiltInPattern(name))
                 toyPatternError = "That name is reserved for a built-in pattern.";
             else if (config.ToyPatterns.Any(p => p.Id != toyPatternEditingId && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
                 toyPatternError = "Another custom pattern already has that name.";
@@ -3411,7 +3417,7 @@ public sealed class ModuleWindow : Window, IDisposable
             ResetToyTriggerDraft();
         IconGlyph.WrappedDisabled(editingRule is null ? "New trigger" : "Edit trigger");
         ImGui.Spacing();
-        var kindNames = new[] { "Health drops below %", "Hit by another player (damage)", "A restriction becomes active", "Spell cast on you" };
+        var kindNames = new[] { "Health drops below %", "Hit (damage from anything)", "A restriction becomes active", "Spell cast on you", "Emote used on you" };
         var kindIndex = (int)toyTriggerKindInput;
         ImGui.SetNextItemWidth(220);
         if (ImGui.Combo("Condition##toyTriggerKind", ref kindIndex, kindNames, kindNames.Length))
@@ -3435,13 +3441,21 @@ public sealed class ModuleWindow : Window, IDisposable
         }
         else if (toyTriggerKindInput == ToyTriggerKind.PlayerDamage)
         {
-            IconGlyph.WrappedDisabled("Fires each time you take damage from another player character - never from an NPC.");
+            IconGlyph.WrappedDisabled("Fires each time you take damage from anything - another player, an enemy, or any other NPC. Add players below to only react to them (which rules out NPCs).");
+            DrawToyTriggerSourcePlayers();
         }
-        else
+        else if (toyTriggerKindInput == ToyTriggerKind.SpellCastOnYou)
         {
             IconGlyph.WrappedDisabled("Fires each time an action is used on you by another player character - damage, heal, buff, or debuff alike, never from an NPC. Optionally narrow it to specific job(s) and/or specific spell(s)/skill(s) below; leave both empty to match any action from any player.");
             DrawToySpellJobFilter();
             DrawToySpellActionFilter();
+            DrawToyTriggerSourcePlayers();
+        }
+        else
+        {
+            IconGlyph.WrappedDisabled("Fires when another player uses an emote aimed at you (they have you targeted when they use it). Optionally narrow it to specific emote(s) and/or specific players; leave both empty to react to any emote from anyone.");
+            DrawToyEmoteFilter();
+            DrawToyTriggerSourcePlayers();
         }
 
         ImGui.Checkbox("Named pattern (instead of a fixed intensity)##toyTriggerUsePattern", ref toyTriggerUsePatternInput);
@@ -3503,6 +3517,8 @@ public sealed class ModuleWindow : Window, IDisposable
         rule.RestrictionKind = toyTriggerRestrictionKindInput;
         rule.SpellJobIds = toyTriggerSpellJobIdsInput.ToList();
         rule.SpellActionIds = toyTriggerSpellActionIdsInput.ToList();
+        rule.EmoteIds = toyTriggerEmoteIdsInput.ToList();
+        rule.SourcePlayers = toyTriggerSourcePlayersInput.ToList();
         rule.IntensityPercent = toyTriggerUsePatternInput ? null : toyTriggerIntensityInput;
         rule.PatternName = toyTriggerUsePatternInput ? toyTriggerPatternNameInput.Trim() : null;
         rule.DurationSeconds = toyTriggerUsePatternInput || !toyTriggerHasDurationInput ? null : toyTriggerDurationSecondsInput;
@@ -3519,8 +3535,14 @@ public sealed class ModuleWindow : Window, IDisposable
         toyTriggerSpellJobIdsInput.UnionWith(rule.SpellJobIds);
         toyTriggerSpellActionIdsInput.Clear();
         toyTriggerSpellActionIdsInput.UnionWith(rule.SpellActionIds);
+        toyTriggerEmoteIdsInput.Clear();
+        toyTriggerEmoteIdsInput.UnionWith(rule.EmoteIds);
+        toyTriggerSourcePlayersInput.Clear();
+        toyTriggerSourcePlayersInput.AddRange(rule.SourcePlayers);
         toyTriggerSpellJobSearch = "";
         toyTriggerSpellActionSearch = "";
+        toyTriggerEmoteSearch = "";
+        toyTriggerSourcePlayerInput = "";
         toyTriggerUsePatternInput = rule.PatternName is { Length: > 0 };
         toyTriggerPatternNameInput = rule.PatternName ?? "";
         toyTriggerIntensityInput = rule.IntensityPercent ?? 50;
@@ -3537,14 +3559,103 @@ public sealed class ModuleWindow : Window, IDisposable
         toyTriggerRestrictionKindInput = RestraintRuleKind.Gagged;
         toyTriggerSpellJobIdsInput.Clear();
         toyTriggerSpellActionIdsInput.Clear();
+        toyTriggerEmoteIdsInput.Clear();
+        toyTriggerSourcePlayersInput.Clear();
         toyTriggerSpellJobSearch = "";
         toyTriggerSpellActionSearch = "";
+        toyTriggerEmoteSearch = "";
+        toyTriggerSourcePlayerInput = "";
         toyTriggerUsePatternInput = false;
         toyTriggerPatternNameInput = "";
         toyTriggerIntensityInput = 50;
         toyTriggerHasDurationInput = false;
         toyTriggerDurationSecondsInput = 10;
         toyTriggerCooldownInput = 5;
+    }
+
+    /// collar/toy-control "Emote used on you": a filterable multi-select of emotes (a few hundred rows, so
+    /// the list is always shown and narrowed by the search box) - checking none means "any emote".
+    private void DrawToyEmoteFilter()
+    {
+        ImGui.SetNextItemWidth(200);
+        ImGui.InputTextWithHint("##toyTriggerEmoteSearch", "Filter emotes...", ref toyTriggerEmoteSearch, 32);
+        IconGlyph.HelpMarker("Which emote(s) this trigger reacts to. Leave every emote unchecked to react to any emote aimed at you.");
+        if (toyTriggerEmoteIdsInput.Count > 0)
+        {
+            ContinueRowOrWrap(ButtonWidth("Clear"));
+            if (ImGui.SmallButton("Clear##toyTriggerEmotes"))
+                toyTriggerEmoteIdsInput.Clear();
+        }
+
+        using var _ = ImRaii.Child("toyTriggerEmoteList", new Vector2(0, 110), true);
+        var search = toyTriggerEmoteSearch.Trim();
+        foreach (var emote in Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>()
+                     .Where(e => e.RowId > 0 && e.Name.ExtractText().Length > 0)
+                     .Select(e => (e.RowId, Name: e.Name.ExtractText(), Command: e.TextCommand.ValueNullable?.Command.ExtractText() ?? ""))
+                     .Where(e => search.Length == 0 || e.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || e.Command.Contains(search, StringComparison.OrdinalIgnoreCase))
+                     .OrderByDescending(e => toyTriggerEmoteIdsInput.Contains(e.RowId))
+                     .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var isChecked = toyTriggerEmoteIdsInput.Contains(emote.RowId);
+            var label = emote.Command.Length > 0 ? $"{emote.Name} ({emote.Command})" : emote.Name;
+            if (ImGui.Checkbox($"{label}##toyTriggerEmote{emote.RowId}", ref isChecked))
+            {
+                if (isChecked) toyTriggerEmoteIdsInput.Add(emote.RowId);
+                else toyTriggerEmoteIdsInput.Remove(emote.RowId);
+            }
+        }
+    }
+
+    /// collar/toy-control: the optional "only these players" filter shared by the hit, spell-cast and emote
+    /// triggers - typed as "Name Surname" (any world) or "Name Surname@World", or added in one click from
+    /// the current target or a paired peer.
+    private void DrawToyTriggerSourcePlayers()
+    {
+        Section.SubHeading("Only from these players");
+        IconGlyph.HelpMarker("Leave empty to react to anyone. With players listed, only they can fire this trigger. \"Name Surname\" matches that name on any world; \"Name Surname@World\" matches only that world.");
+
+        foreach (var entry in toyTriggerSourcePlayersInput.ToList())
+        {
+            ImGui.TextUnformatted(entry);
+            ContinueRowOrWrap(ButtonWidth("Remove"));
+            if (ImGui.SmallButton($"Remove##toyTriggerSource{entry}"))
+                toyTriggerSourcePlayersInput.Remove(entry);
+        }
+
+        void AddPlayer(string value)
+        {
+            var trimmed = value.Trim();
+            if (trimmed.Length > 0 && !toyTriggerSourcePlayersInput.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+                toyTriggerSourcePlayersInput.Add(trimmed);
+        }
+
+        ImGui.SetNextItemWidth(220);
+        var submitted = ImGui.InputTextWithHint("##toyTriggerSourceInput", "Name Surname[@World]", ref toyTriggerSourcePlayerInput, 64, ImGuiInputTextFlags.EnterReturnsTrue);
+        ContinueRowOrWrap(ButtonWidth("Add"));
+        if ((ImGui.SmallButton("Add##toyTriggerSource") || submitted) && toyTriggerSourcePlayerInput.Trim().Length > 0)
+        {
+            AddPlayer(toyTriggerSourcePlayerInput);
+            toyTriggerSourcePlayerInput = "";
+        }
+
+        var target = Plugin.TargetManager.Target as Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter;
+        using (ImRaii.Disabled(target is null))
+        {
+            if (ImGui.SmallButton("Add my target##toyTriggerSource") && target is not null)
+                AddPlayer($"{target.Name.TextValue}@{target.HomeWorld.ValueNullable?.Name.ExtractText()}");
+        }
+        if (target is null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Target a player character first.");
+
+        foreach (var pairing in plugin.Configuration.ActivePairings)
+        {
+            var peer = $"{pairing.PeerName}@{pairing.PeerWorld}";
+            if (toyTriggerSourcePlayersInput.Contains(peer, StringComparer.OrdinalIgnoreCase)) continue;
+            var label = $"Add {pairing.PeerName}";
+            ContinueRowOrWrap(ButtonWidth(label));
+            if (ImGui.SmallButton($"{label}##toyTriggerSourcePeer{pairing.Id}"))
+                AddPlayer(peer);
+        }
     }
 
     /// collar/toy-control "Spell cast on you": a compact multi-select of playable combat jobs (Lumina's
@@ -3610,10 +3721,8 @@ public sealed class ModuleWindow : Window, IDisposable
         }
     }
 
-    private static readonly string[] BuiltInToyPatternNames = { "weak", "medium", "strong", "pulse" };
-
     private static bool IsKnownPatternName(PluginConfig config, string name) =>
-        BuiltInToyPatternNames.Contains(name, StringComparer.OrdinalIgnoreCase) ||
+        ToyControlCommand.IsBuiltInPattern(name) ||
         config.ToyPatterns.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private static string DescribeTrigger(ToyTriggerRule rule, bool full = false)
@@ -3621,13 +3730,25 @@ public sealed class ModuleWindow : Window, IDisposable
         var condition = rule.Kind switch
         {
             ToyTriggerKind.HealthPercent => $"Health <= {rule.HealthPercentThreshold}%",
-            ToyTriggerKind.PlayerDamage => "Hit by another player",
+            ToyTriggerKind.PlayerDamage => "Hit",
             ToyTriggerKind.RestrictionActive => $"{rule.RestrictionKind} active",
             ToyTriggerKind.SpellCastOnYou => DescribeSpellFilter(rule, full),
+            ToyTriggerKind.EmoteOnYou => DescribeEmoteFilter(rule, full),
             _ => rule.Kind.ToString(),
         };
+        if ((rule.Kind is ToyTriggerKind.PlayerDamage or ToyTriggerKind.SpellCastOnYou or ToyTriggerKind.EmoteOnYou) && rule.SourcePlayers.Count > 0)
+            condition += $" from {(!full && rule.SourcePlayers.Count > 2 ? $"{rule.SourcePlayers.Count} players" : string.Join(", ", rule.SourcePlayers))}";
         var action = rule.PatternName is { Length: > 0 } name ? $"pattern \"{name}\"" : $"{rule.IntensityPercent ?? 0}% vibrate{(rule.DurationSeconds is { } d ? $" for {d}s" : "")}";
         return $"{condition} -> {action} (cooldown {rule.CooldownSeconds}s)";
+    }
+
+    private static string DescribeEmoteFilter(ToyTriggerRule rule, bool full)
+    {
+        if (rule.EmoteIds.Count == 0)
+            return "Any emote on you";
+        if (!full && rule.EmoteIds.Count > 3)
+            return $"Emote on you ({rule.EmoteIds.Count} emotes)";
+        return $"Emote on you ({string.Join(", ", rule.EmoteIds.Select(id => Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>().GetRowOrDefault(id)?.Name.ExtractText() ?? id.ToString()))})";
     }
 
     /// Compact by default: more than a few jobs/actions collapse to a count ("12 jobs") so the trigger row
@@ -3657,6 +3778,9 @@ public sealed class ModuleWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled($"Commands auto-stop after at most {ToyControlCommand.MaxDurationSeconds} seconds, regardless of the duration requested here.");
 
+        using (Section.Begin("toyQuickStatus", "Status"))
+            ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
+
         var vibrateBox = Section.Begin("toyQuickVibrate", "Vibrate");
         ImGui.SetNextItemWidth(200);
         ImGui.SliderInt("Intensity##toyControl", ref toyVibrateIntensity, 0, 100, "%d%%");
@@ -3682,13 +3806,13 @@ public sealed class ModuleWindow : Window, IDisposable
         vibrateBox.Dispose();
 
         var patternsBox = Section.Begin("toyQuickPatterns", "Patterns & stop");
-        DrawSendOnly(ToyControlCommand.BuildPatternCommand("weak"), canSend, "toyControlWeak", "Weak");
-        ContinueRowOrWrap(ButtonWidth("Medium"));
-        DrawSendOnly(ToyControlCommand.BuildPatternCommand("medium"), canSend, "toyControlMedium", "Medium");
-        ContinueRowOrWrap(ButtonWidth("Strong"));
-        DrawSendOnly(ToyControlCommand.BuildPatternCommand("strong"), canSend, "toyControlStrong", "Strong");
-        ContinueRowOrWrap(ButtonWidth("Pulse"));
-        DrawSendOnly(ToyControlCommand.BuildPatternCommand("pulse"), canSend, "toyControlPulse", "Pulse");
+        for (var i = 0; i < ToyControlCommand.BuiltInPatternNames.Count; i++)
+        {
+            var name = ToyControlCommand.BuiltInPatternNames[i];
+            var label = char.ToUpperInvariant(name[0]) + name[1..];
+            if (i > 0) ContinueRowOrWrap(ButtonWidth(label));
+            DrawSendOnly(ToyControlCommand.BuildPatternCommand(name), canSend, $"toyControl{label}", label);
+        }
 
         ImGui.Spacing();
         DrawSendOnly(ToyControlCommand.BuildStopCommand(), canSend, "toyControlStop", "Send stop");

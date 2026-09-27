@@ -540,16 +540,20 @@ public class ToyPattern
 
 /// collar/toy-control "Local automatic toy triggers": which local game-state signal a `ToyTriggerRule`
 /// reacts to. `HealthPercentThreshold` only matters for `HealthPercent`; `RestrictionKind` only matters for
-/// `RestrictionActive`; `PlayerDamage` uses neither. `SpellCastOnYou` fires on any action (damaging or not)
+/// `RestrictionActive`. `PlayerDamage` (name kept for saved-config compatibility) fires on damage from any
+/// source - another player or an NPC/enemy alike. `SpellCastOnYou` fires on any action (damaging or not)
 /// used on you by another player character, optionally narrowed by `SpellJobIds`/`SpellActionIds` - unlike
 /// `PlayerDamage`, it is not restricted to damage-classified effects (a heal, buff, or debuff cast on you
-/// counts too).
+/// counts too). `EmoteOnYou` fires when another player character uses an emote targeted at you, optionally
+/// narrowed by `EmoteIds`. `PlayerDamage`/`SpellCastOnYou`/`EmoteOnYou` can all be narrowed further to
+/// specific characters via `SourcePlayers`.
 public enum ToyTriggerKind
 {
     HealthPercent,
     PlayerDamage,
     RestrictionActive,
     SpellCastOnYou,
+    EmoteOnYou,
 }
 
 /// collar/toy-control "Local automatic toy triggers"/"Automatic triggers are rate-limited per rule": a
@@ -581,6 +585,14 @@ public class ToyTriggerRule
     /// both empty means "any action from any player", matching `PlayerDamage` but without the
     /// damage-classification restriction.
     public List<uint> SpellActionIds { get; set; } = new();
+
+    /// Only for `EmoteOnYou`: which emote(s) (`Lumina.Excel.Sheets.Emote.RowId`) this rule reacts to. Empty
+    /// means any emote targeted at you.
+    public List<uint> EmoteIds { get; set; } = new();
+
+    /// For `PlayerDamage`/`SpellCastOnYou`/`EmoteOnYou`: only react when the source is one of these
+    /// characters - each entry "Name Surname" (any world) or "Name Surname@World". Empty means anyone.
+    public List<string> SourcePlayers { get; set; } = new();
 
     /// The toy action this rule fires. Exactly one of these two is set - `IntensityPercent` for a plain
     /// vibrate at that intensity, `PatternName` for a built-in or custom named pattern.

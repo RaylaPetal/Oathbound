@@ -161,6 +161,7 @@ public sealed class SubControlWindow : Window, IDisposable
             return;
 
         ImGui.Indent();
+        ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
         foreach (var (label, command) in ToyControlQuickRows())
             DrawSendRow(label, command, canSend);
         ImGui.Unindent();
@@ -168,10 +169,8 @@ public sealed class SubControlWindow : Window, IDisposable
 
     private IEnumerable<(string Label, string Command)> ToyControlQuickRows()
     {
-        yield return ("Weak", ToyControlCommand.BuildPatternCommand("weak"));
-        yield return ("Medium", ToyControlCommand.BuildPatternCommand("medium"));
-        yield return ("Strong", ToyControlCommand.BuildPatternCommand("strong"));
-        yield return ("Pulse", ToyControlCommand.BuildPatternCommand("pulse"));
+        foreach (var name in ToyControlCommand.BuiltInPatternNames)
+            yield return (char.ToUpperInvariant(name[0]) + name[1..], ToyControlCommand.BuildPatternCommand(name));
         yield return ("Stop", ToyControlCommand.BuildStopCommand());
         foreach (var pattern in plugin.Configuration.ToyPatterns)
             yield return (pattern.Name, ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop));
