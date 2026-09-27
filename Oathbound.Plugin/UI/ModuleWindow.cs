@@ -18,7 +18,7 @@ namespace Oathbound.Plugin.UI;
 /// not a wider surface" scaling approach - see redesign-nav-and-modules's design.md. Everything that used to
 /// render inline below CollarWindow's nav bar lives here now: every category's Owner/Sub content, the
 /// guided-tutorial callout, and the shared quick-command editor.
-public sealed class ModuleWindow : Window, IDisposable
+public sealed partial class ModuleWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private string activeModule = "title";
@@ -288,11 +288,17 @@ public sealed class ModuleWindow : Window, IDisposable
                 if (isOwner) DrawFollowQuickSection(DrawOwnerCanSendBanner());
                 else DrawFollowLeashModule();
                 break;
-            case "permissions":
-                DrawPermissionsCard();
-                break;
             case "sync":
                 DrawSyncTab(isOwner);
+                break;
+            case "reactions":
+                DrawReactionsModule();
+                break;
+            case "permissions":
+                // Only reached from the guided tutorial's Permissions step - the real controls live in Settings.
+                IconGlyph.WrappedDisabled("Permissions now live in Settings, on the Permissions tab.");
+                if (ImGui.SmallButton("Open Settings > Permissions"))
+                    plugin.SettingsWindow.ShowPermissionsTab();
                 break;
         }
     }
@@ -766,7 +772,8 @@ public sealed class ModuleWindow : Window, IDisposable
             newFolderInput = "";
         }
     }
-    private void DrawPermissionsCard()
+    /// Drawn by SettingsWindow's Permissions tab (collar/ui-organization "Permissions live in a Settings tab").
+    internal void DrawPermissionsCard()
     {
         var permissions = plugin.Configuration.Permissions;
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Permissions");
@@ -786,7 +793,7 @@ public sealed class ModuleWindow : Window, IDisposable
         group = Section.Begin("permAutomation", "Automation (needs the ToS acknowledgement)");
         var config = plugin.Configuration;
         if (!config.TosAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Animation/Follow/Restraints/Teleport require the ToS acknowledgement in Settings (gear icon) first.");
+            IconGlyph.WrappedColored(Theme.Warning, "Animation/Follow/Restraints/Teleport require the acknowledgement on the ToS tab first.");
 
         using (ImRaii.Disabled(!config.TosAcknowledged))
         {
@@ -826,7 +833,7 @@ public sealed class ModuleWindow : Window, IDisposable
         group.Dispose();
         group = Section.Begin("permCustomChat", "Custom chat (own acknowledgement)");
         if (!config.CustomChatAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Custom chat messages require their own dedicated acknowledgement in Settings (gear icon) first - separate from the general ToS checkbox above.");
+            IconGlyph.WrappedColored(Theme.Warning, "Custom chat messages require their own dedicated acknowledgement on the ToS tab first - separate from the general ToS checkbox.");
 
         using (ImRaii.Disabled(!config.CustomChatAcknowledged))
         {
@@ -838,7 +845,7 @@ public sealed class ModuleWindow : Window, IDisposable
         group.Dispose();
         group = Section.Begin("permToyControl", "Toy control (own acknowledgement)");
         if (!config.ToyControlAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Toy control requires its own dedicated acknowledgement in Settings (gear icon) first - separate from every other checkbox above.");
+            IconGlyph.WrappedColored(Theme.Warning, "Toy control requires its own dedicated acknowledgement on the ToS tab first - separate from every other checkbox.");
 
         using (ImRaii.Disabled(!config.ToyControlAcknowledged))
         {

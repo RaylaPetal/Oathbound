@@ -13,6 +13,10 @@ namespace Oathbound.Plugin.Commands;
 /// automation (auto-replying to observed chat with no human in the loop per message) that's the actual
 /// pattern Dalamud plugin authors flag as ToS risk. Never wire this to anything that fires without that
 /// per-message human click - no auto-reply, no reacting to received chat, no retry/resend loops.
+///
+/// The one deliberate exception lives outside this class on purpose: a Reaction's chat action
+/// (ReactionService) does reply automatically to an emote or chat phrase, by the user's own choice, guarded
+/// only by its per-reaction cooldown (never under 10s) and disclosed in the README's automation section.
 public sealed class ChatSender
 {
     /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel": the exact set of

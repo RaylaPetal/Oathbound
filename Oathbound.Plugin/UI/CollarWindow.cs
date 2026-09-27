@@ -37,7 +37,14 @@ public class CollarWindow : Window, IDisposable
     /// window - kept separate so the driver never needs its own copy of tab-switching logic. Delegates to
     /// `ModuleWindow.Show` (redesign-nav-and-modules) instead of setting a local field, since module content
     /// no longer renders in this window.
-    public void SetActiveModuleForTutorial(string moduleId) => moduleWindow.Show(moduleId);
+    public void SetActiveModuleForTutorial(string moduleId)
+    {
+        moduleWindow.Show(moduleId);
+        // collar/ui-organization "Permissions live in a Settings tab": the tutorial's Permissions step opens
+        // Settings on that tab; the module window keeps showing the step's guidance and a pointer to it.
+        if (moduleId == "permissions")
+            plugin.SettingsWindow.ShowPermissionsTab();
+    }
 
     private string? teleportResolveError;
 
@@ -51,7 +58,7 @@ public class CollarWindow : Window, IDisposable
 
     /// collar/ui-organization "Category tabs present role-aware content": one nav entry per shared category
     /// (each shows the Sub alias-authoring view or the Owner browse/send view depending on Role), plus
-    /// Permissions (Sub-only), Sync (catalog relay sync/import/reset, no Sub-side counterpart), and Favorites
+    /// Reactions (both roles, local-only), Sync (catalog relay sync/import/reset, no Sub-side counterpart), and Favorites
     /// (opens the same QuickAccessMenu popup the on-screen HUD button and DTR bar entry already do - see
     /// redesign-nav-and-modules's proposal.md - not a module, handled entirely in the nav-click routing
     /// below).
@@ -66,7 +73,7 @@ public class CollarWindow : Window, IDisposable
         ("customtriggers", FontAwesomeIcon.BoltLightning, "Custom Triggers"),
         ("collar", FontAwesomeIcon.Lock, "Collar"),
         ("follow", FontAwesomeIcon.Link, "Follow / Leash"),
-        ("permissions", FontAwesomeIcon.ShieldAlt, "Permissions"),
+        ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
         ("favorites", FontAwesomeIcon.Star, "Favorites"),
     ];
@@ -145,14 +152,9 @@ public class CollarWindow : Window, IDisposable
         DrawCharacterHeader();
         ImGui.Spacing();
 
-        // collar/ui-organization: Permissions is Sub-only (what a Sub accepts from a paired Owner) - an
-        // Owner has nothing to configure there, so it's dropped from the nav bar entirely under that Role
-        // rather than shown with content that doesn't apply to them. Since NavBar only ever returns an id
-        // from the array it was given, a click can never resolve to "permissions" while this filter applies.
-        var isOwnerRole = plugin.Configuration.Role == PluginRole.Owner;
-        var visibleNavItems = isOwnerRole ? NavItems.Where(item => item.Id != "permissions").ToArray() : NavItems;
-
-        if (NavBar.Draw(visibleNavItems) is { } clicked)
+        // collar/ui-organization: every destination is shown for both roles - Permissions (the one Sub-only
+        // screen) moved to a Settings tab, and each module renders its own role-aware view.
+        if (NavBar.Draw(NavItems) is { } clicked)
         {
             // collar/ui-organization "Favorites destination reuses the existing favorites menu" (reworked):
             // opens the dedicated FavoritesWindow rather than QuickAccessMenu's popup - that popup's "Open

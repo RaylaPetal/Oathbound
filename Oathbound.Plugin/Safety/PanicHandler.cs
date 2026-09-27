@@ -30,12 +30,14 @@ public sealed class PanicHandler
     private readonly HotbarBlockVisuals hotbarVisuals;
     private readonly AttachedMoodleLedger moodleLedger;
     private readonly GestureCommand gesture;
+    private readonly ReactionService reactions;
 
-    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, CollarCommand collar, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture)
+    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, CollarCommand collar, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture, ReactionService reactions)
     {
         this.hotbarVisuals = hotbarVisuals;
         this.moodleLedger = moodleLedger;
         this.gesture = gesture;
+        this.reactions = reactions;
         this.pairing = pairing;
         this.glamourer = glamourer;
         this.slotLocks = slotLocks;
@@ -93,6 +95,7 @@ public sealed class PanicHandler
         RunStep("release gesture animation", gesture.ResetActiveTemporary);
         RunStep("stop toy control", toyControl.ReleaseAllForPanic);
         RunStep("suspend toy triggers", () => runtimeState.ToyTriggersSuspended = true);
+        RunStep("suspend reactions and turn off reaction mods", reactions.ReleaseAllForPanic);
 
         runtimeState.Reset();
     }

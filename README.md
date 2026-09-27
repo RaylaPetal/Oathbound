@@ -42,7 +42,8 @@ everything instantly with their safeword.
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. |
 | 🔗 | **Follow / Leash** | Make your Sub follow you, with their own movement held until you let go. |
 | 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. |
-| 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells cast on them). |
+| 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
+| 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
 | 🧭 | **Teleport** | Bring your Sub to your location with one click. |
 | ↩️ | **Revert all** | One button in the Owner's header puts everything back to nothing. The collar and your pairing stay. |
@@ -61,7 +62,7 @@ request naming you, and pairing only happens if they click **Accept**.
 
 ### 2. The Sub sets up what they'll allow
 In the main window (`/oathbound`), the Sub picks their designs, animations, moodles, restraints and collar,
-and gives them short words (aliases). In **Permissions**, the Sub turns each kind of command on or off.
+and gives them short words (aliases). In **Settings > Permissions**, the Sub turns each kind of command on or off.
 A command in a category that's switched off is simply ignored.
 
 ### 3. The Owner commands
@@ -147,10 +148,14 @@ further, and you should decide for yourself before turning them on:
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
 - **Gagged** changes chat messages you type into muffled text before they're sent.
 - **Custom chat messages** in a Custom Trigger send text you wrote yourself, on the channel you chose.
+- **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
+  reaction with a chat message **replies automatically**, in whatever channel you wrote it for, at most
+  once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
+  add a chat reply if you're comfortable with it.
 
-Every command the Owner sends is one deliberate click that sends one tell. The plugin never auto-replies
-to chat. The only tells it sends on its own are ones tied directly to something you just did, like
-confirming a pairing you accepted.
+Every command the Owner sends is one deliberate click that sends one tell. Apart from a chat reply you
+set up yourself in Reactions, the plugin never auto-replies to chat. The only tells it sends on its own
+are ones tied directly to something you just did, like confirming a pairing you accepted.
 
 Pairing and catalog sync go through a small Oathbound relay service. It only ever handles encrypted data
 and never sees your catalog contents or your character's name.

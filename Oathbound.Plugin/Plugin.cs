@@ -72,7 +72,7 @@ public sealed class Plugin : IDalamudPlugin
     /// reads `CollarWindow`'s current-frame position, not the previous frame's - Dear ImGui windows here are
     /// drawn in registration order.
     public SubControlWindow SubControlWindow { get; }
-    private SettingsWindow SettingsWindow { get; }
+    internal SettingsWindow SettingsWindow { get; }
     private WelcomeWindow WelcomeWindow { get; }
     public AnimationPickerWindow AnimationPickerWindow { get; }
     public CustomizePresetPickerWindow CustomizePresetPickerWindow { get; }
@@ -110,6 +110,8 @@ public sealed class Plugin : IDalamudPlugin
     public ChatGagService ChatGagService { get; }
     public RestrictionRuleManager RestrictionRuleManager { get; }
     public ToyTriggerEvaluator ToyTriggerEvaluator { get; }
+    public EmoteWatcher EmoteWatcher { get; }
+    public ReactionService ReactionService { get; }
 
     public DeviceIdentityService DeviceIdentityService { get; }
     public RelayClient RelayClient { get; }
@@ -157,6 +159,7 @@ public sealed class Plugin : IDalamudPlugin
         MigrateConfiguration();
 
         RuntimeState = new SubRuntimeState(Configuration);
+        EmoteWatcher = new EmoteWatcher();
 
         GlamourerIpc = new GlamourerIpc();
         SlotLockManager = new SlotLockManager(Configuration, GlamourerIpc);
@@ -190,11 +193,12 @@ public sealed class Plugin : IDalamudPlugin
         OutfitCommand = new OutfitCommand(Configuration, GlamourerIpc, SlotLockManager, RuntimeState, MoodlesCommand);
         temporaryModSettings = new TemporaryModSettingsCoordinator(PenumbraIpc);
         GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore);
+        ReactionService = new ReactionService(Configuration, RuntimeState, EmoteWatcher, GlamourerIpc, SlotLockManager, PenumbraIpc, temporaryModSettings, MoodlesIpc, RestrictionRuleManager);
         FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
-        ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager);
+        ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
         TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, MovementLockService);
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
@@ -210,7 +214,7 @@ public sealed class Plugin : IDalamudPlugin
             () => relayBackgroundWorkCts.Token);
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand);
 
-        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand);
+        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService);
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -367,6 +371,7 @@ public sealed class Plugin : IDalamudPlugin
         ChatGagService.Dispose();
         IntifaceIpc.Dispose();
         ToyTriggerEvaluator.Dispose();
+        ReactionService.Dispose();
         SlotLockManager.Dispose();
         GlamourerIpc.Dispose();
         // After every feature above has released what it could: drops any claim still held, since a locked
@@ -422,7 +427,9 @@ public sealed class Plugin : IDalamudPlugin
         GestureCommand.OnFrameworkUpdate();
         RestraintCommand.OnFrameworkUpdate();
         ToyControlCommand.OnFrameworkUpdate();
+        EmoteWatcher.Poll();
         ToyTriggerEvaluator.OnFrameworkUpdate();
+        ReactionService.OnFrameworkUpdate();
         MovementLockService.OnFrameworkUpdate();
         FollowCommand.OnFrameworkUpdate();
         WalkOnlyService.OnFrameworkUpdate();

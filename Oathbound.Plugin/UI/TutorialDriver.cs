@@ -45,7 +45,7 @@ public sealed class TutorialDriver
             "Set the alias words that make your character follow or stop following your Owner."),
         new("permissions", "Permissions",
             null,
-            "Turn each category on or off - nothing in any other tab can ever apply to your character unless its permission is enabled here."),
+            "Permissions live in Settings, on the Permissions tab (opened for you now). Turn each category on or off there - nothing in any other tab can ever apply to your character unless its permission is enabled."),
         new("sync", "Sync",
             "Sync your Sub's exported catalog so their saved outfits, animations, and Moodles show up as one-click sends above.",
             "Scan your own mods/designs/statuses and export a catalog file for your Owner, or wait for them to sync it over the relay."),

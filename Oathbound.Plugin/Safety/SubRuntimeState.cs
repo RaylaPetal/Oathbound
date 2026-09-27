@@ -79,6 +79,14 @@ public sealed class SubRuntimeState
         set { config.ToyTriggersSuspended = value; config.Save(); }
     }
 
+    /// collar/reactions "Panic suspends reactions": excluded from Reset() for the same reason as
+    /// ToyTriggersSuspended - only the user's explicit Resume clears it.
+    public bool ReactionsSuspended
+    {
+        get => config.ReactionsSuspended;
+        set { config.ReactionsSuspended = value; config.Save(); }
+    }
+
     public void Reset()
     {
         TitleApplied = false;

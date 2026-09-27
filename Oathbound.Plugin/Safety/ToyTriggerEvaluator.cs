@@ -43,22 +43,19 @@ public sealed class ToyTriggerEvaluator : IDisposable
     /// callback's call stack (see design.md Decision 4).
     private readonly ConcurrentQueue<ActionHit> actionHits = new();
 
-    /// Each nearby character's last-seen (emote, target) pair, so `PollEmotesOnYou` only reports the moment
-    /// an emote aimed at the local player starts, not every frame it keeps playing.
-    private readonly Dictionary<ulong, (ushort EmoteId, ulong TargetId)> lastEmoteState = new();
-
     /// `SourceName`/`SourceWorld` are empty when the source isn't a player character (an NPC/enemy, or a
     /// source no longer in the object table) - such a hit can never match a player filter.
     private readonly record struct ActionHit(uint ActionId, uint SourceJobId, bool IsDamage, bool FromPlayer, string SourceName, string SourceWorld);
 
-    private readonly record struct EmoteHit(uint EmoteId, string SourceName, string SourceWorld);
+    private readonly EmoteWatcher emoteWatcher;
 
-    public ToyTriggerEvaluator(PluginConfig config, ToyControlCommand toyControl, SubRuntimeState runtimeState, RestrictionRuleManager restrictionRules)
+    public ToyTriggerEvaluator(PluginConfig config, ToyControlCommand toyControl, SubRuntimeState runtimeState, RestrictionRuleManager restrictionRules, EmoteWatcher emoteWatcher)
     {
         this.config = config;
         this.toyControl = toyControl;
         this.runtimeState = runtimeState;
         this.restrictionRules = restrictionRules;
+        this.emoteWatcher = emoteWatcher;
         ActionEffect.ActionEffectEntryEvent += OnActionEffect;
     }
 
@@ -92,9 +89,8 @@ public sealed class ToyTriggerEvaluator : IDisposable
             hitsThisTick.Add(hit);
 
         var localPlayer = Plugin.ObjectTable.LocalPlayer;
-        // Polled every tick regardless of whether any rule wants it, so each character's baseline stays
-        // current and an emote already in progress when a rule is enabled doesn't fire it retroactively.
-        var emotesThisTick = PollEmotesOnYou(localPlayer);
+        // Emotes aimed at the local player, from the shared watcher (polled by Plugin just before this).
+        var emotesThisTick = localPlayer is null ? [] : emoteWatcher.ThisTick.Where(e => e.TargetObjectId == localPlayer.GameObjectId).ToList();
 
         if (!config.ToyTriggersAcknowledged || runtimeState.ToyTriggersSuspended)
             return;
@@ -138,45 +134,6 @@ public sealed class ToyTriggerEvaluator : IDisposable
                     break;
             }
         }
-    }
-
-    /// collar/toy-control "Emote used on you": every nearby player character's own emote state carries the
-    /// emote it's playing and who it's aimed at, so this polls that instead of hooking the game's emote
-    /// handler - an emote counts the moment a character's (emote, target) pair changes to one aimed at the
-    /// local player. The same person repeating the same emote back-to-back with nothing in between can read
-    /// as one continuous emote; the per-rule cooldown makes that moot in practice.
-    private unsafe List<EmoteHit> PollEmotesOnYou(IPlayerCharacter? localPlayer)
-    {
-        var hits = new List<EmoteHit>();
-        if (localPlayer is null)
-        {
-            lastEmoteState.Clear();
-            return hits;
-        }
-
-        var seen = new HashSet<ulong>();
-        foreach (var obj in Plugin.ObjectTable)
-        {
-            if (obj.ObjectKind != ObjectKind.Pc || obj.GameObjectId == localPlayer.GameObjectId || obj.Address == nint.Zero)
-                continue;
-
-            var chara = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)obj.Address;
-            var emoteId = chara->EmoteController.EmoteId;
-            ulong targetId = chara->EmoteController.Target;
-            seen.Add(obj.GameObjectId);
-
-            var hadPrevious = lastEmoteState.TryGetValue(obj.GameObjectId, out var previous);
-            lastEmoteState[obj.GameObjectId] = (emoteId, targetId);
-            if (hadPrevious && emoteId != 0 && targetId == localPlayer.GameObjectId && previous != (emoteId, targetId))
-            {
-                var (name, world) = Identify(obj);
-                hits.Add(new EmoteHit(emoteId, name, world));
-            }
-        }
-
-        foreach (var gone in lastEmoteState.Keys.Where(k => !seen.Contains(k)).ToList())
-            lastEmoteState.Remove(gone);
-        return hits;
     }
 
     /// collar/toy-control "Spell cast on you": `SpellJobIds`/`SpellActionIds` are independent AND filters -

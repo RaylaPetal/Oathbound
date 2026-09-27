@@ -61,6 +61,17 @@ public class SettingsWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    private bool selectPermissionsTab;
+
+    /// Opens Settings on its Permissions tab - the tutorial's Permissions step, and anything else that used
+    /// to open the old Permissions navigation destination.
+    public void ShowPermissionsTab()
+    {
+        selectPermissionsTab = true;
+        IsOpen = true;
+        BringToFront();
+    }
+
     public override void OnOpen()
     {
         var config = plugin.Configuration;
@@ -93,6 +104,20 @@ public class SettingsWindow : Window, IDisposable
                 DrawFavoritesButtonCard(config);
             using (Section.Begin("tutorialCard"))
                 DrawTutorialCard(config);
+            ImGui.EndTabItem();
+        }
+
+        // collar/ui-organization "Permissions live in a Settings tab": set-and-forget, so it moved here out
+        // of the main navigation. Only a Sub accepts anything from a peer, so an Owner gets an explanation.
+        var selectPermissions = selectPermissionsTab;
+        selectPermissionsTab = false;
+        if (ImGui.BeginTabItem("Permissions", selectPermissions ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+        {
+            if (config.Role == PluginRole.Owner)
+                IconGlyph.WrappedDisabled("Permissions only apply while you're set to Sub - they're what a Sub accepts from a paired Owner. Switch your role in Identity & Pairing to configure them.");
+            else
+                using (Section.Begin("permissionsCard"))
+                    plugin.ModuleWindow.DrawPermissionsCard();
             ImGui.EndTabItem();
         }
 

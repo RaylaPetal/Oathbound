@@ -879,6 +879,12 @@ public class PluginConfig : IPluginConfiguration
     /// collar/toy-control "Local automatic toy triggers": Sub-local trigger configuration.
     public List<ToyTriggerRule> ToyTriggerRules { get; set; } = new();
 
+    /// collar/reactions: this user's own local reactions (either role).
+    public List<ReactionRule> Reactions { get; set; } = new();
+
+    /// collar/reactions "Panic suspends reactions": set by panic, cleared only by the user's Resume.
+    public bool ReactionsSuspended { get; set; }
+
     /// collar/toy-control "Automatic triggers require their own dedicated consent, separate from
     /// Owner-command permission": a fourth rung on the acknowledgement ladder (TosAcknowledged ->
     /// CustomChatAcknowledged/ToyControlAcknowledged -> this one). Gates trigger *configuration* directly -
