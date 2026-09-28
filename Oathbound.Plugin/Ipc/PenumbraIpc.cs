@@ -35,6 +35,10 @@ public sealed class PenumbraIpc : IDisposable
 
     public void Dispose() => modSettingChanged.Dispose();
     private readonly GetModList getModList = new(Plugin.PluginInterface);
+    private readonly ApiVersion apiVersion = new(Plugin.PluginInterface);
+
+    /// collar/ui-organization dependency status: cheapest read-only gate; any exception means unavailable.
+    public bool IsAvailable { get { try { apiVersion.Invoke(); return true; } catch { return false; } } }
     private readonly GetModPath getModPath = new(Plugin.PluginInterface);
     private readonly GetModDirectory getModDirectory = new(Plugin.PluginInterface);
     private readonly GetChangedItems getChangedItems = new(Plugin.PluginInterface);

@@ -19,6 +19,8 @@ public static class Theme
     public static readonly Vector4 Success = new(0.35f, 0.85f, 0.35f, 1f);
     public static readonly Vector4 Warning = new(0.9f, 0.72f, 0.25f, 1f);
     public static readonly Vector4 Danger = new(0.65f, 0.42f, 0.42f, 1f);
+    /// Settings dependency header: a clearly-red "not detected" status dot (Danger is too muted to read as red).
+    public static readonly Vector4 StatusMissing = new(0.92f, 0.32f, 0.32f, 1f);
 
     public const float CardRounding = 8f;
     public const float TileRounding = 6f;

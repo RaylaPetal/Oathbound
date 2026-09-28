@@ -39,10 +39,10 @@ public sealed class ChatComposer
 
     public static bool AllFit(IReadOnlyList<string> messages) => messages.All(CommandSelector.Fits);
 
-    /// collar/teleport: the Owner's `teleport` reserved-word command, carrying the world and
-    /// aetheryte/aethernet shard nearest the Owner's position at send time - resolved by the caller (via
-    /// Lifestream's own IPC) before this is called, since this class stays dependency-free by construction.
-    public string ComposeTeleport(string world, uint shardId) => Wrap($"teleport world:\"{world.Trim()}\" shard:{shardId}");
+    /// collar/teleport: the Owner's `teleport` reserved-word command, carrying where the Owner is at send
+    /// time (world, territory, instance, ward, position) - read by the caller from its own client state,
+    /// since this class stays dependency-free by construction. The Sub picks its own route from this.
+    public string ComposeTeleport(TeleportTarget target) => Wrap($"teleport {target.ToPayload()}");
 
     /// collar/pairing's relay-assisted handshake: a short lifecycle tell carrying only the invitation's
     /// capability id - everything else (role, trigger phrase, expiry) lives in the signed invitation itself,

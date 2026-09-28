@@ -31,13 +31,15 @@ public sealed class PanicHandler
     private readonly AttachedMoodleLedger moodleLedger;
     private readonly GestureCommand gesture;
     private readonly ReactionService reactions;
+    private readonly TeleportCommand teleport;
 
-    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, CollarCommand collar, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture, ReactionService reactions)
+    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, CollarCommand collar, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture, ReactionService reactions, TeleportCommand teleport)
     {
         this.hotbarVisuals = hotbarVisuals;
         this.moodleLedger = moodleLedger;
         this.gesture = gesture;
         this.reactions = reactions;
+        this.teleport = teleport;
         this.pairing = pairing;
         this.glamourer = glamourer;
         this.slotLocks = slotLocks;
@@ -85,6 +87,9 @@ public sealed class PanicHandler
                 honorific.ClearTitle();
         });
 
+        // Before the lock release: MovementLockService.ReleaseAll alone would leave vnavmesh still walking
+        // the Sub toward their Owner with nothing holding them (collar/teleport, design.md D10).
+        RunStep("stop teleport", () => teleport.Stop("panic"));
         RunStep("release movement lock", movementLock.ReleaseAll);
         RunStep("release restriction rules", restrictionRules.ReleaseAllForPanic);
         // Releasing the Action Block rule above already hides these - repeated directly so a failure in that

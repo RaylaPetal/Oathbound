@@ -23,6 +23,10 @@ public sealed class MoodlesIpc
     private readonly ICallGateSubscriber<IPlayerCharacter, object> clearStatusManagerByPlayer;
     private readonly ICallGateSubscriber<Guid, IPlayerCharacter, object> removeMoodleByPlayer;
 
+    /// collar/ui-organization dependency status: probes the same read-only status list the catalog scan uses
+    /// (the one contract this wrapper already depends on); any exception means unavailable.
+    public bool IsAvailable { get { try { getRegisteredMoodles.InvokeFunc(); return true; } catch { return false; } } }
+
     public MoodlesIpc()
     {
         getRegisteredMoodles = Plugin.PluginInterface.GetIpcSubscriber<List<(Guid, uint, string, string)>>("Moodles.GetRegisteredMoodlesV2");

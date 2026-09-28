@@ -378,9 +378,9 @@ public sealed class ChatCommandListener : IDisposable
             case "teleport":
                 // Deliberately no outer permission gate here either, unlike the categories above - unlike
                 // them, every one of Teleport's guards (permission, ToS acknowledgement, duty, combat,
-                // Lifestream availability) needs a distinct, reportable reason, so TeleportCommand.Apply
+                // Lifestream/vnavmesh availability, housing, aetheryte) needs a distinct, reportable reason, so TeleportCommand.Apply
                 // owns all of it (collar/teleport's "Refuses when travel cannot safely happen").
-                return HandleForceTeleport(rest);
+                return HandleForceTeleport(rest, sourcePairing);
             case "revert":
                 // No outer gate: like customtrigger, each category below checks its own permission.
                 return HandleForceRevert(rest);
@@ -391,8 +391,8 @@ public sealed class ChatCommandListener : IDisposable
 
     /// The Owner's `revert all` (header "Revert all"): puts everything the Owner can command back to nothing
     /// in one tell - restraints (gear, rules, bound animations, their moodles), outfit (unlocked, then the
-    /// whole character reverted to Glamourer automation), title, leash, playing animation, toy, and every
-    /// moodle. Each category only if the Sub's own permission for it is on, same as each individual command.
+    /// whole character reverted to Glamourer automation), title, leash, playing animation, toy, an in-progress
+    /// teleport journey, and every moodle. Each category only if the Sub's own permission for it is on, same as each individual command.
     /// Never touches the collar (its slot lock, piece and moodle all stay) or any pairing - unlike panic,
     /// which is the Sub's own safeword and does clear the collar. Each step is isolated, so one failing (an
     /// IPC plugin not loaded) never stops the rest.
@@ -427,6 +427,7 @@ public sealed class ChatCommandListener : IDisposable
         Step("leash", permissions.Follow, follow.Release);
         Step("animation", permissions.Gesture, gesture.ResetActiveTemporary);
         Step("toy", permissions.ToyControl, () => toyControl.ForceStop());
+        Step("teleport", permissions.Teleport && teleport.IsInProgress, () => teleport.Stop("Owner sent Revert all"));
         // Last, so the releases above have already dropped their own holds; the collar's is re-applied.
         Step("moodles", permissions.Moodles, () => moodles.Ledger.ClearAllExceptCollar());
 
@@ -694,14 +695,14 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"customtrigger\" override \"{rest}\" - expected \"cast \\\"<label>\\\" ...\".");
     }
 
-    private LocalTestResult HandleForceTeleport(string rest)
+    private LocalTestResult HandleForceTeleport(string rest, PairingState? sourcePairing)
     {
-        if (!TeleportCommand.TryParsePayload(rest, out var world, out var shardId))
-            return LocalTestResult.Fail($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" shard:<id>\".");
+        if (!TeleportTarget.TryParse(rest, out var destination))
+            return LocalTestResult.Fail($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" terr:<id> inst:<n> ward:<n> sub:<0|1> pos:<x>,<y>,<z>\" (your Owner may be on an older Oathbound build).");
 
-        var (success, reason) = teleport.Apply(world, shardId);
+        var (success, reason) = teleport.Apply(destination, sourcePairing);
         return success
-            ? LocalTestResult.Ok($"Teleported to \"{world}\".")
+            ? LocalTestResult.Ok($"On the way to your Owner on \"{destination.World}\".")
             : LocalTestResult.Fail(reason ?? "Teleport failed.");
     }
 

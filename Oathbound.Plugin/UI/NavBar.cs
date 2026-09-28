@@ -28,7 +28,9 @@ public static class NavBar
         return rows * ButtonHeight + (rows - 1) * spacing.Y + padding.Y * 2;
     }
 
-    public static string? Draw(params (string Id, FontAwesomeIcon Icon, string Tooltip)[] items)
+    /// `disabledReason` (collar/ui-organization dependency gating): when it returns non-null for an item's id, that
+    /// tile is drawn dimmed, can't be clicked, and shows the reason as its tooltip.
+    public static string? Draw((string Id, FontAwesomeIcon Icon, string Tooltip)[] items, System.Func<string, string?>? disabledReason = null)
     {
         string? clicked = null;
         // The top/bottom margin inside the card's child region comes from WindowPadding, not ItemSpacing -
@@ -43,7 +45,7 @@ public static class NavBar
 
         for (var i = 0; i < items.Length; i++)
         {
-            var itemClicked = DrawItem(items[i], buttonSize);
+            var itemClicked = DrawItem(items[i], buttonSize, disabledReason?.Invoke(items[i].Id));
             if (clicked is null && itemClicked is not null)
                 clicked = itemClicked;
 
@@ -62,27 +64,31 @@ public static class NavBar
     /// mismatch is what caused every button after the first to drift diagonally off its actual cell.
     /// IconGlyph's icon+text helpers can't be reused directly here since neither draws a clickable
     /// background sized to a fixed grid cell in the first place.
-    private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size)
+    private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason)
     {
         string? result = null;
         using (ImRaii.PushColor(ImGuiCol.Button, Theme.TileBg))
         using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.TileBgHover))
         using (ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding))
         {
-            ImGui.BeginGroup();
-            var start = ImGui.GetCursorPos();
-            if (ImGui.Button($"##{item.Id}", size))
-                result = item.Id;
+            // Disabled wraps the whole cell so the icon and label dim along with the button.
+            using (ImRaii.Disabled(disabledReason is not null))
+            {
+                ImGui.BeginGroup();
+                var start = ImGui.GetCursorPos();
+                if (ImGui.Button($"##{item.Id}", size))
+                    result = item.Id;
 
-            ImGui.SetCursorPos(start + new Vector2(8f, size.Y / 2 - 8f));
-            using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
-                ImGui.TextUnformatted(item.Icon.ToIconString());
-            ImGui.SameLine();
-            ImGui.TextUnformatted(item.Tooltip);
-            ImGui.EndGroup();
+                ImGui.SetCursorPos(start + new Vector2(8f, size.Y / 2 - 8f));
+                using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
+                    ImGui.TextUnformatted(item.Icon.ToIconString());
+                ImGui.SameLine();
+                ImGui.TextUnformatted(item.Tooltip);
+                ImGui.EndGroup();
+            }
 
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(item.Tooltip);
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(disabledReason is null ? item.Tooltip : $"{item.Tooltip} - unavailable. {disabledReason}");
         }
 
         return result;

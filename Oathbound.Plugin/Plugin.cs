@@ -104,6 +104,8 @@ public sealed class Plugin : IDalamudPlugin
     public CustomizePlusIpc CustomizePlusIpc { get; }
     public IntifaceIpc IntifaceIpc { get; }
     public LifestreamIpc LifestreamIpc { get; }
+    public VnavmeshIpc VnavmeshIpc { get; }
+    public DependencyStatusService DependencyStatus { get; }
     public MovementLockService MovementLockService { get; }
     public WalkOnlyService WalkOnlyService { get; }
     public ActionBlockService ActionBlockService { get; }
@@ -169,6 +171,8 @@ public sealed class Plugin : IDalamudPlugin
         CustomizePlusIpc = new CustomizePlusIpc();
         IntifaceIpc = new IntifaceIpc();
         LifestreamIpc = new LifestreamIpc();
+        VnavmeshIpc = new VnavmeshIpc();
+        DependencyStatus = new DependencyStatusService(GlamourerIpc, PenumbraIpc, HonorificIpc, MoodlesIpc, CustomizePlusIpc, LifestreamIpc, VnavmeshIpc, IntifaceIpc);
         MovementLockService = new MovementLockService();
         WalkOnlyService = new WalkOnlyService();
         ActionBlockService = new ActionBlockService(WalkOnlyService);
@@ -200,21 +204,23 @@ public sealed class Plugin : IDalamudPlugin
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
         ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
-        TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, MovementLockService);
+        TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
         ChatComposer = new ChatComposer(Configuration);
         ChatSender = new ChatSender();
         OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
+        PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked += QueueRestraintCleanup;
+        RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
         CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService);
         CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand);
 
-        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService);
+        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -328,7 +334,11 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         PairingService.PairingEnded -= QueueRestraintCleanup;
+        PairingService.PairingEnded -= TeleportCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked -= QueueRestraintCleanup;
+        RevocationService.PairingRevoked -= TeleportCommand.StopIfSourcePairingEnded;
+        TeleportCommand.Stop("plugin unloading");
+        DependencyStatus.Dispose();
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
         Framework.Update -= OnFrameworkUpdate;
         ClientState.Login -= OnLogin;

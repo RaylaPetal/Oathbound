@@ -45,7 +45,7 @@ everything instantly with their safeword.
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
-| 🧭 | **Teleport** | Bring your Sub to your location with one click. |
+| 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header puts everything back to nothing. The collar and your pairing stay. |
 | ⭐ | **Favorites & Sub Control** | Star the commands you use most, open them from the server info bar, or see every command in one panel. |
 | ☁️ | **Automatic sync** | The Sub's list of outfits, animations, moodles and restraints reaches the Owner by itself, end-to-end encrypted. |
@@ -78,7 +78,7 @@ Sync tab shows whether it's up to date.
   you uninstall or disable the plugin, all of it stops.
 - **Permissions per category.** Titles, outfits, animations, moodles, restraints, leash, collar, toys,
   teleport and custom chat each have their own switch, and you can change them at any time.
-- **Extra steps for the heavier features.** Animations, leash and restraints need an extra
+- **Extra steps for the heavier features.** Animations, leash, restraints and teleport need an extra
   acknowledgement before you can turn them on, and custom chat messages and toy control each need their
   own.
 - **Your safeword.** `/oathboundpanic` instantly removes everything that's been applied to you:
@@ -103,13 +103,16 @@ Sync tab shows whether it's up to date.
 | **Honorific** | Titles | Sub · for titles |
 | **Moodles** | Status icons | Sub · optional |
 | **Customize+** | Profile changes while gagged | Sub · optional |
-| **Lifestream** | Teleport | Owner and Sub · for teleport |
+| **Lifestream** | Teleport (world change, aetheryte and housing-ward travel) | Sub · for teleport |
+| **vnavmesh** | Teleport (walking, riding or flying to the Owner) | Sub · for teleport |
 | **Intiface Central** *(desktop app)* | Toy control | Sub · for toys |
-| **Snowcloak / Lightless / similar** | Letting other players see your changes | Sub · recommended |
+| **A sync plugin** (Lightless, PlayerSync or Snowcloak - any one) | Letting other players see your changes | Sub · recommended |
 
 > [!TIP]
-> The Owner doesn't need any of these to send commands. Sending only needs Oathbound itself (plus
-> Lifestream if you want to use Teleport).
+> The Owner doesn't need any of these to send commands, Teleport included. Sending only needs Oathbound
+> itself. **Settings** shows which of these Oathbound can see (green) or not (red) at the top of every
+> tab (except the sync plugin, which Oathbound doesn't need to work), and the main window disables a
+> Sub's module when the plugin it needs isn't detected.
 
 ---
 
@@ -146,6 +149,11 @@ further, and you should decide for yourself before turning them on:
 
 - **Animations** make your character perform emotes and poses.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
+- **Teleport** moves your character for you: it changes world, teleports, and then walks, rides or
+  flies your character across the open world or a housing ward to your Owner, with your own movement
+  locked until you arrive. Walking a character around automatically looks more like a bot than anything
+  else here, so only turn it on if you're comfortable with that. If it gets stuck, press **Stop teleport**
+  in the header (or use your safeword). It doesn't work from inside a house or apartment.
 - **Gagged** changes chat messages you type into muffled text before they're sent.
 - **Custom chat messages** in a Custom Trigger send text you wrote yourself, on the channel you chose.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
@@ -156,6 +164,9 @@ further, and you should decide for yourself before turning them on:
 Every command the Owner sends is one deliberate click that sends one tell. Apart from a chat reply you
 set up yourself in Reactions, the plugin never auto-replies to chat. The only tells it sends on its own
 are ones tied directly to something you just did, like confirming a pairing you accepted.
+
+A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
+plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.
 
 Pairing and catalog sync go through a small Oathbound relay service. It only ever handles encrypted data
 and never sees your catalog contents or your character's name.

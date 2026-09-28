@@ -213,9 +213,9 @@ public sealed partial class ModuleWindow
         // --- Actions ---
         Section.SubHeading("Then (pick at least one)");
         DrawReactionGesture(draft);
-        DrawReactionItem(draft);
-        DrawReactionMod(draft);
-        DrawReactionMoodle(draft);
+        DrawGatedReactionAction(DependencyId.Glamourer, () => DrawReactionItem(draft));
+        DrawGatedReactionAction(DependencyId.Penumbra, () => DrawReactionMod(draft));
+        DrawGatedReactionAction(DependencyId.Moodles, () => DrawReactionMoodle(draft));
         DrawReactionChat(draft);
 
         // --- Cooldown ---
@@ -302,6 +302,17 @@ public sealed partial class ModuleWindow
         return null;
     }
 
+    /// collar/ui-organization "Partly dependent features are disabled inline": Reactions run on the local client
+    /// in either role, so each plugin-backed action type is gated on its own plugin while the rest stay usable.
+    private void DrawGatedReactionAction(DependencyId required, Action draw)
+    {
+        var blocked = DependencyGates.FeatureBlockedReason(plugin, required);
+        using (ImRaii.Disabled(blocked is not null))
+            draw();
+        if (blocked is not null)
+            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+    }
+
     private void DrawReactionGesture(ReactionRule draft)
     {
         using var _ = ImRaii.PushId("reactionGesture");
@@ -324,7 +335,7 @@ public sealed partial class ModuleWindow
         }
 
         var catalog = plugin.Configuration.GestureMapping.LocalCatalog;
-        if (catalog.Count > 0)
+        if (catalog.Count > 0 && DependencyGates.FeatureBlockedReason(plugin, DependencyId.Penumbra) is null)
         {
             ContinueRowOrWrap(ButtonWidth("From my animations..."));
             if (ImGui.SmallButton("From my animations..."))

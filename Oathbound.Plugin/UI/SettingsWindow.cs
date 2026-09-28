@@ -89,9 +89,55 @@ public class SettingsWindow : Window, IDisposable
     /// testing tool on its own, so it's reachable without scrolling past every acknowledgement. Scanning itself moved to the main window's Sync tab
     /// (collar/ui-organization) - it's catalog upkeep, grouped with the rest of catalog sync now rather
     /// than living here.
+    /// collar/ui-organization "Settings shows a dependency status header" (design.md D15): above the tab bar so
+    /// it's on every tab. One wrapped chip per dependency - green detected, red missing - with the exact
+    /// state and what it's for in the tooltip.
+    private void DrawDependencyHeader()
+    {
+        var status = plugin.DependencyStatus;
+        IconGlyph.Text(FontAwesomeIcon.PuzzlePiece, "Dependencies");
+        IconGlyph.HelpMarker("Other plugins and apps Oathbound works with. Hover one for details. Owners don't need any of them to send commands.");
+
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var available = ImGui.GetContentRegionAvail().X;
+        var used = 0f;
+        foreach (var dependency in DependencyStatusService.All)
+        {
+            var state = status.Get(dependency.Id);
+            var color = state == DependencyState.Ready ? Theme.Success : Theme.StatusMissing;
+
+            var width = ImGui.CalcTextSize(dependency.Name).X + 18f;
+            if (used > 0f && used + spacing + width <= available)
+                ImGui.SameLine();
+            else
+                used = 0f;
+            used += (used > 0f ? spacing : 0f) + width;
+
+            ImGui.BeginGroup();
+            using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
+            using (ImRaii.PushColor(ImGuiCol.Text, color))
+                ImGui.TextUnformatted(FontAwesomeIcon.Circle.ToIconString());
+            ImGui.SameLine(0f, 4f);
+            ImGui.TextUnformatted(dependency.Name);
+            ImGui.EndGroup();
+
+            if (ImGui.IsItemHovered())
+            {
+                var described = DependencyStatusService.Describe(state);
+                var stateText = char.ToUpperInvariant(described[0]) + described[1..];
+                ImGui.SetTooltip($"{dependency.Name}: {stateText}\nUsed for: {dependency.Purpose}\nWho needs it: {dependency.WhoNeedsIt}");
+            }
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+    }
+
     public override void Draw()
     {
         var config = plugin.Configuration;
+
+        DrawDependencyHeader();
 
         if (!ImGui.BeginTabBar("settingsTabs"))
             return;

@@ -38,6 +38,11 @@ public sealed class GlamourerIpc : IDisposable
     private readonly GetDesignJObject getDesignJObject;
     private readonly ApplyDesign applyDesign;
     private readonly GetState getState;
+    private readonly ApiVersion apiVersion = new(Plugin.PluginInterface);
+
+    /// collar/ui-organization dependency status: cheapest read-only gate; any exception (not installed,
+    /// disabled, incompatible API) means unavailable.
+    public bool IsAvailable { get { try { apiVersion.Invoke(); return true; } catch { return false; } } }
     private readonly EventSubscriber<nint, StateFinalizationType> stateFinalized;
     private readonly EventSubscriber<nint, StateChangeType> stateChanged;
 

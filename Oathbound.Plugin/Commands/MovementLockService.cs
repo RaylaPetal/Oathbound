@@ -72,6 +72,10 @@ public sealed unsafe class MovementLockService : IDisposable
     /// counter would be.
     private readonly HashSet<string> immobilizedBy = new();
     private readonly HashSet<string> followPreservedBy = new();
+    /// collar/teleport's navigation leg (design.md D5): same input suppression as the other two sets, but
+    /// never the game's force-disable flag - vnavmesh and Lifestream drive the character by rewriting the
+    /// walk vector, and force-disable would freeze that too - and never the Follow-only unfollow block.
+    private readonly HashSet<string> inputSuppressedBy = new();
     private bool ownsForceDisable;
 
     public MovementLockService()
@@ -110,7 +114,9 @@ public sealed unsafe class MovementLockService : IDisposable
     public bool IsAvailable { get; }
     public bool IsImmobilizeAvailable { get; }
 
-    public bool IsLocked => IsAvailable && (immobilizedBy.Count > 0 || followPreservedBy.Count > 0);
+    public bool IsLocked => IsAvailable && AnyInputClaim;
+
+    private bool AnyInputClaim => immobilizedBy.Count > 0 || followPreservedBy.Count > 0 || inputSuppressedBy.Count > 0;
 
     /// collar/follow: "Movement lock releases on panic, unpair, or Owner release" - all three paths call
     /// Release(owner) for their own token, and it is safe to call Engage even if IsAvailable is false
@@ -119,6 +125,8 @@ public sealed unsafe class MovementLockService : IDisposable
     public void ReleaseImmobilize(string owner) => immobilizedBy.Remove(owner);
     public void EngagePreserveFollow(string owner) { if (IsAvailable) followPreservedBy.Add(owner); }
     public void ReleasePreserveFollow(string owner) => followPreservedBy.Remove(owner);
+    public void EngageSuppressInput(string owner) { if (IsAvailable) inputSuppressedBy.Add(owner); }
+    public void ReleaseSuppressInput(string owner) => inputSuppressedBy.Remove(owner);
 
     /// Panic's own release: drops every caller's claim unconditionally, regardless of who engaged it -
     /// same "full teardown, nothing needs preserving" shape as SlotLockManager.ReleaseAllForPanic.
@@ -126,6 +134,7 @@ public sealed unsafe class MovementLockService : IDisposable
     {
         immobilizedBy.Clear();
         followPreservedBy.Clear();
+        inputSuppressedBy.Clear();
         ClearForceDisable();
     }
 
@@ -145,7 +154,7 @@ public sealed unsafe class MovementLockService : IDisposable
     private byte IsInputIdHeldDetour(void* unk, InputId inputId) => Suppress(inputId) ? (byte)0 : isInputIdHeldHook!.Original(unk, inputId);
     private byte IsInputIdUnknownDetour(void* unk, InputId inputId) => Suppress(inputId) ? (byte)0 : isInputIdUnknownHook!.Original(unk, inputId);
 
-    private bool Suppress(InputId inputId) => (immobilizedBy.Count > 0 || followPreservedBy.Count > 0) && Array.IndexOf(MovementInputs, inputId) >= 0;
+    private bool Suppress(InputId inputId) => AnyInputClaim && Array.IndexOf(MovementInputs, inputId) >= 0;
 
     private void MovementDirectionUpdateDetour(OathboundMoveController* self, float* horizontal, float* vertical, float* rotation, byte* alignCamera, byte* autorun, byte dontRotate)
     {

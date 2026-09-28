@@ -24,6 +24,10 @@ public sealed class HonorificIpc
 
     private readonly ICallGateSubscriber<int, string, object> setCharacterTitle;
     private readonly ICallGateSubscriber<int, object> clearCharacterTitle;
+    private readonly ICallGateSubscriber<(uint, uint)> apiVersion = Plugin.PluginInterface.GetIpcSubscriber<(uint, uint)>("Honorific.ApiVersion");
+
+    /// collar/ui-organization dependency status: cheapest read-only gate; any exception means unavailable.
+    public bool IsAvailable { get { try { apiVersion.InvokeFunc(); return true; } catch { return false; } } }
 
     public HonorificIpc()
     {

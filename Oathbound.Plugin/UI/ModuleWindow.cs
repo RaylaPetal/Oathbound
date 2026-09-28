@@ -238,6 +238,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawTutorialCallout();
         using var card = Card.Begin("moduleCard");
         var isOwner = ResolveOwnerModeView();
+
+        // collar/ui-organization: a module window already open when its dependency disappears shows why in
+        // place of its content, until the dependency is detected again (same rule as the nav tile).
+        if (DependencyGates.ModuleBlockedReason(plugin, activeModule) is { } blockedReason)
+        {
+            IconGlyph.WrappedColored(Theme.StatusMissing, blockedReason);
+            IconGlyph.WrappedDisabled("Install or enable it from /xlplugins - this window comes back on its own once it's detected. Settings shows every dependency's status.");
+            return;
+        }
+
         switch (activeModule)
         {
             case "title":
@@ -431,13 +441,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
         scanBox.Dispose();
 
         using (Section.Begin("scanWardrobe"))
-            DrawWardrobeScanBody(config);
+            DrawGatedScan(DependencyId.Glamourer, () => DrawWardrobeScanBody(config));
         using (Section.Begin("scanGesture"))
-            DrawGestureScanBody(config);
+            DrawGatedScan(DependencyId.Penumbra, () => DrawGestureScanBody(config));
         using (Section.Begin("scanRestraint"))
-            DrawRestraintScanBody(config);
+            DrawGatedScan(DependencyId.Penumbra, () => DrawRestraintScanBody(config));
         using (Section.Begin("scanMoodles"))
-            DrawMoodlesScanBody(config);
+            DrawGatedScan(DependencyId.Moodles, () => DrawMoodlesScanBody(config));
 
         // collar/catalog-sync "shared presets are copies": a custom trigger is shared as one self-contained
         // command, sent one message per action if it doesn't fit in one - a trigger with an action too long
@@ -507,6 +517,17 @@ public sealed partial class ModuleWindow : Window, IDisposable
             else
                 IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out once their plugin has checked in (Owners on an older plugin can still use Request refresh).");
         }
+    }
+
+    /// collar/ui-organization "Partly dependent features are disabled inline": each catalog source is scanned from
+    /// its own plugin, so one missing plugin disables only that source's section.
+    private void DrawGatedScan(DependencyId required, Action draw)
+    {
+        var blocked = DependencyGates.FeatureBlockedReason(plugin, required);
+        using (ImRaii.Disabled(blocked is not null))
+            draw();
+        if (blocked is not null)
+            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
     }
 
     private void DrawWardrobeScanBody(PluginConfig config)
@@ -773,6 +794,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
     /// Drawn by SettingsWindow's Permissions tab (collar/ui-organization "Permissions live in a Settings tab").
+    /// collar/ui-organization "Permissions flag categories whose dependency is missing": a red note only - the
+    /// toggle stays usable so a permission can be set ahead of installing the plugin.
+    private void DrawPermissionDependencyNote(params DependencyId[] required)
+    {
+        if (DependencyGates.PermissionNote(plugin, required) is { } note)
+            IconGlyph.WrappedColored(Theme.StatusMissing, note);
+    }
+
     internal void DrawPermissionsCard()
     {
         var permissions = plugin.Configuration.Permissions;
@@ -784,10 +813,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (ImGuiCheckbox("Title", permissions.Title, out var newTitle))
             SavePermission(() => permissions.Title = newTitle);
         IconGlyph.HelpMarker("Lets a paired Owner apply or clear your Honorific title via a trigger tell.");
+        DrawPermissionDependencyNote(DependencyId.Honorific);
 
         if (ImGuiCheckbox("Outfit / Wardrobe", permissions.Outfit, out var newOutfit))
             SavePermission(() => permissions.Outfit = newOutfit);
         IconGlyph.HelpMarker("Lets a paired Owner apply or unlock a Glamourer design via a trigger tell.");
+        DrawPermissionDependencyNote(DependencyId.Glamourer);
 
         group.Dispose();
         group = Section.Begin("permAutomation", "Automation (needs the ToS acknowledgement)");
@@ -800,6 +831,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGuiCheckbox("Animation", permissions.Gesture, out var newGesture))
                 SavePermission(() => permissions.Gesture = newGesture);
             IconGlyph.HelpMarker("Lets a paired Owner temporarily enable a selected animation mod and immediately play its tied gesture. Disable this permission at any time to reject commands.");
+            DrawPermissionDependencyNote(DependencyId.Penumbra);
 
             if (ImGuiCheckbox("Follow / Leash", permissions.Follow, out var newFollow))
                 SavePermission(() => permissions.Follow = newFollow);
@@ -808,10 +840,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGuiCheckbox("Restraints", permissions.Restraints, out var newRestraints))
                 SavePermission(() => permissions.Restraints = newRestraints);
             IconGlyph.HelpMarker("Lets a paired Owner apply or release a restraint device via a trigger tell. Restraint devices can suppress movement, force walking, block actions, garble your outgoing chat (Gagged), or hold you in a chosen animation (Arms/Legs/Full Body Cuffed) while active - Gagged rewrites content you actually typed, a heavier automation footprint than the others - see the Restraints tab and the README's Automation risk section.");
+            DrawPermissionDependencyNote(DependencyId.Glamourer, DependencyId.Penumbra);
 
             if (ImGuiCheckbox("Teleport", permissions.Teleport, out var newTeleport))
                 SavePermission(() => permissions.Teleport = newTeleport);
-            IconGlyph.HelpMarker("Lets a paired Owner summon you to their current world, at the aetheryte nearest their position, via a trigger tell. Refused automatically while you're bound by duty, in combat, or without the Lifestream plugin installed. Requires the Lifestream plugin.");
+            IconGlyph.HelpMarker("Lets a paired Owner summon you to their side via a trigger tell: your client changes world, teleports to your nearest attuned aetheryte (or travels to their housing ward), then walks, rides or flies to them. Your movement is locked the whole way - press Stop teleport in the header (or panic) to end it. Refused automatically while you're bound by duty, in combat, or when they're inside a house. Requires Lifestream and vnavmesh.");
+            DrawPermissionDependencyNote(DependencyGates.Teleport);
         }
 
         group.Dispose();
@@ -823,6 +857,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (ImGuiCheckbox("Moodles", permissions.Moodles, out var newMoodles))
             SavePermission(() => permissions.Moodles = newMoodles);
         IconGlyph.HelpMarker("Lets a paired Owner apply or clear a Moodle (status effect) from your own registered statuses via a trigger tell - applies immediately, no confirmation queue.");
+        DrawPermissionDependencyNote(DependencyId.Moodles);
 
         group.Dispose();
         group = Section.Begin("permCatalog", "Catalog sync");
@@ -1450,9 +1485,19 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Owner/imported-mode branch here at all.
     private void DrawCustomizePresetChooser(string? currentPresetId, string? currentPresetLabel, Action<string?, string?> onChosen, string idSuffix)
     {
+        // collar/ui-organization "Partly dependent features are disabled inline": only this option needs Customize+.
+        var blocked = DependencyGates.FeatureBlockedReason(plugin, DependencyId.CustomizePlus);
         var buttonText = currentPresetId is null ? "Choose Customize+ preset..." : $"C+: {currentPresetLabel ?? currentPresetId}";
-        if (DrawChoiceButton(buttonText, idSuffix))
-            plugin.CustomizePresetPickerWindow.Open(profile => onChosen(profile.UniqueId.ToString(), profile.Name));
+        using (ImRaii.Disabled(blocked is not null))
+            if (DrawChoiceButton(buttonText, idSuffix))
+                plugin.CustomizePresetPickerWindow.Open(profile => onChosen(profile.UniqueId.ToString(), profile.Name));
+        if (blocked is not null)
+        {
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(blocked);
+            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            return;
+        }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(currentPresetId is null ? "Optional - click to choose a Customize+ preset." : $"Customize+ preset: {currentPresetLabel ?? currentPresetId}\n\nClick to change.");
         if (currentPresetId is not null)
@@ -1713,6 +1758,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (editingCustomTriggerActionIndex is not null)
             IconGlyph.WrappedColored(Theme.Accent, "Editing this action. Change its values below, then choose Save action.");
 
+        // collar/ui-organization "Partly dependent features are disabled inline": a part whose category needs a
+        // missing plugin can't be added or saved; the rest of the bundle editor keeps working.
+        var kindBlocked = plugin.DependencyStatus.MissingReason(DependencyGates.CustomTriggerPart(kind));
+        if (kindBlocked is not null)
+            IconGlyph.WrappedColored(Theme.StatusMissing, kindBlocked);
+        var kindDisabled = ImRaii.Disabled(kindBlocked is not null);
+
         switch (kind)
         {
             case CustomTriggerActionKind.Title:
@@ -1814,6 +1866,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 }
                 break;
         }
+        kindDisabled.Dispose();
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -2047,7 +2100,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.HelpMarker("Optional. Applied alongside your collar item when it locks, and periodically re-asserted for as long as the collar stays locked - removing it through Moodles' own UI won't make it stick. Cleared only by /oathboundpanic or your Owner's \"collar unlock\", the same as the collar item itself.");
 
             var collarMoodleStatuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-            if (collarMoodleStatuses.Count == 0)
+            // collar/ui-organization "Partly dependent features are disabled inline": assigning needs Moodles;
+            // clearing an existing assignment (below) stays available.
+            if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } collarMoodleBlocked)
+            {
+                IconGlyph.WrappedColored(Theme.StatusMissing, collarMoodleBlocked);
+            }
+            else if (collarMoodleStatuses.Count == 0)
             {
                 IconGlyph.WrappedDisabled("No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
             }
@@ -4294,12 +4353,24 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// statuses. Returns true when the pick changed; the caller stores `picked` and saves.
     /// `width` null keeps the surrounding form's default item width, so the picker lines up with the other
     /// dropdowns in a form instead of being narrower.
-    private static bool DrawAttachedMoodlePicker(string id, AttachedMoodleRef? current, PluginConfig config, out AttachedMoodleRef? picked, float? width = 220)
+    private bool DrawAttachedMoodlePicker(string id, AttachedMoodleRef? current, PluginConfig config, out AttachedMoodleRef? picked, float? width = 220)
     {
         picked = current;
         var preview = current is null ? "None" : MoodlesTextFormat.StripMarkup(current.StatusName);
         if (width is { } w)
             ImGui.SetNextItemWidth(w);
+
+        // collar/ui-organization "Partly dependent features are disabled inline": the attached moodle is the
+        // only part of Outfit/Restraints/Follow that needs Moodles.
+        if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } blocked)
+        {
+            using (ImRaii.Disabled())
+                if (ImGui.BeginCombo($"Moodle (optional)##{id}", preview))
+                    ImGui.EndCombo();
+            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            return false;
+        }
+
         var changed = false;
         if (ImGui.BeginCombo($"Moodle (optional)##{id}", preview))
         {

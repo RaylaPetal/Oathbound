@@ -21,6 +21,10 @@ public sealed class CustomizePlusIpc
     private readonly ICallGateSubscriber<Guid, int> enableProfileByUniqueId;
     private readonly ICallGateSubscriber<Guid, int> disableProfileByUniqueId;
 
+    /// collar/ui-organization dependency status: probes the read-only profile list this wrapper already
+    /// depends on; any exception means unavailable.
+    public bool IsAvailable { get { try { getProfileList.InvokeFunc(); return true; } catch { return false; } } }
+
     public CustomizePlusIpc()
     {
         getProfileList = Plugin.PluginInterface.GetIpcSubscriber<IList<(Guid, string, string, List<(string, ushort, byte, ushort)>, int, bool)>>("CustomizePlus.Profile.GetList");

@@ -154,7 +154,9 @@ public class CollarWindow : Window, IDisposable
 
         // collar/ui-organization: every destination is shown for both roles - Permissions (the one Sub-only
         // screen) moved to a Settings tab, and each module renders its own role-aware view.
-        if (NavBar.Draw(NavItems) is { } clicked)
+        // collar/ui-organization dependency gating: Sub-side only (DependencyGates decides), re-evaluated every
+        // frame so a tile re-enables as soon as its plugin is detected.
+        if (NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id)) is { } clicked)
         {
             // collar/ui-organization "Favorites destination reuses the existing favorites menu" (reworked):
             // opens the dedicated FavoritesWindow rather than QuickAccessMenu's popup - that popup's "Open
@@ -242,6 +244,8 @@ public class CollarWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Safeword");
         SafewordEditor.Draw(config, "mainHeader", ref revealSafeword);
         IconGlyph.HelpMarker("This only configures the typed /oathboundpanic command; editing it never triggers panic or changes pairing.");
+
+        DrawTeleportJourneyRow();
 
         if (config.ResolveActiveDirection() == PairingDirection.OwnerSide)
         {
@@ -368,6 +372,45 @@ public class CollarWindow : Window, IDisposable
             ImGui.SetTooltip(isOpen ? "Close Sub Control" : "Open Sub Control - every configured command in one place");
     }
 
+    /// collar/teleport "Sub can stop an in-progress Teleport from the header": shown only while a journey runs,
+    /// regardless of the active pairing's direction - with multiple pairings this device can be a Sub in a
+    /// pairing other than the active one. Stop has no confirmation on purpose: it's the way out of a stuck
+    /// navigation, so it must work on the first click.
+    private void DrawTeleportJourneyRow()
+    {
+        var teleport = plugin.TeleportCommand;
+        if (!teleport.IsInProgress)
+            return;
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        var stuck = teleport.Stage == TeleportStage.Stuck;
+        IconGlyph.Text(FontAwesomeIcon.Route, "Teleporting to your Owner");
+        IconGlyph.WrappedColored(stuck ? Theme.Warning : Theme.TextMuted, TeleportStageLabel(teleport));
+
+        using (ImRaii.PushColor(ImGuiCol.Button, Theme.Danger))
+            if (ImGui.Button("Stop teleport##teleportStop"))
+                teleport.Stop("stopped from the header");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Stops navigation right away and gives you back control of your movement.");
+    }
+
+    private static string TeleportStageLabel(TeleportCommand teleport) => teleport.Stage switch
+    {
+        TeleportStage.ChangingWorld => "Changing world...",
+        TeleportStage.TravelingToWard => "Traveling to your Owner's ward...",
+        TeleportStage.Teleporting => "Teleporting...",
+        TeleportStage.ChangingInstance => "Changing instance...",
+        TeleportStage.PreparingNav => teleport.NavBuildProgress is var p and >= 0f and < 1f
+            ? $"Preparing navigation for this zone ({p * 100f:0}%)... movement stays locked."
+            : "Preparing navigation...",
+        TeleportStage.Mounting => "Mounting...",
+        TeleportStage.Navigating => "Navigating to your Owner...",
+        TeleportStage.Stuck => "Navigation seems stuck - retrying. Movement stays locked; press Stop if it doesn't recover.",
+        TeleportStage.Arriving => "Arriving...",
+        _ => "",
+    };
+
     /// collar/ui-organization "Header includes a quick Teleport action": relocated here from the Follow /
     /// Leash tab (design.md "Teleport moves, doesn't duplicate") since it's commonly used enough to want in
     /// the always-visible header rather than several clicks deep. Resolve/compose/send now lives in the
@@ -375,13 +418,8 @@ public class CollarWindow : Window, IDisposable
     /// call the exact same logic instead of duplicating it.
     private void DrawTeleportHeaderAction()
     {
+        // No Lifestream/vnavmesh check here: the Owner only reports its location, the Sub does the travel.
         IconGlyph.Text(FontAwesomeIcon.MapMarkerAlt, "Teleport");
-        if (!plugin.LifestreamIpc.IsAvailable)
-        {
-            IconGlyph.WrappedDisabled("Requires the Lifestream plugin, installed and running on your own client.");
-            return;
-        }
-
         var canSend = DrawOwnerCanSendBanner();
         using (ImRaii.Disabled(!canSend))
         {
