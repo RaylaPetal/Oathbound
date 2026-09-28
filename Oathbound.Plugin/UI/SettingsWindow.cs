@@ -82,16 +82,9 @@ public class SettingsWindow : Window, IDisposable
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 
-    /// Split into tabs (previously one long vertically-stacked flow) once this window's growth made it too
-    /// tall to comfortably navigate in one scroll region - each tab now scrolls independently within the
-    /// window's remaining space. Grouped by what they're for, not just by prior visual order: Identity &
-    /// Pairing is setup you do once; ToS bundles every risk acknowledgement; Test holds the one local
-    /// testing tool on its own, so it's reachable without scrolling past every acknowledgement. Scanning itself moved to the main window's Sync tab
-    /// (collar/ui-organization) - it's catalog upkeep, grouped with the rest of catalog sync now rather
-    /// than living here.
-    /// collar/ui-organization "Settings shows a dependency status header" (design.md D15): above the tab bar so
-    /// it's on every tab. One wrapped chip per dependency - green detected, red missing - with the exact
-    /// state and what it's for in the tooltip.
+    /// collar/ui-organization "Settings shows a dependency status header" (design.md D15): its own card above
+    /// the tab bar, so it's on every tab and matches the other Settings cards. One wrapped chip per dependency
+    /// - green detected, red missing - with the exact state and what it's for in the tooltip.
     private void DrawDependencyHeader()
     {
         var status = plugin.DependencyStatus;
@@ -128,16 +121,21 @@ public class SettingsWindow : Window, IDisposable
                 ImGui.SetTooltip($"{dependency.Name}: {stateText}\nUsed for: {dependency.Purpose}\nWho needs it: {dependency.WhoNeedsIt}");
             }
         }
-
-        ImGui.Spacing();
-        ImGui.Separator();
     }
 
+    /// Split into tabs (previously one long vertically-stacked flow) once this window's growth made it too
+    /// tall to comfortably navigate in one scroll region - each tab now scrolls independently within the
+    /// window's remaining space. Grouped by what they're for, not just by prior visual order: Identity &
+    /// Pairing is setup you do once; ToS bundles every risk acknowledgement; Test holds the one local
+    /// testing tool on its own, so it's reachable without scrolling past every acknowledgement. Scanning itself moved to the main window's Sync tab
+    /// (collar/ui-organization) - it's catalog upkeep, grouped with the rest of catalog sync now rather
+    /// than living here.
     public override void Draw()
     {
         var config = plugin.Configuration;
 
-        DrawDependencyHeader();
+        using (Section.Begin("dependenciesCard"))
+            DrawDependencyHeader();
 
         if (!ImGui.BeginTabBar("settingsTabs"))
             return;
