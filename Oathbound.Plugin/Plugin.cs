@@ -543,6 +543,13 @@ public sealed class Plugin : IDalamudPlugin
         foreach (var cmd in Configuration.QuickCommands.Gestures)
         {
             if (cmd.Target is null || !Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(cmd.Target, out var entry)) continue;
+            // collar/animation-labels: entries imported before display labels existed saved the old +1 pose
+            // numbering as their Label - relabel them, but only while the Owner hasn't renamed them.
+            if (cmd.Label == entry.Label && entry.Label != entry.DisplayLabel)
+            {
+                cmd.Label = entry.DisplayLabel;
+                changed = true;
+            }
             var readable = $"gesture {CommandSelector.Quote(CommandSelector.GestureSelector(entry, Configuration.GestureMapping.ImportedPeerCatalog.Values))}";
             if (cmd.Command == readable) continue;
             cmd.Command = readable;

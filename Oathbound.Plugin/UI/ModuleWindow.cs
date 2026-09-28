@@ -3100,8 +3100,30 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
                 if (groupOpen)
                 {
-                    foreach (var cmd in subGroup.OrderBy(c => c.GestureOptionOrder))
-                        DrawSavedQuickRow(cmd, quick, canSend);
+                    // One heading per animation with a short row per pose/emote variant under it (a mod's
+                    // "Laying Makeout" exported for Sit Pose 4 and Sit Pose 5 reads as one animation, not
+                    // two). Each variant keeps its own Favorite/Send/Copy/Edit/Remove since each is its own
+                    // command. Only entries still carrying their imported label are grouped/shortened - an
+                    // Owner-renamed entry keeps its own text as a standalone row.
+                    var variantsByAnimation = subGroup.OrderBy(c => c.GestureOptionOrder)
+                        .Select(c => (Cmd: c, Entry: AutoLabeledGesture(c)))
+                        .GroupBy(v => v.Entry?.AnimationName ?? $"\u0001{v.Cmd.Label}\u0001{v.Cmd.Command}");
+                    foreach (var variants in variantsByAnimation)
+                    {
+                        var rows = variants.ToList();
+                        if (rows.Count == 1)
+                        {
+                            var (cmd, entry) = rows[0];
+                            DrawSavedQuickRow(cmd, quick, canSend, entry is null ? null : _ => $"{entry.AnimationName} — {entry.Trigger!.Label}");
+                            continue;
+                        }
+
+                        ImGui.TextUnformatted(variants.Key);
+                        ImGui.Indent();
+                        foreach (var (cmd, entry) in rows)
+                            DrawSavedQuickRow(cmd, quick, canSend, _ => entry!.Trigger!.Label);
+                        ImGui.Unindent();
+                    }
                 }
 
                 if (hasGroupLabel && groupOpen)
@@ -3110,6 +3132,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.Unindent();
         }
     }
+
+    /// The imported catalog entry behind a gesture quick command, when the command still shows its imported
+    /// label (so it's safe to present as mod-less "animation — pose"); null for manual or renamed entries.
+    private GestureExportEntry? AutoLabeledGesture(QuickCommand cmd) =>
+        cmd.Target is { } target &&
+        plugin.Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(target, out var entry) &&
+        entry.Trigger is not null && cmd.Label == entry.DisplayLabel
+            ? entry
+            : null;
 
     /// Follow has no reserved-keyword override the way Title/Outfit/Gesture do (ChatCommandListener never
     /// added a "force follow" - it's always a plain alias), so there's nothing to auto-populate from a
