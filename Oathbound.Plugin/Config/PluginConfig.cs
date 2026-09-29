@@ -332,6 +332,16 @@ public class QuickCommand
     /// imported moodle list), sent as its `moodle:"..."` option. Null = the Sub's own default. Only used on
     /// commands that accept the option (outfit lock / restraint lock|catalog|wear) - see OwnerMoodleOverride.
     public string? MoodleOverride { get; set; }
+
+    /// collar/restraint-lock-timer: how long this command locks the Sub's restraints, in seconds, sent as its
+    /// `lockfor:` option. Null = Permanent (the default, and every command saved before this existed). Only
+    /// used on commands that accept the option - see OwnerLockOption.
+    public int? LockSeconds { get; set; }
+
+    /// collar/restraint-lock-timer: LockSeconds as it was when this command was favorited - what the
+    /// Favorites window and the header's quick-access menu send, so a later timer change on the command's
+    /// own row doesn't silently change the favorite. Re-favoriting takes a fresh snapshot.
+    public int? FavoriteLockSeconds { get; set; }
 }
 
 /// Owner-side only in practice. Outfits/Gestures are normally auto-populated by "Add from clipboard" (one
@@ -770,6 +780,9 @@ public class PluginConfig : IPluginConfiguration
     public bool OutfitForceLocked { get; set; }
     public bool CollarForceLocked { get; set; }
     public bool RestraintsForceLocked { get; set; }
+    /// collar/restraint-lock-timer: when a Timed restraints lock ends (UTC wall clock, so it keeps counting
+    /// through reloads/restarts). Null while RestraintsForceLocked is set means Permanent.
+    public DateTime? RestraintsLockExpiresAtUtc { get; set; }
     public bool ToyControlForceLocked { get; set; }
 
     /// collar/attached-moodles: which Oathbound source currently holds which Moodles status on this Sub

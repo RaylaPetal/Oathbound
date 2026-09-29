@@ -54,6 +54,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// collar/attached-moodles: the Owner's moodle pick for the direct slot/item restraint being built (null =
     /// no moodle - an ad-hoc device has no Sub-side default). Saved per-command picks live on QuickCommand.
     private string? adHocMoodleOverride;
+    /// collar/restraint-lock-timer: the ad-hoc restraint / ad-hoc Custom Trigger drafts' lock picks (null =
+    /// Permanent). Saved per-command picks live on QuickCommand.LockSeconds.
+    private int? adHocLockSeconds;
+    private int? ctqLockSeconds;
     /// The saved-command editor's moodle pick while editing an outfit command.
     private string? editingQuickMoodle;
     private bool newOutfitLocked = true;
@@ -207,6 +211,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// command"), keyed by the quick command's Label - transient UI-only state, not persisted itself (the
     /// chosen rules are saved onto the QuickCommand on "Save rules").
     private readonly HashSet<string> expandedRestraintRuleEditors = new();
+    /// The Sub's one open configured-mod-restraint editor ("submod:<id>"), if any - see OpenSubModEditor.
+    private string? expandedSubModKey;
     private readonly Dictionary<string, RestraintRuleEditState> restraintRuleEdits = new();
 
     private sealed class RestraintRuleEditState
@@ -1041,6 +1047,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Choose scanned Penumbra mods and configure the restraints you want to share. Your Owner receives both these ready-made restraints and the complete scanned mod library for creating their own.");
         IconGlyph.WrappedDisabled("Owner force-release is always `restraint unlock`. Each restraint's alias toggles it on and off when your Owner sends it on its own, and force-applies it after `restraint lock`.");
 
+        // collar/restraint-lock-timer "Sub sees the current lock state" - recomputed every frame, so a
+        // Timed lock's countdown stays live while the window is open.
+        if (config.RestraintsForceLocked)
+        {
+            IconGlyph.WrappedColored(Theme.Warning, config.RestraintsLockExpiresAtUtc is { } expiresAt
+                ? $"Restraints locked by your Owner - unlocks in {RestraintLock.Format(expiresAt - DateTime.UtcNow)}."
+                : "Restraints locked by your Owner until they unlock them.");
+        }
+
         DrawSubModRestraints(config);
 
         // Rules-only restraints: a named set of restriction rules (forced pose, walk-only, gagged, action block - cuffs
@@ -1158,9 +1173,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                         var name = alreadyConfiguredCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyConfiguredCount + 1})";
                         var created = new ConfiguredModRestraint { CatalogId = entry.Id, Name = name };
                         configured.Add(created);
-                        var key = $"submod:{created.Id}";
-                        expandedRestraintRuleEditors.Add(key);
-                        restraintRuleEdits[key] = new RestraintRuleEditState();
+                        OpenSubModEditor($"submod:{created.Id}", new RestraintRuleEditState());
                         config.Save();
                     }
                 }
@@ -1173,31 +1186,46 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedDisabled("Choose a detected mod above, then assign its restriction rules.");
             return;
         }
-        foreach (var created in configured.ToArray())
+        // collar/ui-organization "Sub's configured mod restraints list scrolls within a bounded height": the
+        // one-line rows scroll inside a capped list, and the (tall) editor for the one open row is drawn
+        // below it rather than inline, so it's never clipped by the list's viewport.
+        var style = ImGui.GetStyle();
+        var listMaxHeight = 6 * ImGui.GetFrameHeightWithSpacing() + 2 * style.WindowPadding.Y;
+        using (Section.List("configuredRestraintModsList", listMaxHeight))
         {
+            foreach (var created in configured.ToArray())
+            {
+                var key = $"submod:{created.Id}";
+                var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
+                ImGui.TextUnformatted(created.Name);
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"{(expandedSubModKey == key ? "Close" : "Configure")}##{key}"))
+                {
+                    if (expandedSubModKey == key)
+                        CloseSubModEditor();
+                    else
+                        OpenSubModEditor(key, FromRules(created.Rules));
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Remove##{key}"))
+                {
+                    configured.Remove(created);
+                    if (expandedSubModKey == key)
+                        CloseSubModEditor();
+                    config.Save();
+                    continue;
+                }
+                if (missing) IconGlyph.WrappedColored(Theme.Warning, "This mod is outside the latest scan and will not be exported.");
+            }
+        }
+
+        {
+            var created = configured.FirstOrDefault(x => $"submod:{x.Id}" == expandedSubModKey);
+            if (created is null)
+                return;
             var key = $"submod:{created.Id}";
             var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
-            ImGui.TextUnformatted(created.Name);
-            ImGui.SameLine();
-            if (ImGui.SmallButton($"{(expandedRestraintRuleEditors.Contains(key) ? "Close" : "Configure")}##{key}"))
-            {
-                if (!expandedRestraintRuleEditors.Remove(key))
-                {
-                    expandedRestraintRuleEditors.Add(key);
-                    restraintRuleEdits[key] = FromRules(created.Rules);
-                }
-            }
-            ImGui.SameLine();
-            if (ImGui.SmallButton($"Remove##{key}"))
-            {
-                configured.Remove(created);
-                expandedRestraintRuleEditors.Remove(key);
-                restraintRuleEdits.Remove(key);
-                config.Save();
-                continue;
-            }
-            if (missing) IconGlyph.WrappedColored(Theme.Warning, "This mod is outside the latest scan and will not be exported.");
-            if (expandedRestraintRuleEditors.Contains(key) && restraintRuleEdits.TryGetValue(key, out var edit))
+            if (restraintRuleEdits.TryGetValue(key, out var edit))
             {
                 using (Section.Begin(key))
                 {
@@ -1251,12 +1279,27 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     {
                         created.Rules = ToRules(edit);
                         config.Save();
-                        expandedRestraintRuleEditors.Remove(key);
-                        restraintRuleEdits.Remove(key);
+                        CloseSubModEditor();
                     }
                 }
             }
         }
+    }
+
+    /// Only one configured mod restraint's editor is open at a time - opening another discards the current
+    /// one's unsaved draft, exactly as its Close button would.
+    private void OpenSubModEditor(string key, RestraintRuleEditState draft)
+    {
+        CloseSubModEditor();
+        expandedSubModKey = key;
+        restraintRuleEdits[key] = draft;
+    }
+
+    private void CloseSubModEditor()
+    {
+        if (expandedSubModKey is { } open)
+            restraintRuleEdits.Remove(open);
+        expandedSubModKey = null;
     }
 
     private static string PoseName(int poseModeId) => poseModeId is >= 1 and <= 3 ? PoseNames[poseModeId - 1] : "unknown";
@@ -2521,6 +2564,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.InputText("Label##adHocRestraint", ref newAdHocLabel, 32);
         IconGlyph.HelpMarker("Your own reference name for this restraint - never matched against anything on your Sub's side.");
         OwnerMoodleOverride.Draw("adHocRestraint", plugin.Configuration, ref adHocMoodleOverride);
+        OwnerLockOption.Draw("adHocRestraint", ref adHocLockSeconds);
 
         Section.SubHeading("Restrictions");
         DrawRestraintRuleCheckboxes(newAdHocRuleEdit, "adHocRestraint", rulesOnly: true);
@@ -2537,7 +2581,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit));
             ImGui.TextUnformatted("Send this restraint:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(OwnerMoodleOverride.Apply(command, adHocMoodleOverride), canSend, "adHocRestraint");
+            DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(command, adHocMoodleOverride), adHocLockSeconds), canSend, "adHocRestraint");
         }
         else
         {
@@ -2699,6 +2743,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
         }
 
+        // collar/restraint-lock-timer: only a bundle with a restraint in it has anything to lock.
+        var bundleHasRestraint = ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint);
+        if (bundleHasRestraint)
+        {
+            Section.SubHeading("Restraint lock");
+            OwnerLockOption.Draw("ctqCustomTrigger", ref ctqLockSeconds);
+        }
+        var bundleLockSeconds = bundleHasRestraint ? ctqLockSeconds : null;
+
         ImGui.Spacing();
         ImGui.Separator();
         if (ctqLabel.Trim().Length > 0 && ctqDraftActions.Count > 0)
@@ -2706,7 +2759,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var command = CustomTriggerCommand.BuildCastCommand(ctqLabel.Trim(), ctqDraftActions);
             ImGui.TextUnformatted(editingOwnerBundle is null ? "Send or save this bundle:" : "Update this saved bundle:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(command, canSend, "ctqCustomTrigger");
+            DrawSendCopyButtons(OwnerLockOption.Apply(command, bundleLockSeconds), canSend, "ctqCustomTrigger");
             ContinueRowOrWrap(ButtonWidth("Save bundle"));
             var aliases = plugin.Configuration.QuickCommands.Aliases;
             var stale = editingOwnerBundle is not null && !aliases.Contains(editingOwnerBundle);
@@ -2719,11 +2772,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 if (ImGui.SmallButton($"{(editingOwnerBundle is null ? "Save bundle" : "Save changes")}##ctqSave"))
                 {
                     if (editingOwnerBundle is null)
-                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command });
+                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command, LockSeconds = bundleLockSeconds });
                     else
                     {
                         editingOwnerBundle.Label = ctqLabel.Trim();
                         editingOwnerBundle.Command = command;
+                        editingOwnerBundle.LockSeconds = bundleLockSeconds;
                     }
                     plugin.Configuration.Save();
                     ClearOwnerBundleDraft();
@@ -2746,6 +2800,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         ctqDraftActions.Clear();
         ctqLabel = "";
+        ctqLockSeconds = null;
         editingOwnerActionIndex = null;
         editingOwnerBundle = null;
     }
@@ -2759,6 +2814,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         editingOwnerBundle = command;
         ctqLabel = label;
+        ctqLockSeconds = command.LockSeconds;
         ctqDraftActions.Clear();
         ctqDraftActions.AddRange(actions.Select(CloneAction));
         editingOwnerActionIndex = null;
@@ -2780,6 +2836,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Indent();
         using (ImRaii.Disabled(!hasRules || !hasEquipment || !catalogAvailable))
             DrawSendOnly(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"enable_{cmd.Label}", "Enable & lock");
+        // collar/restraint-lock-timer: this restraint's own lock duration, right beside the button that sends it.
+        OwnerLockOption.DrawInline($"restraintQuick_{cmd.Label}", cmd, plugin.Configuration);
         var configureLabel = hasRules && hasEquipment ? "Edit setup" : "Configure setup";
         ContinueRowOrWrap(ButtonWidth(configureLabel));
         var expanded = expandedRestraintRuleEditors.Contains(cmd.Label);
@@ -3106,7 +3164,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     // command. Only entries still carrying their imported label are grouped/shortened - an
                     // Owner-renamed entry keeps its own text as a standalone row.
                     var variantsByAnimation = subGroup.OrderBy(c => c.GestureOptionOrder)
-                        .Select(c => (Cmd: c, Entry: AutoLabeledGesture(c)))
+                        .Select(c => (Cmd: c, Entry: AutoLabeledGesture(plugin.Configuration, c)))
                         .GroupBy(v => v.Entry?.AnimationName ?? $"\u0001{v.Cmd.Label}\u0001{v.Cmd.Command}");
                     foreach (var variants in variantsByAnimation)
                     {
@@ -3135,9 +3193,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     /// The imported catalog entry behind a gesture quick command, when the command still shows its imported
     /// label (so it's safe to present as mod-less "animation — pose"); null for manual or renamed entries.
-    private GestureExportEntry? AutoLabeledGesture(QuickCommand cmd) =>
+    /// Also used by SubControlWindow's per-mod Animation grouping.
+    internal static GestureExportEntry? AutoLabeledGesture(PluginConfig config, QuickCommand cmd) =>
         cmd.Target is { } target &&
-        plugin.Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(target, out var entry) &&
+        config.GestureMapping.ImportedPeerCatalog.TryGetValue(target, out var entry) &&
         entry.Trigger is not null && cmd.Label == entry.DisplayLabel
             ? entry
             : null;
@@ -3996,13 +4055,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
             shownLabel += "  · not locked";
         // collar/attached-moodles: a command's own moodle pick shows right on its row.
         if (cmd.MoodleOverride is { } rowMoodle && OwnerMoodleOverride.Accepts(cmd.Command))
-            shownLabel += $"  · moodle: {rowMoodle}";
-        ImGui.TextUnformatted(shownLabel);
+            shownLabel += $"  · moodle: {rowMoodle}";        ImGui.TextUnformatted(shownLabel);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(shownLabel);
         ContinueRowOrWrap(ButtonWidth("Favorited"));
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
         ContinueRowOrWrap(ButtonWidth("Send"));
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
+        // collar/restraint-lock-timer: restraint commands and bundles containing one pick their lock right here.
+        if (OwnerLockOption.Accepts(cmd.Command))
+            OwnerLockOption.DrawInline($"{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
         // Edit expands this row's own editor right beneath it (and collapses it again) - a bundle is the
         // one exception, loaded into the bundle builder instead.
         var expanded = ReferenceEquals(editingQuickCommand, cmd);
@@ -4168,8 +4229,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 source.Command = draftCommand;
                 source.Target = draftTarget;
                 if (editingQuickCategory == QuickEditCategory.Outfit)
-                    source.MoodleOverride = editingQuickMoodle;
-                if (editingQuickCategory == QuickEditCategory.Title)
+                    source.MoodleOverride = editingQuickMoodle;                if (editingQuickCategory == QuickEditCategory.Title)
                 {
                     source.TitleIsPrefix = editingQuickTitleIsPrefix;
                     source.TitleColor = editingQuickTitleColor;
@@ -4258,11 +4318,17 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton($"{(cmd.IsFavorite ? "Favorited" : "Favorite")}##fav_{idSuffix}"))
             {
                 cmd.IsFavorite = !cmd.IsFavorite;
+                // collar/restraint-lock-timer: a favorite keeps the timer this command had when it was starred.
+                cmd.FavoriteLockSeconds = cmd.IsFavorite ? cmd.LockSeconds : null;
                 plugin.Configuration.Save();
             }
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(cmd.IsFavorite ? "Remove from favorites" : "Add to favorites");
+            ImGui.SetTooltip(cmd.IsFavorite
+                ? "Remove from favorites"
+                : OwnerLockOption.Accepts(cmd.Command)
+                    ? "Add to favorites - the favorite keeps the lock timer set right now"
+                    : "Add to favorites");
     }
 
     /// Same shape as `DrawFavoriteToggle`, for a built-in fixed action (no backing `QuickCommand` to attach

@@ -34,7 +34,9 @@ public sealed class SubControlWindow : Window, IDisposable
         // NoMove: position is programmatically glued every frame in PreDraw below - offering a drag
         // affordance that would just snap back the next frame is worse than not offering one at all.
         Flags = ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoCollapse;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(340, 260), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
+        // 540 wide: room for a restraint row's Send + a readable label + the full Timed lock picker
+        // (Timed combo, minutes field with -/+ and "min") without the label being cut down to nothing.
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(540, 260), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
     }
 
     public void Dispose() { }
@@ -135,10 +137,88 @@ public sealed class SubControlWindow : Window, IDisposable
 
         if (visible.Count == 0)
             IconGlyph.WrappedDisabled("No commands match this search.");
-        foreach (var cmd in visible)
-            DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend);
+        else if (label == "Animation")
+            DrawAnimationRows(visible, filter.Length > 0, canSend);
+        else
+        {
+            foreach (var cmd in visible)
+            {
+                // collar/restraint-lock-timer: the same per-restraint timer as its module-window row (one
+                // shared QuickCommand.LockSeconds), so a change here shows up there and vice versa. Its width
+                // is reserved up front so a long label gets shortened rather than pushing it off the edge.
+                var hasLock = OwnerLockOption.Accepts(cmd.Command);
+                DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, hasLock ? OwnerLockOption.InlineWidth(cmd) : 0f);
+                if (hasLock)
+                    OwnerLockOption.DrawInline($"subControl_{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
+            }
+        }
         ImGui.Unindent();
     }
+
+    /// Animation rows grouped under one collapsible node per mod, the same grouping the Animation module
+    /// window uses - so each row only needs the short "animation — pose" label instead of repeating the
+    /// mod name on every line. Rows keep the Sub's own manifest order (not alphabetical, see
+    /// ModuleWindow.DrawGestureQuickSection). While searching, every mod with a match is opened.
+    private void DrawAnimationRows(List<QuickCommand> visible, bool searching, bool canSend)
+    {
+        foreach (var mod in visible.GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (searching)
+                ImGui.SetNextItemOpen(true);
+            if (!ImGui.TreeNodeEx($"{mod.Key} ({mod.Count()})##subControlAnimMod_{mod.Key}"))
+                continue;
+
+            var rows = mod.OrderBy(c => c.GestureGroupOrder).ThenBy(c => c.GestureOptionOrder)
+                .Select(c => (Cmd: c, Entry: ModuleWindow.AutoLabeledGesture(plugin.Configuration, c)))
+                .ToList();
+
+            // A big mod gets its own search box, scoped to just that mod's animations.
+            var expandVariants = searching;
+            if (rows.Count > ModSearchThreshold)
+            {
+                var modFilter = modSearches.GetValueOrDefault(mod.Key, "");
+                ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+                if (ImGui.InputTextWithHint($"##subControlAnimModSearch_{mod.Key}", $"Search {mod.Key}...", ref modFilter, 128))
+                    modSearches[mod.Key] = modFilter;
+                var trimmed = modFilter.Trim();
+                if (trimmed.Length > 0)
+                    rows = rows.Where(r => r.Cmd.Label.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
+                        || (r.Cmd.GestureGroupName?.Contains(trimmed, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+                if (rows.Count == 0)
+                    IconGlyph.WrappedDisabled("No animations in this mod match.");
+                expandVariants |= trimmed.Length > 0;
+            }
+
+            // Pose/emote variants of one animation (e.g. the same dance exported for six emotes) fold into one
+            // collapsible entry whose rows show only the variant. Only entries still carrying their imported
+            // label are grouped - a renamed/manual entry stays its own row, same rule as the module window.
+            foreach (var variants in rows.GroupBy(r => r.Entry?.AnimationName ?? $"\u0001{r.Cmd.Label}\u0001{r.Cmd.Command}"))
+            {
+                var list = variants.ToList();
+                if (list.Count == 1)
+                {
+                    var (cmd, entry) = list[0];
+                    var shortLabel = entry is null ? cmd.Label : $"{entry.AnimationName} — {entry.Trigger!.Label}";
+                    DrawSendRow(shortLabel, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, fullLabel: cmd.Label);
+                    continue;
+                }
+
+                if (expandVariants)
+                    ImGui.SetNextItemOpen(true);
+                var heading = FitWithEllipsis($"{variants.Key} ({list.Count})", ImGui.GetContentRegionAvail().X - ImGui.GetTreeNodeToLabelSpacing());
+                if (!ImGui.TreeNodeEx($"{heading}##subControlAnimVariants_{mod.Key}_{variants.Key}"))
+                    continue;
+                foreach (var (cmd, entry) in list)
+                    DrawSendRow(entry!.Trigger!.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, fullLabel: cmd.Label);
+                ImGui.TreePop();
+            }
+            ImGui.TreePop();
+        }
+    }
+
+    /// Mods with more animations than this get their own search box inside their group.
+    private const int ModSearchThreshold = 15;
+    private readonly Dictionary<string, string> modSearches = new();
 
     private void DrawCollarSection(bool canSend)
     {
@@ -208,7 +288,11 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    private void DrawSendRow(string label, string command, bool canSend)
+    /// One Send button plus its label. The label is shortened with "..." to fit what's left of the row (minus
+    /// `reservedWidth` for anything drawn after it on the same line), so the window never needs to grow to
+    /// show a long name; hovering shows the full label (`fullLabel` when the row shows a shorter one) above
+    /// the exact text that would be sent.
+    private void DrawSendRow(string label, string command, bool canSend, float reservedWidth = 0f, string? fullLabel = null)
     {
         var messages = plugin.ChatComposer.ComposeAll(command);
         var fits = ChatComposer.AllFit(messages);
@@ -218,8 +302,35 @@ public sealed class SubControlWindow : Window, IDisposable
                 plugin.ChatSender.SendAll(messages);
         }
         ImGui.SameLine();
-        ImGui.TextUnformatted(label);
+        var available = ImGui.GetContentRegionAvail().X - reservedWidth;
+        var shown = FitWithEllipsis(label, available);
+        ImGui.TextUnformatted(shown);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
+        {
+            var status = !fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.";
+            ImGui.SetTooltip($"{fullLabel ?? label}\n\n{status}");
+        }
+    }
+
+    private const string Ellipsis = "...";
+
+    /// `text` unchanged when it fits in `maxWidth`, otherwise the longest prefix that fits with "..."
+    /// appended (binary search on length - labels here can run past 100 characters).
+    private static string FitWithEllipsis(string text, float maxWidth)
+    {
+        if (ImGui.CalcTextSize(text).X <= maxWidth)
+            return text;
+
+        var ellipsisWidth = ImGui.CalcTextSize(Ellipsis).X;
+        int low = 0, high = text.Length;
+        while (low < high)
+        {
+            var mid = (low + high + 1) / 2;
+            if (ImGui.CalcTextSize(text[..mid]).X + ellipsisWidth <= maxWidth)
+                low = mid;
+            else
+                high = mid - 1;
+        }
+        return low == 0 ? Ellipsis : text[..low].TrimEnd() + Ellipsis;
     }
 }

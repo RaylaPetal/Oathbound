@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using Dalamud.Game.ClientState.Conditions;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
 using Oathbound.Plugin.Safety;
@@ -189,7 +190,7 @@ public sealed class RestraintCommand
     /// (case-insensitive) - same lookup shape as OutfitCommand.ForceApply. Applies the device using its own
     /// stored rules. Always force-locks. `moodleOverride` (here and on every Force* below) is the Owner's
     /// optional `moodle:"..."` pick (collar/attached-moodles), used instead of the device's default moodle.
-    public bool ForceApply(string deviceName, string? moodleOverride = null)
+    public bool ForceApply(string deviceName, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
         var entry = FindDeviceByWord(deviceName);
@@ -197,7 +198,7 @@ public sealed class RestraintCommand
         {
             // A configured mod restraint's alias works here too, using the Sub's own rules for it.
             if (FindConfiguredModByWord(deviceName) is { ItemId: { } itemId } mod && mod.Rules.Count > 0)
-                return ForceApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride);
+                return ForceApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride, restraintLock);
             LastFailureReason = $"device \"{deviceName}\" was not found";
             return false;
         }
@@ -205,7 +206,7 @@ public sealed class RestraintCommand
         if (!ApplyDevice(entry.Id, entry, moodleOverride))
             return false;
 
-        runtimeState.RestraintsForceLocked = true;
+        EngageLock(restraintLock);
         return true;
     }
 
@@ -213,7 +214,7 @@ public sealed class RestraintCommand
     /// A Custom Trigger is still an Owner command, so this deliberately does not use Toggle (which is
     /// Sub self-service and is refused after an Owner force-lock). Multiple calls from the same bundle may
     /// therefore add multiple compatible devices before leaving the category force-locked.
-    public bool ForceApplyById(string deviceId)
+    public bool ForceApplyById(string deviceId, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
         if (!config.RestraintMapping.Devices.TryGetValue(deviceId, out var device))
@@ -227,14 +228,14 @@ public sealed class RestraintCommand
         if (activeDeviceIds.Contains(deviceId))
         {
             Replay(deviceId, device.Rules);
-            runtimeState.RestraintsForceLocked = true;
+            EngageLock(restraintLock);
             return true;
         }
 
         if (!ApplyDevice(device.Id, device))
             return false;
 
-        runtimeState.RestraintsForceLocked = true;
+        EngageLock(restraintLock);
         return true;
     }
 
@@ -242,7 +243,7 @@ public sealed class RestraintCommand
     /// override"): matches `deviceName` against every captured device, and activates exactly the rules the
     /// Owner assigned to their quick command, ignoring whatever rules the Sub may have separately assigned
     /// to that same device.
-    public bool ForceApply(string deviceName, List<RestraintRuleAssignment> rules, string? moodleOverride = null)
+    public bool ForceApply(string deviceName, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         var captured = config.RestraintMapping.Devices.Values
             .FirstOrDefault(d => string.Equals(d.Name, deviceName, StringComparison.OrdinalIgnoreCase));
@@ -264,7 +265,7 @@ public sealed class RestraintCommand
         if (!ApplyDevice(device.Id, device, moodleOverride))
             return false;
 
-        runtimeState.RestraintsForceLocked = true;
+        EngageLock(restraintLock);
         return true;
     }
 
@@ -273,7 +274,7 @@ public sealed class RestraintCommand
     /// device id is derived deterministically from slot+item (design.md's "Ad-hoc device identity") rather
     /// than a stored `RestraintDeviceDefinition.Id`, so conflict tracking and release work exactly like a
     /// name-referenced device without needing one to exist in the Sub's own catalog.
-    public bool ForceApplyAdHoc(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules, string? moodleOverride = null)
+    public bool ForceApplyAdHoc(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         var device = new RestraintDeviceDefinition
         {
@@ -290,20 +291,22 @@ public sealed class RestraintCommand
         if (!ApplyDevice(device.Id, device, moodleOverride))
             return false;
 
-        runtimeState.RestraintsForceLocked = true;
+        EngageLock(restraintLock);
         return true;
     }
 
-    public bool ForceApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride = null)
+    public bool ForceApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         if (activeCatalogOverrides.ContainsKey(CatalogRuntimeId(catalogId)))
         {
             Replay(CatalogRuntimeId(catalogId), rules);
+            // Re-sending an already-worn restraint still counts as applied, so it (re)sets the lock too.
+            EngageLock(restraintLock);
             return true;
         }
         if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride))
             return false;
-        runtimeState.RestraintsForceLocked = true;
+        EngageLock(restraintLock);
         return true;
     }
 
@@ -401,6 +404,14 @@ public sealed class RestraintCommand
         return true;
     }
 
+    /// collar/restraint-lock-timer "The most recent lock command sets the lock": called only after an Owner
+    /// command actually applied, so a refused command leaves the existing lock (and its timer) untouched.
+    private void EngageLock(RestraintLock restraintLock)
+    {
+        runtimeState.RestraintsForceLocked = true;
+        runtimeState.RestraintsLockExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
+    }
+
     /// The only thing that can release every Owner-forced device besides panic.
     public bool ForceUnlock()
     {
@@ -423,6 +434,21 @@ public sealed class RestraintCommand
     /// animation; GestureCommand uses the same framework-thread delay for this reason.
     public void OnFrameworkUpdate()
     {
+        // collar/restraint-lock-timer "Timed lock expiry releases restraints": exactly `restraint unlock`'s
+        // teardown, deferred until the character can actually be changed (logged in, not mid zone-change) -
+        // including an end time that passed while the plugin wasn't even loaded.
+        if (runtimeState.RestraintsForceLocked
+            && runtimeState.RestraintsLockExpiresAtUtc is { } expiresAt
+            && DateTime.UtcNow >= expiresAt
+            && Plugin.ClientState.IsLoggedIn
+            && Plugin.ObjectTable.LocalPlayer is not null
+            && !Plugin.Condition[ConditionFlag.BetweenAreas]
+            && !Plugin.Condition[ConditionFlag.BetweenAreas51])
+        {
+            Plugin.Log.Information("Timed restraints lock expired - releasing restraints.");
+            ForceUnlock();
+        }
+
         var now = Environment.TickCount64;
         foreach (var (key, pending) in pendingBoundPlays.Where(x => now >= x.Value.ReadyAtTicks).ToList())
         {

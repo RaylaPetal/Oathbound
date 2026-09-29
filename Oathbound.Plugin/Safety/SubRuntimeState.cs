@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using Oathbound.Plugin.Config;
 
@@ -56,7 +57,22 @@ public sealed class SubRuntimeState
     public bool RestraintsForceLocked
     {
         get => config.RestraintsForceLocked;
-        set { config.RestraintsForceLocked = value; config.Save(); }
+        set
+        {
+            config.RestraintsForceLocked = value;
+            // collar/restraint-lock-timer: every path that clears the lock (ForceUnlock, panic's Reset, pairing
+            // end) also discards any timer, so a stale end time can never fire later.
+            if (!value)
+                config.RestraintsLockExpiresAtUtc = null;
+            config.Save();
+        }
+    }
+
+    /// collar/restraint-lock-timer: the Timed lock's end time, or null for a Permanent (or no) lock.
+    public DateTime? RestraintsLockExpiresAtUtc
+    {
+        get => config.RestraintsLockExpiresAtUtc;
+        set { config.RestraintsLockExpiresAtUtc = value; config.Save(); }
     }
 
     /// collar/toy-control: set while an Owner-initiated vibrate/pattern command is active (either until

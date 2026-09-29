@@ -237,11 +237,11 @@ public static class QuickAccessMenu
 
     private static void DrawFavoriteMenuItem(Plugin plugin, QuickCommand cmd, bool canSend)
     {
-        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd));
+        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
         var fits = ChatComposer.AllFit(messages);
         using (ImRaii.Disabled(!canSend || !fits))
         {
-            if (ImGui.MenuItem(cmd.Label))
+            if (ImGui.MenuItem(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label))
                 plugin.ChatSender.SendAll(messages);
         }
         if (ImGui.IsItemHovered())

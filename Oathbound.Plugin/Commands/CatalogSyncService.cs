@@ -274,6 +274,9 @@ public sealed class CatalogSyncService
             if (match is not null)
             {
                 incomingEntry.IsFavorite = match.IsFavorite;
+                // collar/restraint-lock-timer: the Owner's own timer picks aren't part of the Sub's export.
+                incomingEntry.LockSeconds = match.LockSeconds;
+                incomingEntry.FavoriteLockSeconds = match.FavoriteLockSeconds;
                 carryForwardExtra?.Invoke(match, incomingEntry);
                 updated++;
             }

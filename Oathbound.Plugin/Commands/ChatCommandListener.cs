@@ -365,7 +365,11 @@ public sealed class ChatCommandListener : IDisposable
             case "moodle":
                 return permissions.Moodles ? HandleForceMoodle(rest) : LocalTestResult.Fail("Moodles permission is not enabled.");
             case "restraint":
-                return permissions.Restraints && config.TosAcknowledged ? HandleForceRestraint(MoodleOption.Strip(rest, out var restraintMoodle), restraintMoodle) : LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.");
+                // collar/restraint-lock-timer: the leading `lockfor:` option comes off first, then the trailing
+                // `moodle:` one, leaving the unchanged sub-verb grammar for HandleForceRestraint.
+                return permissions.Restraints && config.TosAcknowledged
+                    ? HandleForceRestraint(MoodleOption.Strip(LockTimerOption.Strip(rest, out var restraintLock), out var restraintMoodle), restraintMoodle, restraintLock)
+                    : LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.");
             case "toy":
                 return permissions.ToyControl && config.ToyControlAcknowledged ? HandleForceToy(rest) : LocalTestResult.Fail("Toy control permission or its dedicated acknowledgement is not enabled.");
             case "customtrigger":
@@ -374,7 +378,7 @@ public sealed class ChatCommandListener : IDisposable
                 // CustomTriggerCommand.Apply checks each bundled action's own permission (and Chat's
                 // dedicated acknowledgement) individually as it dispatches (design.md's "orchestrator,
                 // not a reimplementation" decision - see also the ResolveAlias CustomTriggers branch).
-                return HandleForceCustomTrigger(rest);
+                return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock);
             case "teleport":
                 // Deliberately no outer permission gate here either, unlike the categories above - unlike
                 // them, every one of Teleport's guards (permission, ToS acknowledgement, duty, combat,
@@ -582,7 +586,7 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\" or \"clear\".");
     }
 
-    private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride)
+    private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride, RestraintLock restraintLock)
     {
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
@@ -597,7 +601,7 @@ public sealed class ChatCommandListener : IDisposable
             var remainder = rest[lockPrefix.Length..];
             if (RestraintCommand.TryParseLockCommand(remainder, out var name, out var rules) && name.Length > 0)
             {
-                var applied = rules is { Count: > 0 } ? restraints.ForceApply(name, rules, moodleOverride) : restraints.ForceApply(name, moodleOverride);
+                var applied = rules is { Count: > 0 } ? restraints.ForceApply(name, rules, moodleOverride, restraintLock) : restraints.ForceApply(name, moodleOverride, restraintLock);
                 return applied
                     ? LocalTestResult.Ok($"Restraint device \"{name}\" applied.")
                     : LocalTestResult.Fail($"No restraint device named \"{name}\" (or the apply failed).");
@@ -610,7 +614,7 @@ public sealed class ChatCommandListener : IDisposable
         {
             if (!RestraintCommand.TryParseCatalogCommand(rest[catalogPrefix.Length..], out var id, out var itemId, out var rules))
                 return LocalTestResult.Fail("The catalog restraint command was malformed.");
-            return restraints.ForceApplyCatalog(id, itemId, rules, moodleOverride)
+            return restraints.ForceApplyCatalog(id, itemId, rules, moodleOverride, restraintLock)
                 ? LocalTestResult.Ok("Shared restraint applied.")
                 : LocalTestResult.Fail(restraints.LastFailureReason ?? "The shared restraint could not be applied.");
         }
@@ -621,14 +625,14 @@ public sealed class ChatCommandListener : IDisposable
             var remainder = rest[wearPrefix.Length..];
             if (RestraintCommand.TryParseWearCommand(remainder, out var slot, out var itemId, out var label, out var rules))
             {
-                return restraints.ForceApplyAdHoc(slot, itemId, label, rules, moodleOverride)
+                return restraints.ForceApplyAdHoc(slot, itemId, label, rules, moodleOverride, restraintLock)
                     ? LocalTestResult.Ok($"Ad-hoc restraint device \"{label}\" applied.")
                     : LocalTestResult.Fail($"Ad-hoc restraint device \"{label}\" failed to apply.");
             }
             return LocalTestResult.Fail("\"restraint wear\" was malformed - expected \"wear <slot> <itemId> \\\"<label>\\\" rules:...\".");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", or \"unlock\".");
+        return LocalTestResult.Fail($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", or \"unlock\" (an apply form may be preceded by \"lockfor:<seconds>\").");
     }
 
     private LocalTestResult HandleForceToy(string rest)
@@ -676,7 +680,7 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"toy\" override \"{rest}\" - expected \"vibrate intensity:<0-100> [duration:<seconds>|duration:permanent]\", \"pattern:<weak|medium|strong|pulse|a custom pattern name>\", \"sequence steps:<intensity>=<ms>,... [loop:true]\", or \"stop\".");
     }
 
-    private LocalTestResult HandleForceCustomTrigger(string rest)
+    private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock)
     {
         const string castPrefix = "cast ";
         if (rest.StartsWith(castPrefix, StringComparison.OrdinalIgnoreCase))
@@ -684,7 +688,7 @@ public sealed class ChatCommandListener : IDisposable
             var remainder = rest[castPrefix.Length..];
             if (CustomTriggerCommand.TryParseCastCommand(remainder, out var label, out var actions))
             {
-                var result = customTriggers.Apply(actions);
+                var result = customTriggers.Apply(actions, restraintLock);
                 return result.Success
                     ? LocalTestResult.Ok($"Custom trigger \"{label}\": {result.Message}")
                     : LocalTestResult.Fail($"Custom trigger \"{label}\": {result.Message}");
@@ -692,7 +696,7 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Fail("\"customtrigger cast\" was malformed - expected \"cast \\\"<label>\\\" title=...;outfit=...;gesture=...;moodle=...;restraint=...;chat=<rest of line>\" (chat, if present, must be last).");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"customtrigger\" override \"{rest}\" - expected \"cast \\\"<label>\\\" ...\".");
+        return LocalTestResult.Fail($"Unrecognized \"customtrigger\" override \"{rest}\" - expected \"[lockfor:<seconds>] cast \\\"<label>\\\" ...\".");
     }
 
     private LocalTestResult HandleForceTeleport(string rest, PairingState? sourcePairing)

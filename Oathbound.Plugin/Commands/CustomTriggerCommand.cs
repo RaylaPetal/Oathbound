@@ -35,7 +35,9 @@ public sealed class CustomTriggerCommand
         this.restraints = restraints;
     }
 
-    public LocalTestResult Apply(List<CustomTriggerAction> actions)
+    /// `restraintLock` (collar/restraint-lock-timer) only reaches the restraint action's Force* call - every
+    /// other action kind ignores it.
+    public LocalTestResult Apply(List<CustomTriggerAction> actions, RestraintLock restraintLock = default)
     {
         var applied = new List<string>();
         var skipped = new List<string>();
@@ -100,14 +102,14 @@ public sealed class CustomTriggerCommand
                     // lookup of the Sub's restraints, so it still works after the original was deleted.
                     var restraintOk = action.RestraintRules is { } inlineRules
                         ? action.RestraintRulesOnly
-                            ? restraints.ForceApplyAdHoc(action.RestraintSlot, action.RestraintItemId == 0 ? null : action.RestraintItemId, action.RestraintDeviceName, inlineRules)
-                            : restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId, inlineRules)
+                            ? restraints.ForceApplyAdHoc(action.RestraintSlot, action.RestraintItemId == 0 ? null : action.RestraintItemId, action.RestraintDeviceName, inlineRules, restraintLock: restraintLock)
+                            : restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId, inlineRules, restraintLock: restraintLock)
                         : action.RestraintCatalogId.Length > 0
                         ? restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId,
-                            config.RestraintMapping.ConfiguredMods.FirstOrDefault(x => x.CatalogId == action.RestraintCatalogId)?.Rules ?? [])
+                            config.RestraintMapping.ConfiguredMods.FirstOrDefault(x => x.CatalogId == action.RestraintCatalogId)?.Rules ?? [], restraintLock: restraintLock)
                         : config.RestraintMapping.Devices.ContainsKey(action.RestraintDeviceId)
-                            ? restraints.ForceApplyById(action.RestraintDeviceId)
-                            : restraints.ForceApply(action.RestraintDeviceName);
+                            ? restraints.ForceApplyById(action.RestraintDeviceId, restraintLock)
+                            : restraints.ForceApply(action.RestraintDeviceName, restraintLock: restraintLock);
                     if (restraintOk)
                         applied.Add($"restraint \"{action.RestraintDeviceName}\"");
                     else
@@ -351,11 +353,19 @@ public sealed class CustomTriggerCommand
     /// command.
     public static List<string>? SplitCastCommand(string command)
     {
+        const string categoryWord = "customtrigger ";
+        const string castWord = "cast ";
         var trimmed = command.Trim();
-        if (!trimmed.StartsWith(CastPrefix, StringComparison.OrdinalIgnoreCase))
+        if (!trimmed.StartsWith(categoryWord, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        var remainder = trimmed[CastPrefix.Length..].Trim();
+        // collar/restraint-lock-timer: a timed bundle reads `customtrigger lockfor:N cast ...` - every part
+        // carries the same option, so whichever part holds the restraint still locks with the timer.
+        var afterCategory = LockTimerOption.Strip(trimmed[categoryWord.Length..], out var restraintLock).TrimStart();
+        if (!afterCategory.StartsWith(castWord, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var remainder = afterCategory[castWord.Length..].Trim();
         if (!TryParseCastCommand(remainder, out var label, out _))
             return null;
 
@@ -364,7 +374,7 @@ public sealed class CustomTriggerCommand
         var parts = beforeChat.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(segment => head + segment).ToList();
         if (chatText is { Length: > 0 })
             parts.Add($"{head}chat={chatText}");
-        return parts;
+        return parts.Select(part => LockTimerOption.Insert(part, restraintLock)).ToList();
     }
 
     /// The chat action, if present, is always last and consumes the rest of the line (see BuildCastCommand).

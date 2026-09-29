@@ -74,7 +74,7 @@ public sealed class FavoritesWindow : Window, IDisposable
 
     private void DrawFavoriteRow(QuickCommand cmd, bool canSend)
     {
-        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd));
+        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
         var fits = ChatComposer.AllFit(messages);
         using (ImRaii.Disabled(!canSend || !fits))
         {
@@ -82,7 +82,7 @@ public sealed class FavoritesWindow : Window, IDisposable
                 plugin.ChatSender.SendAll(messages);
         }
         ImGui.SameLine();
-        ImGui.TextUnformatted(cmd.Label);
+        ImGui.TextUnformatted(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
     }

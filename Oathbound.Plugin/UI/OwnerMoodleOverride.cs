@@ -25,7 +25,15 @@ public static class OwnerMoodleOverride
             ? config.QuickCommands.LeashMoodleOverride
             : null));
 
-    public static string ForSend(PluginConfig config, QuickCommand cmd) => ForSend(config, cmd.Command, cmd.MoodleOverride);
+    /// A saved command's full outgoing text. Also where its lock timer (collar/restraint-lock-timer) is added,
+    /// since every send surface for a saved command already comes through here.
+    public static string ForSend(PluginConfig config, QuickCommand cmd) =>
+        OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.LockSeconds);
+
+    /// What a favorite sends (Favorites window, header quick-access menu): the same, but with the timer
+    /// snapshotted when it was favorited (QuickCommand.FavoriteLockSeconds) rather than the row's live one.
+    public static string ForFavoriteSend(PluginConfig config, QuickCommand cmd) =>
+        OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.FavoriteLockSeconds);
 
     public static IReadOnlyList<(string Label, string Selector)> Choices(PluginConfig config) =>
         config.QuickCommands.Moodles
