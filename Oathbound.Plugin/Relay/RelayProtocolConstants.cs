@@ -16,4 +16,7 @@ public static class RelayProtocolConstants
     public const int CatalogMailboxExpirySeconds = 604800;
     public const int CatalogMailboxMinUploadIntervalSeconds = 60;
     public const int CatalogMailboxOwnerPollIntervalSeconds = 3600;
+    public const int CodeInvitationExpirySeconds = 604800;
+    public const int PairStatusPollIntervalSeconds = 1800;
+    public const int BackupCiphertextMaxBytes = 32768;
 }

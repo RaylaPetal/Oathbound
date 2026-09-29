@@ -34,6 +34,30 @@ internal sealed class ErrorBody
     [JsonPropertyName("retryAfterSeconds")] public int? RetryAfterSeconds { get; set; }
 }
 
+internal sealed class InvitationStatusBody
+{
+    [JsonPropertyName("status")] public string Status { get; set; } = "";
+}
+/// collar/pairing-recovery: PUT /v1/backups/{backupId} body (protocol/schemas/backup.schema.json).
+internal sealed class BackupBody
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "backup";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("nonce")] public string Nonce { get; set; } = "";
+    [JsonPropertyName("ciphertext")] public string Ciphertext { get; set; } = "";
+}
+public sealed class StoredBackup
+{
+    [JsonPropertyName("deviceKeyId")] public string DeviceKeyId { get; set; } = "";
+    [JsonPropertyName("nonce")] public string Nonce { get; set; } = "";
+    [JsonPropertyName("ciphertext")] public string Ciphertext { get; set; } = "";
+    [JsonPropertyName("updatedAt")] public long UpdatedAt { get; set; }
+}
+internal sealed class BackupStatusBody
+{
+    [JsonPropertyName("updatedAt")] public long? UpdatedAt { get; set; }
+    [JsonPropertyName("deleted")] public bool? Deleted { get; set; }
+}
 internal sealed class RevocationListBody
 {
     [JsonPropertyName("revocations")] public RevocationEnvelope[] Revocations { get; set; } = [];
@@ -156,11 +180,26 @@ public sealed class RelayClient : IDisposable
 
     public Task<PairEnvelope> ConsumeInvitationAsync(string invitationId, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Post, $"/v1/invitations/{invitationId}/consume", null, ct);
+    /// collar/pairing: the inviter withdraws a code invitation - "cancelled" if unused, "rejected" if it was
+    /// already accepted (the inviter declined that character).
+    public async Task<string> CancelInvitationAsync(string invitationId, CancellationToken ct) =>
+        (await SendSignedAsync<InvitationStatusBody>(HttpMethod.Post, $"/v1/invitations/{invitationId}/cancel", null, ct).ConfigureAwait(false)).Status;
 
     // ---- Pairs ----
 
     public Task<PairEnvelope> FetchPairAsync(string pairIdHash, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}", null, ct);
+    /// collar/pairing "Unpairing reaches the other person": one exact pairing's row, so a mutual pair (same
+    /// hash, other direction, other epoch) is never mistaken for this one.
+    public Task<PairEnvelope> FetchPairAtEpochAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
+        SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}?epoch={pairEpoch}", null, ct);
+    // ---- Backups (collar/pairing-recovery) ----
+    public Task PutBackupAsync(string backupId, string nonce, string ciphertext, CancellationToken ct) =>
+        SendSignedAsync<BackupStatusBody>(HttpMethod.Put, $"/v1/backups/{backupId}", new BackupBody { Nonce = nonce, Ciphertext = ciphertext }, ct);
+    public Task<StoredBackup> FetchBackupAsync(string backupId, CancellationToken ct) =>
+        SendUnsignedAsync<StoredBackup>(HttpMethod.Get, $"/v1/backups/{backupId}", ct);
+    public Task DeleteBackupAsync(string backupId, CancellationToken ct) =>
+        SendSignedAsync<BackupStatusBody>(HttpMethod.Delete, $"/v1/backups/{backupId}", null, ct);
 
     // ---- Revocations ----
 

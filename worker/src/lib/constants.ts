@@ -18,6 +18,9 @@ interface ProtocolConstants {
     catalogMailboxExpirySeconds: number;
     catalogMailboxMinUploadIntervalSeconds: number;
     catalogMailboxOwnerPollIntervalSeconds: number;
+    codeInvitationExpirySeconds: number;
+    pairStatusPollIntervalSeconds: number;
+    backupCiphertextMaxBytes: number;
   };
 }
 
@@ -36,6 +39,9 @@ export const SIGNED_REQUEST_MAX_BYTES = Math.ceil(CATALOG_CIPHERTEXT_MAX_BYTES /
 export const REVOCATION_POLL_MIN_INTERVAL_SECONDS = PROTOCOL.sizeAndExpiryLimits.revocationPollMinIntervalSeconds;
 export const CATALOG_MAILBOX_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.catalogMailboxExpirySeconds;
 export const CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS = PROTOCOL.sizeAndExpiryLimits.catalogMailboxMinUploadIntervalSeconds;
+
+export const CODE_INVITATION_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.codeInvitationExpirySeconds;
+export const BACKUP_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.backupCiphertextMaxBytes;
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);

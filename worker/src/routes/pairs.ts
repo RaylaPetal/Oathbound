@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
 import { RelayError } from "../lib/errors";
-import { isMemberOfPair, latestPair } from "../lib/pairs";
+import { isMemberOfPair, latestPair, pairAtEpoch } from "../lib/pairs";
 import { isHex64 } from "../lib/validate";
 
 /**
@@ -15,7 +15,12 @@ export async function fetchPair(request: Request, env: Env, pairIdHash: string):
   if (!isHex64(pairIdHash)) throw new RelayError("not_found");
   const { deviceKeyId } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
 
-  const pair = await latestPair(env, pairIdHash);
+  // collar/pairing: `?epoch=N` asks about one exact pairing. A mutual pair (both directions between the same
+  // two devices) shares one pairIdHash across epochs, so "is my pairing over?" must never be answered from
+  // whichever epoch happens to be latest. Without it, the latest epoch (the original behavior).
+  const epochParam = new URL(request.url).searchParams.get("epoch");
+  if (epochParam !== null && !/^\d{1,9}$/.test(epochParam)) throw new RelayError("invalid_request");
+  const pair = epochParam !== null ? await pairAtEpoch(env, pairIdHash, Number(epochParam)) : await latestPair(env, pairIdHash);
   if (!pair || !isMemberOfPair(pair, deviceKeyId)) {
     throw new RelayError("unauthorized");
   }

@@ -14,6 +14,14 @@ public sealed class EcPublicKeyJwk
     [JsonPropertyName("y")] public string Y { get; set; } = "";
 }
 
+/// collar/pairing: AES-GCM ciphertext of a code invitation's character fields (see PairingCodes). The relay
+/// only ever sees this opaque shape.
+public sealed class EncryptedBlob
+{
+    [JsonPropertyName("nonce")] public string Nonce { get; set; } = "";
+    [JsonPropertyName("ciphertext")] public string Ciphertext { get; set; } = "";
+}
+
 public sealed class InvitationEnvelope
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "invitation";
@@ -23,6 +31,10 @@ public sealed class InvitationEnvelope
     [JsonPropertyName("inviterPublicKey")] public EcPublicKeyJwk InviterPublicKey { get; set; } = new();
     [JsonPropertyName("role")] public string Role { get; set; } = "";
     [JsonPropertyName("triggerPhrase")] public string? TriggerPhrase { get; set; }
+    // collar/pairing: set only on a code invitation (null -> absent, so a tell invitation's signed canonical
+    // form is exactly what it always was).
+    [JsonPropertyName("kind")] public string? Kind { get; set; }
+    [JsonPropertyName("encryptedCharacter")] public EncryptedBlob? EncryptedCharacter { get; set; }
     [JsonPropertyName("createdAt")] public long CreatedAt { get; set; }
     [JsonPropertyName("expiresAt")] public long ExpiresAt { get; set; }
     [JsonPropertyName("signature")] public string? Signature { get; set; }
@@ -42,6 +54,7 @@ public sealed class AcceptanceEnvelope
     [JsonPropertyName("proofDigest")] public string ProofDigest { get; set; } = "";
     [JsonPropertyName("role")] public string? Role { get; set; }
     [JsonPropertyName("triggerPhrase")] public string? TriggerPhrase { get; set; }
+    [JsonPropertyName("encryptedCharacter")] public EncryptedBlob? EncryptedCharacter { get; set; }
     [JsonPropertyName("createdAt")] public long CreatedAt { get; set; }
     [JsonPropertyName("expiresAt")] public long ExpiresAt { get; set; }
     [JsonPropertyName("signature")] public string? Signature { get; set; }

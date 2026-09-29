@@ -52,6 +52,22 @@ export function isEcPublicKeyJwk(value: unknown): value is EcPublicKeyJwk {
   return v.kty === "EC" && v.crv === "P-256" && typeof v.x === "string" && BASE64URL_43.test(v.x) && typeof v.y === "string" && BASE64URL_43.test(v.y);
 }
 
+/**
+ * collar/pairing: a code invitation's AES-GCM character blob. The relay can't read it (the key is derived
+ * from the pairing code, which it never has) and only bounds its shape: a 12-byte nonce and a small
+ * ciphertext (name + world + trigger phrase JSON, plus the 16-byte tag, stays well under 512 bytes).
+ */
+export interface EncryptedBlob {
+  nonce: string;
+  ciphertext: string;
+}
+const BASE64URL_CIPHERTEXT = /^[A-Za-z0-9_-]{24,700}$/;
+export function isEncryptedCharacterBlob(value: unknown): value is EncryptedBlob {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return Object.keys(v).length === 2 && isAeadNonce(v.nonce) && typeof v.ciphertext === "string" && BASE64URL_CIPHERTEXT.test(v.ciphertext);
+}
+
 export function asRecord(bodyJson: unknown): Record<string, unknown> {
   if (typeof bodyJson !== "object" || bodyJson === null || Array.isArray(bodyJson)) {
     throw new RelayError("invalid_request");

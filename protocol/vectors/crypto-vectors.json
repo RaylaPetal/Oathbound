@@ -137,5 +137,44 @@
     "ciphertextWithTagBase64Url": "g8QcFWsVnaWTQKTasVlhUVxz1Z4rd3dNP_JjvNLg5z7ybBoE3rQl4-XWWP4yGMaehCurXg",
     "ciphertextDigestSha256Hex": "903d09d9906b72693a36ab4743add71281aa10b7a2c49413486c6f61e7fe9668",
     "roundTripDecryptMatchesPlaintext": true
+  },
+  "pairingCode": {
+    "description": "collar/pairing code invitation: normalization, HKDF-SHA256 (empty salt) of the normalized code's UTF-8 bytes into the lookupId (the invitationId capability) and the character-blob AES key, then AES-256-GCM of a JCS character object with the inviter AAD.",
+    "normalizationCases": [
+      {
+        "input": "K7QM-3XRP-9DTA-WV2E",
+        "normalized": "K7QM3XRP9DTAWV2E"
+      },
+      {
+        "input": " k7qm 3xrp-9dta wv2e ",
+        "normalized": "K7QM3XRP9DTAWV2E"
+      },
+      {
+        "input": "oIl0-LOIo",
+        "normalized": "01101010"
+      }
+    ],
+    "codeNormalized": "K7QM3XRP9DTAWV2E",
+    "lookupIdInfo": "oathbound-pair-code-lookup-v1",
+    "lookupIdBase64Url": "k2IHzsz0lr871lpmX2xc6WiX4pjA7iMSCQK5kjuD70Y",
+    "encryptionKeyInfo": "oathbound-pair-code-enc-v1",
+    "encryptionKeyHex": "c3d6026791ee902b4e27a1164733aaf4da4e09a14d91959cb597c50f28e9e9b4",
+    "nonceBase64Url": "cGFpck5vbmNlMTIz",
+    "additionalAuthenticatedDataUtf8": "oathbound-pair-code-v1|k2IHzsz0lr871lpmX2xc6WiX4pjA7iMSCQK5kjuD70Y|inviter",
+    "plaintextUtf8": "{\"name\":\"Rayla Velvet\",\"triggerPhrase\":\"command\",\"world\":\"Moon\"}",
+    "ciphertextWithTagBase64Url": "s47xqp-p8OfPDHm_YVvwhQ4N_bYH1JkUFoukV0BHr7nEZ3s3GBgU2W6UngrWNoJ6nJ3czXrF4Hm8IdEDoGFr6nVyI_O03xMoOQLu6U--q9A"
+  },
+  "recoveryCode": {
+    "description": "collar/pairing-recovery: same normalization and HKDF parameters as pairingCode, deriving the backupId (relay lookup capability) and the backup AES key, then AES-256-GCM of a sample backup with the backup AAD.",
+    "codeDisplay": "7G4K-X2MQ-9ZRT-3VHC-8WNP-5BJD-E1",
+    "codeNormalized": "7G4KX2MQ9ZRT3VHC8WNP5BJDE1",
+    "backupIdInfo": "oathbound-backup-id-v1",
+    "backupIdBase64Url": "BiKZ3l173Gguxoqz2iihC0YGq7UqBv2vqVZCqZRn8CM",
+    "encryptionKeyInfo": "oathbound-backup-enc-v1",
+    "encryptionKeyHex": "5ebfd287bd6930e0fbbfd8a7ebe45ba33619008abed2691da51915c0d9dd91d3",
+    "nonceBase64Url": "YmFja3VwTm9uY2Ux",
+    "additionalAuthenticatedDataUtf8": "oathbound-backup-v1|BiKZ3l173Gguxoqz2iihC0YGq7UqBv2vqVZCqZRn8CM",
+    "plaintextUtf8": "{\"schemaVersion\":1,\"sample\":\"backup\"}",
+    "ciphertextWithTagBase64Url": "L2mSaPA10gx0GRPsTIijYMzj7HfKCNKjBnBE_xaeGwopA04tOa6EkPzkUp-YcMWv9AH36WA"
   }
 }

@@ -24,6 +24,8 @@ namespace Oathbound.Plugin.UI;
 public class SettingsWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
+    private readonly CodePairingView codePairingView;
+    private readonly RecoveryView recoveryView;
     private string inviteTargetInput = "";
     private bool sendingInvitation;
     private bool acceptingInvitation;
@@ -57,6 +59,8 @@ public class SettingsWindow : Window, IDisposable
         // less scrolling to reach it and everything below (ToS card) in the common case.
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(460, 700), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
         this.plugin = plugin;
+        codePairingView = new CodePairingView(plugin);
+        recoveryView = new RecoveryView(plugin);
     }
 
     public void Dispose() { }
@@ -146,6 +150,8 @@ public class SettingsWindow : Window, IDisposable
             DrawIdentityCard(config);
             using (Section.Begin("favoritesButtonCard"))
                 DrawFavoritesButtonCard(config);
+            using (Section.Begin("recoveryCard"))
+                recoveryView.Draw();
             using (Section.Begin("worldVisualsCard"))
                 DrawWorldVisualsCard(config);
             using (Section.Begin("tutorialCard"))
@@ -306,49 +312,56 @@ public class SettingsWindow : Window, IDisposable
             IconGlyph.WrappedColored(reachable ? Theme.Success : Theme.Warning,
                 reachable ? "Relay connection verified." : "Relay was unreachable on the last attempt; existing pairing and panic remain local-first.");
         ImGui.Spacing();
-        ImGui.TextWrapped("Send an invitation: enter who to pair with, exactly as you'd address a tell, then click Send. Holding other pairings never blocks sending another.");
-        if (config.Role == PluginRole.Switch)
+        // collar/pairing: pairing by code is the default; the tell handshake stays below for partners on an
+        // older plugin version.
+        codePairingView.Draw(config);
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Older version? Pair by tell###tellPairing"))
         {
-            if (ImGui.RadioButton("Invite as Owner (they'll be your Sub)", inviteAsOwnerSide)) inviteAsOwnerSide = true;
-            ImGui.SameLine();
-            if (ImGui.RadioButton("Invite as Sub (they'll be your Owner)", !inviteAsOwnerSide)) inviteAsOwnerSide = false;
-        }
-        using (ImRaii.Disabled(sendingInvitation))
-        {
-            ImGui.InputTextWithHint("Pair with", "Name Surname@World", ref inviteTargetInput, 64);
-            using (ImRaii.Disabled(inviteTargetInput.Trim().Length == 0 || confirmingInviteReplace))
+            ImGui.TextWrapped("Send an invitation: enter who to pair with, exactly as you'd address a tell, then click Send. Holding other pairings never blocks sending another. Both of you need to be online and able to send tells.");
+            if (config.Role == PluginRole.Switch)
             {
-                if (ImGui.Button(sendingInvitation ? "Sending..." : "Send Invitation"))
+                if (ImGui.RadioButton("Invite as Owner (they'll be your Sub)", inviteAsOwnerSide)) inviteAsOwnerSide = true;
+                ImGui.SameLine();
+                if (ImGui.RadioButton("Invite as Sub (they'll be your Owner)", !inviteAsOwnerSide)) inviteAsOwnerSide = false;
+            }
+            using (ImRaii.Disabled(sendingInvitation))
+            {
+                ImGui.InputTextWithHint("Pair with", "Name Surname@World", ref inviteTargetInput, 64);
+                using (ImRaii.Disabled(inviteTargetInput.Trim().Length == 0 || confirmingInviteReplace))
                 {
-                    if (plugin.PairingService.DescribeOutstandingInvitation() is { } outstanding)
-                        confirmingInviteReplace = true;
-                    else
+                    if (ImGui.Button(sendingInvitation ? "Sending..." : "Send Invitation"))
                     {
-                        sendingInvitation = true;
-                        Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
+                        if (plugin.PairingService.DescribeOutstandingInvitation() is { } outstanding)
+                            confirmingInviteReplace = true;
+                        else
+                        {
+                            sendingInvitation = true;
+                            Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
+                        }
                     }
                 }
             }
-        }
-        if (confirmingInviteReplace && plugin.PairingService.DescribeOutstandingInvitation() is { } outstandingInvite)
-        {
-            IconGlyph.WrappedColored(Theme.Danger, $"You already have an unconfirmed invitation outstanding to {outstandingInvite.Target}. Sending a new one abandons it - if they accept it later, nothing will happen on your side.");
-            if (ImGui.Button("Send new invitation anyway"))
+            if (confirmingInviteReplace && plugin.PairingService.DescribeOutstandingInvitation() is { } outstandingInvite)
             {
-                confirmingInviteReplace = false;
-                sendingInvitation = true;
-                Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
+                IconGlyph.WrappedColored(Theme.Danger, $"You already have an unconfirmed invitation outstanding to {outstandingInvite.Target}. Sending a new one abandons it - if they accept it later, nothing will happen on your side.");
+                if (ImGui.Button("Send new invitation anyway"))
+                {
+                    confirmingInviteReplace = false;
+                    sendingInvitation = true;
+                    Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel"))
+                    confirmingInviteReplace = false;
             }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel"))
+            else if (confirmingInviteReplace)
+            {
+                // The outstanding invitation expired/completed on its own while this prompt was open.
                 confirmingInviteReplace = false;
+            }
+            IconGlyph.HelpMarker("Creates a single-use relay invitation (expires in 15 minutes) and sends its reference in one tell. They accept it, an acknowledgement tell comes back automatically, and you're both paired.");
         }
-        else if (confirmingInviteReplace)
-        {
-            // The outstanding invitation expired/completed on its own while this prompt was open.
-            confirmingInviteReplace = false;
-        }
-        IconGlyph.HelpMarker("Creates a single-use relay invitation (expires in 15 minutes) and sends its reference in one tell. They accept it, an acknowledgement tell comes back automatically, and you're both paired.");
 
         using (ImRaii.Disabled(subLocked))
         {

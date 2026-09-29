@@ -57,9 +57,19 @@ everything instantly with their safeword.
 ## 🤝 How it works
 
 ### 1. Pair up
-Open **Settings** (`/oathboundsettings`), type your partner's `Name Surname@World`, choose whether
-you're inviting them as your Sub or as your Owner, and press **Send Invitation**. Your partner gets a
-request naming you, and pairing only happens if they click **Accept**.
+Open **Settings** (`/oathboundsettings`) and press **Create pairing code**. Give the code to your partner
+any way you like: Discord, `/say`, in person. They enter it in their own Settings, see who it's from, and
+press **Accept**. The next time you're online you'll be asked to **Confirm** that it's really them, and
+you're paired. You don't have to be online at the same time, and no tells are sent. A code works once and
+lasts 7 days.
+
+Pairing with someone on an older version? Open **Older version? Pair by tell** in the same place and use
+the old invitation, where both of you need to be online.
+
+**Your recovery code.** After your first pairing, Oathbound shows you a recovery code. Keep it somewhere
+safe. If you reinstall the plugin or move to a new PC, enter it in **Settings > Recovery code > Restore** and
+your pairings come back. Your partners don't need to do anything. Without the code, a lost install can't
+be restored and you'd pair again.
 
 ### 2. The Sub sets up what they'll allow
 In the main window (`/oathbound`), the Sub picks their designs, animations, moodles, restraints and collar,
@@ -85,7 +95,8 @@ Sync tab shows whether it's up to date.
 - **Your safeword.** `/oathboundpanic` instantly removes everything that's been applied to you:
   outfit, collar, title, moodles, restraints, leash, animations and toys. You can also bind it to a
   hotkey. If you set a safeword, type it after the command (`/oathboundpanic red`); if you don't,
-  the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings.
+  the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
+  partner even if they're offline: their pairing ends the next time they log in, however long that takes.
 - **Only the two of you see the icons and the leash line.** They're drawn by your own clients - nobody
   else sees them, and nothing extra is sent. The Sub's own view is exact; the Owner's is an estimate built
   from the commands they sent, so it can't see a panic or the Sub's own releases (Sub Control has a

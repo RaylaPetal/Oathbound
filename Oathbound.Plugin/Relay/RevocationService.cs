@@ -14,6 +14,11 @@ namespace Oathbound.Plugin.Relay;
 public sealed class RevocationService
 {
     public event Action? PairingRevoked;
+
+    /// collar/pairing: how a pairing the relay reports as over is ended locally - wired by Plugin to the same
+    /// teardown a verified unpair-notice tell gets (collar release, and restraints unlocked for a Sub-side
+    /// pairing). It can't be a constructor dependency: PairingService itself depends on this class.
+    public Action<PairingState>? EndPairingLocally { get; set; }
     private readonly PluginConfig config;
     private readonly RelayClient relay;
     private readonly DeviceIdentityService identity;
@@ -196,6 +201,47 @@ public sealed class RevocationService
         {
             if (!ApplyIfValid(revocation, peerPublicKey, pairing))
                 return; // Once this pairing has ended locally, later entries in this batch (if any) no longer apply.
+        }
+    }
+
+    /// collar/pairing "Unpairing reaches the other person even when they are offline". The relay keeps every
+    /// revoked pair row forever as a tombstone, so this answers "is my pairing over?" no matter how long this
+    /// client was away - unlike the signed revocations above, which the relay deletes after at most 7 days.
+    /// Asks about each pairing's own exact epoch (a mutual pair shares one pairIdHash across two epochs, so
+    /// "the latest epoch" could be the other direction's). Any error leaves every pairing untouched: a pairing
+    /// is never ended just because the relay couldn't be reached.
+    public async Task CheckPairStatusAsync(CancellationToken ct)
+    {
+        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.PairIdHash is not null).ToList())
+        {
+            PairEnvelope pair;
+            try
+            {
+                pair = await relay.FetchPairAtEpochAsync(pairing.PairIdHash!, pairing.PairEpoch, ct).ConfigureAwait(false);
+            }
+            catch (RelayException ex)
+            {
+                // "unauthorized" also covers a row that doesn't exist - the relay doesn't distinguish, by design -
+                // so it's treated like any other failure: leave the pairing alone.
+                Plugin.Log.Information($"Pair status check skipped: {ex.Code}.");
+                continue;
+            }
+
+            if (pair.PairIdHash != pairing.PairIdHash || pair.PairEpoch != pairing.PairEpoch || pair.RevokedAt is null || !pairing.IsPaired)
+                continue;
+
+            Plugin.Log.Information($"Pairing with {pairing.PeerName}@{pairing.PeerWorld} ended locally: the relay reports it was unpaired.");
+            if (EndPairingLocally is { } end)
+            {
+                await Plugin.Framework.RunOnFrameworkThread(() => end(pairing)).ConfigureAwait(false);
+            }
+            else
+            {
+                pairing.Paired = false;
+                config.Save();
+                PairingRevoked?.Invoke();
+            }
+            Plugin.ChatGui.Print($"[Oathbound] Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
         }
     }
 

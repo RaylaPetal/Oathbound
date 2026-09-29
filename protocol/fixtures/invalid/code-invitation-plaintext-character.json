@@ -1,0 +1,23 @@
+{
+  "type": "invitation",
+  "schemaVersion": 1,
+  "invitationId": "k2IHzsz0lr871lpmX2xc6WiX4pjA7iMSCQK5kjuD70Y",
+  "inviterDeviceKeyId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "inviterPublicKey": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "y": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+  },
+  "role": "owner",
+  "kind": "code",
+  "encryptedCharacter": {
+    "nonce": "cGFpck5vbmNlMTIz",
+    "ciphertext": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "name": "Rayla Velvet",
+  "world": "Moon",
+  "createdAt": 1700000000,
+  "expiresAt": 1700604800,
+  "signature": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+}

@@ -54,6 +54,10 @@ public sealed class PairingService
     public event Action? PairingActivated;
     public event Action? PairingEnded;
 
+    /// collar/pairing-recovery: runs just before the identity is replaced, while the old key can still sign -
+    /// Plugin wires it to BackupService so the old identity's backup is deleted from the relay.
+    public Func<CancellationToken, Task>? BeforeIdentityReset { get; set; }
+
     /// Set after CreateAndSendInvitationAsync/AcceptPendingAsync/HandleAcknowledgementTellAsync fail, so
     /// Settings can show *why* without the caller needing its own try/catch around every button click.
     public string? LastError { get; private set; }
@@ -441,7 +445,7 @@ public sealed class PairingService
     /// owner/sub don't match the direction currently being activated - not a protocol violation, just a
     /// race against the inviter's own consume (see AwaitActivationAsync, which retries on `false` rather
     /// than treating it as terminal).
-    private bool ActivateLocally(PairEnvelope pair, PairingDirection direction, Guid pairingId, string peerName, string peerWorld, string peerDeviceKeyId, EcPublicKeyJwk peerPublicKey, string? peerTriggerPhrase)
+    internal bool ActivateLocally(PairEnvelope pair, PairingDirection direction, Guid pairingId, string peerName, string peerWorld, string peerDeviceKeyId, EcPublicKeyJwk peerPublicKey, string? peerTriggerPhrase)
     {
         var ownKeyId = identity.DeviceKeyId;
         var expectedOwner = direction == PairingDirection.OwnerSide ? ownKeyId : peerDeviceKeyId;
@@ -522,6 +526,8 @@ public sealed class PairingService
             // a permanently unpublishable outbox item under the new identity.
             config.RevocationOutbox.RemoveAll(o => o.PairIdHash == pairIdHash && o.PairEpoch == pairEpoch);
         }
+        if (BeforeIdentityReset is { } beforeReset)
+            await beforeReset(ct).ConfigureAwait(false);
         identity.ResetIdentity();
     }
 

@@ -79,6 +79,27 @@
     "revocationPollMinIntervalSeconds": 21600,
     "catalogMailboxExpirySeconds": 604800,
     "catalogMailboxMinUploadIntervalSeconds": 60,
-    "catalogMailboxOwnerPollIntervalSeconds": 3600
+    "catalogMailboxOwnerPollIntervalSeconds": 3600,
+    "codeInvitationExpirySeconds": 604800,
+    "pairStatusPollIntervalSeconds": 1800,
+    "backupCiphertextMaxBytes": 32768
+  },
+  "pairingCode": {
+    "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",
+    "randomBits": 80,
+    "characters": 16,
+    "hkdf": { "hash": "SHA-256", "salt": "", "outputLengthBytes": 32 },
+    "lookupIdInfo": "oathbound-pair-code-lookup-v1",
+    "encryptionKeyInfo": "oathbound-pair-code-enc-v1",
+    "lookupIdEncoding": "base64url without padding (43 characters) of the HKDF output; used as the invitationId capability of a code invitation.",
+    "characterBlob": "AES-256-GCM, 12-byte random nonce, plaintext = JCS of {name, world, triggerPhrase?}, AAD = UTF-8 of \"oathbound-pair-code-v1|\" + invitationId + \"|\" + (\"inviter\" | \"accepter\")."
+  },
+  "recoveryCode": {
+    "description": "collar/pairing-recovery. Same normalization and HKDF parameters as pairingCode; the relay only ever sees SHA-256(backupId).",
+    "randomBits": 128,
+    "characters": 26,
+    "backupIdInfo": "oathbound-backup-id-v1",
+    "encryptionKeyInfo": "oathbound-backup-enc-v1",
+    "backupBlob": "AES-256-GCM, 12-byte random nonce, plaintext = the client's backup JSON, AAD = UTF-8 of \"oathbound-backup-v1|\" + backupId."
   }
 }

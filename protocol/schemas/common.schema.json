@@ -58,7 +58,10 @@
     },
     "role": {
       "type": "string",
-      "enum": ["owner", "sub"]
+      "enum": [
+        "owner",
+        "sub"
+      ]
     },
     "ecdsaSignature": {
       "type": "string",
@@ -69,17 +72,50 @@
       "type": "object",
       "description": "P-256 public key as a JWK, used for both ECDSA (signing) and ECDH (key agreement) device keys.",
       "additionalProperties": false,
-      "required": ["kty", "crv", "x", "y"],
+      "required": [
+        "kty",
+        "crv",
+        "x",
+        "y"
+      ],
       "properties": {
-        "kty": { "const": "EC" },
-        "crv": { "const": "P-256" },
-        "x": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
-        "y": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+        "kty": {
+          "const": "EC"
+        },
+        "crv": {
+          "const": "P-256"
+        },
+        "x": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "y": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
       }
     },
     "aeadAlgorithm": {
       "type": "string",
       "const": "ECDH-P256+HKDF-SHA256+AES-256-GCM"
+    },
+    "encryptedCharacter": {
+      "description": "collar/pairing: a code invitation's character (JCS of {name, world, triggerPhrase?}) as AES-256-GCM ciphertext under a key derived from the pairing code, which the relay never has (constants.json pairingCode).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nonce",
+        "ciphertext"
+      ],
+      "properties": {
+        "nonce": {
+          "$ref": "#/$defs/aeadNonce"
+        },
+        "ciphertext": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{24,700}$"
+        }
+      }
     }
   }
 }

@@ -237,6 +237,61 @@ public class RevocationRetryEntry
     public long NextAttemptAtUnixSeconds { get; set; }
 }
 
+/// collar/pairing: one code invitation in flight. `IsInviter` says which side this install is on. The
+/// normalized code is kept because it's the key to both character blobs; it's short-lived (7 days) and
+/// dropped as soon as the invitation reaches an end state.
+[Serializable]
+public class CodeInvitationState
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public bool IsInviter { get; set; }
+    public string Code { get; set; } = "";
+    public string InvitationId { get; set; } = "";
+
+    /// Which side of the resulting pairing this install will be on.
+    public PairingDirection Direction { get; set; }
+    public long ExpiresAt { get; set; }
+
+    /// Inviter: "waiting" (no one has accepted yet) or "needs-confirm" (someone accepted; show Confirm/Reject).
+    /// Accepter: "waiting" (accepted; waiting for the inviter to confirm).
+    public string Status { get; set; } = "waiting";
+
+    /// The other person, once known: from the decrypted invitation (accepter) or acceptance (inviter).
+    public string? PeerName { get; set; }
+    public string? PeerWorld { get; set; }
+    public string? PeerTriggerPhrase { get; set; }
+    public string? PeerDeviceKeyId { get; set; }
+    public string? PeerPublicKeyX { get; set; }
+    public string? PeerPublicKeyY { get; set; }
+
+    /// Accepter: the id the resulting PairingState will get (pre-generated so a collar applied at accept
+    /// time can already record which pairing owns it), and when this side accepted.
+    public Guid PairingId { get; set; } = Guid.NewGuid();
+    public long AcceptedAt { get; set; }
+}
+
+/// collar/pairing-recovery: the recovery code (DPAPI-protected like the device key, with the same Wine
+/// caveat) and the state of the relay backup it encrypts.
+[Serializable]
+public class RecoveryState
+{
+    public byte[]? ProtectedCode { get; set; }
+    public bool? IsProtected { get; set; }
+
+    /// Whether the player has dismissed the "save your recovery code" dialog for the current code.
+    public bool CodeAcknowledged { get; set; }
+
+    /// Fingerprint of the backup contents last uploaded successfully; a different fingerprint means the
+    /// backup is stale and needs uploading.
+    public string? UploadedFingerprint { get; set; }
+    public long LastUploadAt { get; set; }
+
+    /// Backup ids from regenerated codes whose relay copy still needs deleting (retried until it works).
+    public List<string> PendingDeletes { get; set; } = new();
+
+    public bool HasCode => ProtectedCode is { Length: > 0 };
+}
+
 [Serializable]
 public class PendingRelayOperationState
 {
@@ -757,6 +812,13 @@ public class PluginConfig : IPluginConfiguration
     public DeviceIdentityState DeviceIdentity { get; set; } = new();
     public List<RevocationRetryEntry> RevocationOutbox { get; set; } = new();
     public List<PendingRelayOperationState> PendingRelayOperations { get; set; } = new();
+
+    /// collar/pairing: code invitations this install created or accepted that haven't finished yet (at most
+    /// 7 days each). Both sides poll these; see Relay/CodePairingService.cs.
+    public List<CodeInvitationState> CodeInvitations { get; set; } = new();
+
+    /// collar/pairing-recovery: the recovery code and the state of its relay backup.
+    public RecoveryState Recovery { get; set; } = new();
     public PermissionSet Permissions { get; set; } = new();
     public GestureMapping GestureMapping { get; set; } = new();
     public WardrobeMapping WardrobeMapping { get; set; } = new();

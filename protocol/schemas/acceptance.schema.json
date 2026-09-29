@@ -6,23 +6,56 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "type", "schemaVersion", "invitationId", "accepterDeviceKeyId",
-    "accepterPublicKey", "proofDigest", "createdAt", "expiresAt", "signature"
+    "type",
+    "schemaVersion",
+    "invitationId",
+    "accepterDeviceKeyId",
+    "accepterPublicKey",
+    "proofDigest",
+    "createdAt",
+    "expiresAt",
+    "signature"
   ],
   "properties": {
-    "type": { "const": "acceptance" },
-    "schemaVersion": { "const": 1 },
-    "invitationId": { "$ref": "common.schema.json#/$defs/capabilityId" },
-    "accepterDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
-    "accepterPublicKey": { "$ref": "common.schema.json#/$defs/ecPublicKeyJwk" },
+    "type": {
+      "const": "acceptance"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "invitationId": {
+      "$ref": "common.schema.json#/$defs/capabilityId"
+    },
+    "accepterDeviceKeyId": {
+      "$ref": "common.schema.json#/$defs/deviceKeyId"
+    },
+    "accepterPublicKey": {
+      "$ref": "common.schema.json#/$defs/ecPublicKeyJwk"
+    },
     "proofDigest": {
       "$ref": "common.schema.json#/$defs/proofDigestHex",
       "description": "Token carried in the acknowledgement tell; binds the tell to this acceptance."
     },
-    "role": { "$ref": "common.schema.json#/$defs/role" },
-    "triggerPhrase": { "type": "string", "minLength": 1, "maxLength": 32 },
-    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
-    "expiresAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
-    "signature": { "$ref": "common.schema.json#/$defs/ecdsaSignature" }
+    "role": {
+      "$ref": "common.schema.json#/$defs/role"
+    },
+    "triggerPhrase": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    },
+    "expiresAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    },
+    "signature": {
+      "$ref": "common.schema.json#/$defs/ecdsaSignature"
+    },
+    "encryptedCharacter": {
+      "$ref": "common.schema.json#/$defs/encryptedCharacter",
+      "description": "Required when accepting a code invitation (and then no clear triggerPhrase); absent for a tell invitation."
+    }
   }
 }

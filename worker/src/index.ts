@@ -1,7 +1,8 @@
 import type { Env } from "./env";
 import { RelayError } from "./lib/errors";
 import { logEvent } from "./lib/log";
-import { acceptInvitation, consumeInvitation, createInvitation, fetchInvitation } from "./routes/invitations";
+import { acceptInvitation, cancelInvitation, consumeInvitation, createInvitation, fetchInvitation } from "./routes/invitations";
+import { deleteBackup, fetchBackup, putBackup } from "./routes/backups";
 import { fetchPair } from "./routes/pairs";
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
@@ -36,6 +37,13 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (method === "GET" && segments.length === 3) return fetchInvitation(request, env, segments[2]!);
     if (method === "POST" && segments.length === 4 && segments[3] === "accept") return acceptInvitation(request, env, segments[2]!);
     if (method === "POST" && segments.length === 4 && segments[3] === "consume") return consumeInvitation(request, env, segments[2]!);
+    if (method === "POST" && segments.length === 4 && segments[3] === "cancel") return cancelInvitation(request, env, segments[2]!);
+  }
+
+  if (segments[1] === "backups" && segments.length === 3) {
+    if (method === "PUT") return putBackup(request, env, segments[2]!);
+    if (method === "GET") return fetchBackup(request, env, segments[2]!);
+    if (method === "DELETE") return deleteBackup(request, env, segments[2]!);
   }
 
   if (segments[1] === "pairs") {

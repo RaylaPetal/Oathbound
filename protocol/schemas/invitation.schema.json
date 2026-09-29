@@ -2,26 +2,68 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://oathbound.example/relay/schemas/invitation.schema.json",
   "title": "Invitation",
-  "description": "Single-use pairing invitation created by the inviter and fetched by the receiver after a tell reference is sent.",
+  "description": "Single-use pairing invitation created by the inviter and fetched by the receiver after a tell reference is sent. A code invitation (kind \"code\") is instead looked up by an id derived from a pairing code shared out of band, lives up to codeInvitationExpirySeconds, and carries the inviter's character only inside encryptedCharacter (no clear triggerPhrase).",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "type", "schemaVersion", "invitationId", "inviterDeviceKeyId",
-    "inviterPublicKey", "role", "createdAt", "expiresAt", "signature"
+    "type",
+    "schemaVersion",
+    "invitationId",
+    "inviterDeviceKeyId",
+    "inviterPublicKey",
+    "role",
+    "createdAt",
+    "expiresAt",
+    "signature"
   ],
   "properties": {
-    "type": { "const": "invitation" },
-    "schemaVersion": { "const": 1 },
-    "invitationId": { "$ref": "common.schema.json#/$defs/capabilityId" },
-    "inviterDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
-    "inviterPublicKey": { "$ref": "common.schema.json#/$defs/ecPublicKeyJwk" },
+    "type": {
+      "const": "invitation"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "invitationId": {
+      "$ref": "common.schema.json#/$defs/capabilityId"
+    },
+    "inviterDeviceKeyId": {
+      "$ref": "common.schema.json#/$defs/deviceKeyId"
+    },
+    "inviterPublicKey": {
+      "$ref": "common.schema.json#/$defs/ecPublicKeyJwk"
+    },
     "role": {
       "$ref": "common.schema.json#/$defs/role",
       "description": "Role the inviter is proposing for itself."
     },
-    "triggerPhrase": { "type": "string", "minLength": 1, "maxLength": 32 },
-    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
-    "expiresAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
-    "signature": { "$ref": "common.schema.json#/$defs/ecdsaSignature" }
+    "triggerPhrase": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    },
+    "expiresAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    },
+    "signature": {
+      "$ref": "common.schema.json#/$defs/ecdsaSignature"
+    },
+    "kind": {
+      "const": "code",
+      "description": "Absent for the original tell-referenced invitation."
+    },
+    "encryptedCharacter": {
+      "$ref": "common.schema.json#/$defs/encryptedCharacter"
+    }
+  },
+  "dependentRequired": {
+    "kind": [
+      "encryptedCharacter"
+    ],
+    "encryptedCharacter": [
+      "kind"
+    ]
   }
 }

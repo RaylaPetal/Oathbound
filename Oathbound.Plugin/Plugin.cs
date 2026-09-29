@@ -79,6 +79,7 @@ public sealed class Plugin : IDalamudPlugin
     public ItemPickerWindow ItemPickerWindow { get; }
     public FavoritesWindow FavoritesWindow { get; }
     public FavoritesBarButton FavoritesBarButton { get; }
+    private RecoveryCodeWindow RecoveryCodeWindow { get; }
 
     /// collar/ui-organization "A server info bar entry always opens the quick-access menu": the
     /// guaranteed fallback access point for QuickAccessMenu, independent of FavoritesButtonSettings.Visible.
@@ -118,6 +119,8 @@ public sealed class Plugin : IDalamudPlugin
     public DeviceIdentityService DeviceIdentityService { get; }
     public RelayClient RelayClient { get; }
     public PairingService PairingService { get; }
+    public CodePairingService CodePairingService { get; }
+    public BackupService BackupService { get; }
     public RevocationService RevocationService { get; }
     public TitleCommand TitleCommand { get; }
     public OutfitCommand OutfitCommand { get; }
@@ -147,6 +150,7 @@ public sealed class Plugin : IDalamudPlugin
     private bool panicHotkeyWasPressed;
     private DateTime nextRevocationOutboxRetryUtc = DateTime.MinValue;
     private DateTime nextRevocationCheckUtc = DateTime.MinValue;
+    private DateTime nextPairStatusCheckUtc = DateTime.MinValue;
 
     /// collar/relay-service "requests stop on logout/disposal": recurring background relay work (the
     /// outbox retry and the missed-revocation check) is cancelled and restarted on every logout, and
@@ -220,6 +224,12 @@ public sealed class Plugin : IDalamudPlugin
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
+        // collar/pairing: a pairing the relay reports as unpaired gets exactly the teardown a verified unpair
+        // notice gets (PairingEnded above then queues the restraint cleanup and teleport stop).
+        RevocationService.EndPairingLocally = PairingService.EndFromVerifiedPeerNotice;
+        CodePairingService = new CodePairingService(Configuration, RelayClient, DeviceIdentityService, PairingService, CollarCommand);
+        BackupService = new BackupService(Configuration, RelayClient, DeviceIdentityService, RevocationService);
+        PairingService.BeforeIdentityReset = BackupService.DeleteForIdentityResetAsync;
         RevocationService.PairingRevoked += QueueRestraintCleanup;
         RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
         CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService);
@@ -241,6 +251,7 @@ public sealed class Plugin : IDalamudPlugin
         ItemPickerWindow = new ItemPickerWindow(this);
         FavoritesWindow = new FavoritesWindow(this);
         FavoritesBarButton = new FavoritesBarButton(this);
+        RecoveryCodeWindow = new RecoveryCodeWindow(this);
 
         favoritesDtrEntry = DtrBar.Get("Oathbound Quick Access");
         favoritesDtrEntry.Text = ((char)SeIconChar.BoxedStar).ToString();
@@ -265,6 +276,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(ItemPickerWindow);
         WindowSystem.AddWindow(FavoritesWindow);
         WindowSystem.AddWindow(FavoritesBarButton);
+        WindowSystem.AddWindow(RecoveryCodeWindow);
 
         // collar/onboarding "Welcome window appears once on first plugin load": shown before CollarWindow
         // is ever opened for the first time, and never again once completed/dismissed.
@@ -323,6 +335,9 @@ public sealed class Plugin : IDalamudPlugin
     /// means, distinct from the plugin merely loading (which can happen mid-session on a reload).
     private void OnLogin()
     {
+        // collar/pairing: check every pairing against the relay right away, and pick up code invitations.
+        nextPairStatusCheckUtc = DateTime.MinValue;
+        CodePairingService.PollSoon();
         nextRevocationCheckUtc = DateTime.UtcNow.AddHours(6);
         FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
         CatalogAutoSync.OnLogin();
@@ -474,6 +489,22 @@ public sealed class Plugin : IDalamudPlugin
         {
             nextRevocationCheckUtc = utcNow.AddHours(6).AddSeconds(Random.Shared.Next(0, 1800));
             FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
+        }
+        // collar/pairing "Unpairing reaches the other person even when they are offline": at login (see OnLogin)
+        // and every pairStatusPollIntervalSeconds while logged in. Skipped while not logged in, so a
+        // title-screen session doesn't spend relay requests.
+        if (utcNow >= nextPairStatusCheckUtc && ClientState.IsLoggedIn)
+        {
+            nextPairStatusCheckUtc = utcNow.AddSeconds(RelayProtocolConstants.PairStatusPollIntervalSeconds).AddSeconds(Random.Shared.Next(0, 120));
+            FireAndForget(RevocationService.CheckPairStatusAsync(relayBackgroundWorkCts.Token));
+        }
+        if (ClientState.IsLoggedIn)
+        {
+            CodePairingService.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+            BackupService.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+            // collar/pairing-recovery: show a newly issued recovery code once.
+            if (BackupService.ShouldShowCodeDialog && !RecoveryCodeWindow.IsOpen)
+                RecoveryCodeWindow.IsOpen = true;
         }
         // collar/catalog-sync automatic sync: hourly Sub rescans/publishes and Owner mailbox checks.
         CatalogAutoSync.OnFrameworkUpdate();

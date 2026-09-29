@@ -11,11 +11,12 @@ short alias words, and everything is applied locally by the Sub's own Glamourer/
 IPC calls. See `README.md` for the full feature/consent-model writeup and `ffxiv-collar-system-design.md` for
 the original feasibility research.
 
-**Pairing and encrypted catalog sync are the one exception** and go through a Cloudflare Worker relay
-(`worker/`) - see Architecture below. `README.md`'s "How commands travel" section still documents the older,
-pre-relay direct code-handshake pairing flow; the actual current pairing mechanism is the relay-assisted
-handshake in `Oathbound.Plugin/Relay/PairingService.cs`, introduced in release 0.0.0.8. Don't trust that part
-of the README as current - read the code/openspec spec instead.
+**Pairing, recovery backups and encrypted catalog sync are the one exception** and go through a Cloudflare
+Worker relay (`worker/`) - see Architecture below. The default pairing flow is pairing by code
+(`Oathbound.Plugin/Relay/CodePairingService.cs`, no tells, asynchronous, both people confirm each other's
+character); the older tell-referenced handshake in `Relay/PairingService.cs` stays as the fallback for peers on
+an older version. `README.md`'s "How commands travel" section still describes the pre-relay code handshake -
+read the code/openspec specs (`collar/pairing`, `collar/pairing-recovery`) for the current behavior.
 
 This is two independently built and independently deployed things sharing one repo:
 - `Oathbound.Plugin/` - the Dalamud plugin (C#/.NET), shipped as a GitHub Release + `repo.json` third-party
@@ -117,7 +118,13 @@ Role only changes what a client does with incoming tells and what it declares du
 `Oathbound.Plugin/Relay/` <-> `worker/` is the one part of this system with real client/server infrastructure.
 Everything else in the plugin is peer-to-peer over FFXIV tells.
 
-- **`PairingService.cs`** owns the full relay-assisted pairing state machine for both roles. The inviter
+- **`CodePairingService.cs`** is the default pairing flow: a pairing code (`PairingCodes.cs`, 80-bit Crockford
+  base32) derives both the invitation's lookup id and the AES key for each side's character name/world, so the
+  relay never sees who pairs. The inviter confirms the accepting character before consume; commands stay
+  tell-verified regardless. **`BackupService.cs`** keeps an encrypted backup of the device key + pairings on the
+  relay under a recovery code, and **`RevocationService.CheckPairStatusAsync`** ends any pairing whose relay pair
+  row (a permanent tombstone) is revoked - that's how unpair reaches an offline peer.
+- **`PairingService.cs`** owns the original tell-referenced relay-assisted pairing state machine for both roles. The inviter
   creates a signed `InvitationEnvelope` via the relay, sends only its id in a `collarinvite <id>` tell; the
   receiver fetches and independently verifies that envelope's signature before ever showing a Pending
   request, and Accept publishes a signed `AcceptanceEnvelope` plus a `collarpairack <id> <proofDigest>` tell

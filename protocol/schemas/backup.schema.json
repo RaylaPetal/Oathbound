@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/backup.schema.json",
+  "title": "Backup",
+  "description": "collar/pairing-recovery: PUT /v1/backups/{backupId} body. The ciphertext is the client's identity-and-pairings backup, AES-256-GCM under a key derived from the recovery code (constants.json recoveryCode); the relay stores it opaquely, bound to the writing device key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schemaVersion",
+    "nonce",
+    "ciphertext"
+  ],
+  "properties": {
+    "type": {
+      "const": "backup"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "nonce": {
+      "$ref": "common.schema.json#/$defs/aeadNonce"
+    },
+    "ciphertext": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{24,43691}$"
+    }
+  }
+}

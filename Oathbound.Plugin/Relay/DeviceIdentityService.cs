@@ -85,6 +85,41 @@ public sealed class DeviceIdentityService
         return new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = identity.PublicKeyX!, Y = identity.PublicKeyY! };
     }
 
+    /// collar/pairing-recovery: the raw identity for the encrypted backup - public key plus private scalar.
+    /// Only ever handed to BackupService, which encrypts it under the recovery code before it leaves memory.
+    internal (string PublicKeyX, string PublicKeyY, byte[] PrivateD) ExportForBackup()
+    {
+        var identity = config.DeviceIdentity;
+        if (!identity.HasIdentity)
+            throw new InvalidOperationException("No device identity exists yet; call EnsureIdentity() first.");
+        return (identity.PublicKeyX!, identity.PublicKeyY!, Unprotect(identity.ProtectedPrivateKey!, identity.IsProtected));
+    }
+
+    /// collar/pairing-recovery: replaces this install's identity with a restored one. Validates the key pair
+    /// first (the private scalar must actually belong to the public key), then re-protects it for this
+    /// machine. Every relay pairing keyed to that identity works again immediately, since pairIdHash and the
+    /// peer's own records depend only on the public key.
+    internal void ImportFromBackup(string publicKeyX, string publicKeyY, byte[] privateD)
+    {
+        var publicKeyJwk = new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = publicKeyX, Y = publicKeyY };
+        using (var key = RelayCrypto.ImportSigningPrivateKey(publicKeyJwk, privateD))
+        {
+            const string probe = "oathbound-restore-probe";
+            if (!RelayCrypto.VerifyRaw(publicKeyJwk, RelayCrypto.SignRaw(key, probe), probe))
+                throw new CryptographicException("The restored private key doesn't match its public key.");
+        }
+
+        var (protectedPrivateKey, wasProtected) = Protect(privateD);
+        config.DeviceIdentity.PublicKeyX = publicKeyX;
+        config.DeviceIdentity.PublicKeyY = publicKeyY;
+        config.DeviceIdentity.ProtectedPrivateKey = protectedPrivateKey;
+        config.DeviceIdentity.IsProtected = wasProtected;
+        config.DeviceIdentity.DeviceKeyId = RelayCrypto.DeviceKeyId(publicKeyJwk);
+        config.Save();
+        cachedKey?.Dispose();
+        cachedKey = null;
+    }
+
     private void GenerateAndPersist()
     {
         using var key = RelayCrypto.GenerateSigningKeyPair();

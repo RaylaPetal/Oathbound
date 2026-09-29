@@ -15,7 +15,9 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
   const now = nowSeconds();
 
   const expiredInvitations = await env.RELAY_DB.prepare(
-    `DELETE FROM invitations WHERE expires_at <= ?1 OR status = 'consumed'`,
+    // A consumed tell invitation has done its job; a code invitation's end state (consumed, cancelled, rejected)
+    // is kept until its own expiry so the accepter's client can still read the outcome at its next check.
+    `DELETE FROM invitations WHERE expires_at <= ?1 OR (status = 'consumed' AND kind = 'tell')`,
   )
     .bind(now)
     .run();

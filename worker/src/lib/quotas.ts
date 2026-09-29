@@ -24,6 +24,11 @@ export const QUOTA_LIMITS = {
   // Hourly Owner checks and debounced Sub publishes need a handful per hour; this only stops runaway loops.
   deviceMailboxOps: { windowSeconds: 3600, maxCount: 120 },
   originRequests: { windowSeconds: 60, maxCount: 120 },
+  // collar/pairing + collar/pairing-recovery: unauthenticated capability reads that a guesser would hammer.
+  // Codes are 80/128 random bits, so these are defense in depth, generous for honest polling.
+  originInvitationLookup: { windowSeconds: 3600, maxCount: 120 },
+  originBackupFetch: { windowSeconds: 3600, maxCount: 20 },
+  deviceBackupWrite: { windowSeconds: 3600, maxCount: 60 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
   // Together these cap application traffic at 35k/day, leaving substantial headroom below Workers

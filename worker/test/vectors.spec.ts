@@ -91,4 +91,41 @@ describe("cross-runtime crypto vectors", () => {
     expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
     expect(await sha256Hex(ciphertext.buffer as ArrayBuffer)).toBe(v.ciphertextDigestSha256Hex);
   });
+  // collar/pairing + collar/pairing-recovery: the code-derived values are computed independently here (not
+  // by relay code - the relay never derives them) so any drift between the protocol text, the vectors and
+  // WebCrypto's HKDF/AES-GCM shows up. The plugin reproduces the same values with the BCL (manual check).
+  const normalizeCode = (input: string) => input.toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
+  async function hkdf(ikm: string, info: string): Promise<Uint8Array> {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(ikm), "HKDF", false, ["deriveBits"]);
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode(info) }, key, 256));
+  }
+  async function decrypt(keyBytes: Uint8Array, nonceB64: string, aad: string, ctB64: string): Promise<string> {
+    const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Uint8Array.from(Buffer.from(nonceB64, "base64url")), additionalData: new TextEncoder().encode(aad), tagLength: 128 },
+      key,
+      Uint8Array.from(Buffer.from(ctB64, "base64url")),
+    );
+    return new TextDecoder().decode(plain);
+  }
+
+  it("normalizes pairing codes and derives the lookup id and character key", async () => {
+    const v = vectors.pairingCode;
+    for (const c of v.normalizationCases) expect(normalizeCode(c.input)).toBe(c.normalized);
+    expect(Buffer.from(await hkdf(v.codeNormalized, v.lookupIdInfo)).toString("base64url")).toBe(v.lookupIdBase64Url);
+    const key = await hkdf(v.codeNormalized, v.encryptionKeyInfo);
+    expect(Buffer.from(key).toString("hex")).toBe(v.encryptionKeyHex);
+    expect(v.additionalAuthenticatedDataUtf8).toBe("oathbound-pair-code-v1|" + v.lookupIdBase64Url + "|inviter");
+    expect(await decrypt(key, v.nonceBase64Url, v.additionalAuthenticatedDataUtf8, v.ciphertextWithTagBase64Url)).toBe(v.plaintextUtf8);
+  });
+
+  it("derives the backup id and key from a recovery code and decrypts the sample backup", async () => {
+    const v = vectors.recoveryCode;
+    expect(normalizeCode(v.codeDisplay)).toBe(v.codeNormalized);
+    expect(v.codeNormalized).toHaveLength(26);
+    expect(Buffer.from(await hkdf(v.codeNormalized, v.backupIdInfo)).toString("base64url")).toBe(v.backupIdBase64Url);
+    const key = await hkdf(v.codeNormalized, v.encryptionKeyInfo);
+    expect(Buffer.from(key).toString("hex")).toBe(v.encryptionKeyHex);
+    expect(await decrypt(key, v.nonceBase64Url, v.additionalAuthenticatedDataUtf8, v.ciphertextWithTagBase64Url)).toBe(v.plaintextUtf8);
+  });
 });

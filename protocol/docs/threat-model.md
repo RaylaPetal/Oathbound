@@ -38,6 +38,16 @@ holding the same key.
    relay-observed device proof and a matching verified tell (see
    `../../openspec/changes/add-cloudflare-pairing-catalog-relay/design.md`,
    "Bind device keys through a two-channel handshake").
+   **Code invitations** (`kind: "code"`, collar/pairing) replace that tell with
+   an explicit confirmation by both people: the invitee accepts after seeing the
+   inviter's character, and the inviter confirms after seeing the accepter's.
+   Both characters travel only inside AES-GCM blobs keyed from the pairing code,
+   which the relay never sees. This binding is weaker than a verified tell, and
+   that is acceptable because **gameplay commands never depend on it**: every
+   command is still accepted only from an FFXIV tell whose verified sender
+   matches the stored peer, so a false character claim yields a pairing no
+   command can ever match. The residual risk (a third party using an
+   intercepted code) is covered by the inviter's Confirm/Reject step.
 3. **A leaked capability id alone is insufficient.** Every mutating request
    is additionally signed (`constants.json` → `requestSigning`); a leaked URL
    without the corresponding private key cannot mutate or, for read paths,
@@ -70,11 +80,13 @@ test in task 2.9).
 
 | Field (schema) | Purpose | Retention |
 |---|---|---|
-| `invitationId`, `requestId` (capability ids) | Unguessable handle for one-use fetch/consume | Deleted at consumption or 15 min expiry |
+| `invitationId`, `requestId` (capability ids) | Unguessable handle for one-use fetch/consume | Deleted at consumption or 15 min expiry. A code invitation (`kind: "code"`, where `invitationId` is the lookup id derived from the pairing code) is kept, with its end state, until its own expiry of at most 7 days so the accepter can read the outcome |
+| `encryptedCharacter` (code invitation/acceptance) | Each side's character name, world and trigger phrase, readable only with the pairing code | Opaque AES-GCM ciphertext; deleted with its invitation (at most 7 days) |
+| Backup `ciphertext`, `nonce`, bound `deviceKeyId` (collar/pairing-recovery) | Lets a player restore identity and pairings with their recovery code | Opaque AES-GCM ciphertext keyed from the recovery code, stored under SHA-256 of the backupId; replaced on each refresh, deleted when the code is regenerated or the identity reset |
 | `inviterDeviceKeyId`, `accepterDeviceKeyId`, `requesterDeviceKeyId`, `senderDeviceKeyId`, `recipientDeviceKeyId`, `issuedByDeviceKeyId`, `ownerDeviceKeyId`, `subDeviceKeyId` | Bind an envelope to a specific device's signing key | Kept only while the owning pair/invitation record exists; deleted with it |
 | `inviterPublicKey`, `accepterPublicKey`, `ownerEphemeralPublicKey`, `senderEphemeralPublicKey` (JWKs) | Signature verification / ECDH key agreement | Ephemeral ECDH keys deleted with their one-use request/response; signing public keys retained only for the life of the pair record |
 | `role` | Distinguishes Owner/Sub for the pending invitation | Deleted with the invitation |
-| `pairIdHash` | Server-side row key without revealing character identity | Retained while the pair is active; deleted after the documented bounded post-revocation retention window |
+| `pairIdHash` | Server-side row key without revealing character identity | Retained indefinitely, including after revocation: a revoked pair row (hash, epoch, the two device key ids, `created_at`, `revoked_at`) is the permanent tombstone that lets a peer who was offline for any length of time learn the pairing ended (collar/pairing, `GET /v1/pairs/{hash}?epoch=N`). It carries no character identity |
 | `pairEpoch`, `sequence` (monotonic), `snapshotId` (monotonic) | Ordering and stale/replay rejection | Retained only as long as needed to reject an older duplicate; not historical audit data |
 | `createdAt`, `expiresAt` | Server-enforced lifecycle | Drives deletion; not retained past expiry |
 | `signature` | Authenticates the envelope | Never stored separately from the record it authenticates; deleted with it |
