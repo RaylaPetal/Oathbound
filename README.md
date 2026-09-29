@@ -40,7 +40,8 @@ everything instantly with their safeword.
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
-| 🔗 | **Follow / Leash** | Make your Sub follow you, with their own movement held until you let go. |
+| 🔗 | **Follow / Leash** | Make your Sub follow you, with their own movement held until you let go. A leash line runs from their neck to your hand while it lasts. |
+| 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
 | 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
@@ -85,6 +86,10 @@ Sync tab shows whether it's up to date.
   outfit, collar, title, moodles, restraints, leash, animations and toys. You can also bind it to a
   hotkey. If you set a safeword, type it after the command (`/oathboundpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings.
+- **Only the two of you see the icons and the leash line.** They're drawn by your own clients - nobody
+  else sees them, and nothing extra is sent. The Sub's own view is exact; the Owner's is an estimate built
+  from the commands they sent, so it can't see a panic or the Sub's own releases (Sub Control has a
+  **Clear estimate** button for that). Either of you can turn them off in Settings -> In-world visuals.
 - **Test before you pair.** Settings has a **Test an Owner command** box that lets a Sub try any command
   on themselves without sending anything.
 

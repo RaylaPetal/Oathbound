@@ -136,6 +136,10 @@ public sealed class Plugin : IDalamudPlugin
     public ChatComposer ChatComposer { get; }
     public ChatSender ChatSender { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
+    public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
+    public StatusIndicatorState StatusIndicators { get; }
+    private readonly LeashRenderer leashRenderer;
+    private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
     public PanicHandler PanicHandler { get; }
@@ -209,6 +213,10 @@ public sealed class Plugin : IDalamudPlugin
         ChatComposer = new ChatComposer(Configuration);
         ChatSender = new ChatSender();
         OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
+        OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
+        StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
+        leashRenderer = new LeashRenderer(Configuration, StatusIndicators);
+        statusIconRenderer = new StatusIconRenderer(Configuration, StatusIndicators);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
@@ -294,6 +302,7 @@ public sealed class Plugin : IDalamudPlugin
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw += FileDialogManager.Draw;
+        PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
@@ -351,6 +360,7 @@ public sealed class Plugin : IDalamudPlugin
 
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw -= FileDialogManager.Draw;
+        PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
 
@@ -366,6 +376,9 @@ public sealed class Plugin : IDalamudPlugin
         favoritesDtrEntry.Remove();
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
+        OwnerStatusEstimates.Dispose();
+        leashRenderer.Dispose();
+        statusIconRenderer.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         CommandManager.RemoveHandler(ShorthandCommandName);

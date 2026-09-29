@@ -27,6 +27,10 @@ public sealed class FollowCommand
     private readonly MoodlesCommand moodles;
     private ulong followedObjectId;
 
+    /// collar/leash-visual: the leashed Owner's game object, read by the leash line for its hand anchor -
+    /// more precise than a name lookup. 0 while not leashed.
+    public ulong FollowedObjectId => followedObjectId;
+
     /// Whether this client believes the Sub is currently following the leashed Owner - set whenever we
     /// send `/follow <t>` ourselves, cleared on Release. Release only sends the stop-follow command when
     /// this is true, since bare `/follow` is a toggle in-game and would otherwise turn follow back on if

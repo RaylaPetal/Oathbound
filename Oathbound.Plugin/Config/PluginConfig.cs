@@ -796,6 +796,13 @@ public class PluginConfig : IPluginConfiguration
     /// collar/ui-organization: persisted position of the on-screen quick-access favorites button.
     public FavoritesButtonSettings FavoritesButton { get; set; } = new();
 
+    /// collar/status-indicators "Viewer can turn the icons off": only gates what this client draws.
+    public bool ShowStatusIcons { get; set; } = true;
+
+    /// collar/leash-visual "Viewer can turn the leash line off": only gates the drawing - the leash's
+    /// movement lock and following are unaffected.
+    public bool ShowLeashLine { get; set; } = true;
+
     /// The phrase that precedes an alias in a trigger tell (collar/chat-transport). Both sides must agree
     /// on this - the Owner's composer and the Sub's parser both read it from their own local config, so
     /// changing it only takes effect for messages sent/parsed after the change.

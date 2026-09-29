@@ -8,7 +8,7 @@
          `dotnet build` on this csproj, an IDE's default build task, or the .slnx - instead of depending
          on everyone remembering to build through the solution file. -->
     <Platform>x64</Platform>
-    <Version>0.1.4.0</Version>
+    <Version>0.1.5.0</Version>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>Rayla Petal</Author>
     <Name>Oathbound</Name>
@@ -23,6 +23,10 @@ service, while all gameplay actions remain local to the Sub's client.</Descripti
   <ItemGroup>
     <PackageReference Include="Glamourer.Api" Version="2.8.2" />
     <PackageReference Include="ECommons" Version="3.2.1.18" />
+    <!-- collar/leash-visual + collar/status-indicators: depth-aware 3D line drawing for the leash (AGPL-3.0, same as
+         this repo). Brings KamiToolKit in transitively, which the nameplate status icons use for their own overlay
+         addon. Both fail closed at runtime if their graphics/UI setup is unavailable (e.g. under Wine/DXVK). -->
+    <PackageReference Include="Pictomancy" Version="1.0.10" />
     <!-- collar/relay-service: DPAPI protection for the device signing private key (Relay/DeviceIdentityService.cs). -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
     <!-- collar/relay-service: pure-managed ECDSA/ECDH (Relay/RelayCrypto.cs) - System.Security.Cryptography's

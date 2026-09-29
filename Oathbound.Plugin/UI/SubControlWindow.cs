@@ -73,6 +73,8 @@ public sealed class SubControlWindow : Window, IDisposable
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
         if (!canSend)
             IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - every Send below is disabled until an Owner-side pairing is active.");
+        else
+            OwnerStatusView.Draw(plugin);
 
         var categorized = QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands);
         foreach (var (label, commands) in categorized)

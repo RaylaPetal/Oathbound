@@ -146,6 +146,8 @@ public class SettingsWindow : Window, IDisposable
             DrawIdentityCard(config);
             using (Section.Begin("favoritesButtonCard"))
                 DrawFavoritesButtonCard(config);
+            using (Section.Begin("worldVisualsCard"))
+                DrawWorldVisualsCard(config);
             using (Section.Begin("tutorialCard"))
                 DrawTutorialCard(config);
             ImGui.EndTabItem();
@@ -615,6 +617,31 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("How far the button sits from the chosen screen corner, in pixels.");
+    }
+
+    /// collar/status-indicators + collar/leash-visual: viewer-side display toggles. Both only change what
+    /// this client draws - nothing is sent, and the leash itself keeps working with its line hidden.
+    private void DrawWorldVisualsCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Eye, "In-world visuals");
+        ImGui.Separator();
+        ImGui.TextWrapped("Only you and your paired Owner/Sub see these - nobody else, and nothing extra is sent.");
+
+        var showIcons = config.ShowStatusIcons;
+        if (ImGui.Checkbox("Show status icons on nameplates", ref showIcons))
+        {
+            config.ShowStatusIcons = showIcons;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Gagged, restrained and leashed icons next to the name. On an Owner's screen these are an estimate from the commands you sent.");
+
+        var showLeash = config.ShowLeashLine;
+        if (ImGui.Checkbox("Show leash line", ref showLeash))
+        {
+            config.ShowLeashLine = showLeash;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("A line from the Sub's neck to the Owner's hand while leashed. Hiding it doesn't release the leash.");
     }
 
     /// collar/onboarding "Settings offers a control to rerun the current Role's tutorial": its own card at

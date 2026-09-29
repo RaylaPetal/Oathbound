@@ -3216,6 +3216,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawFollowQuickSectionBody(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Follow;
+        OwnerStatusView.Draw(plugin);
 
         // collar/control-vocabulary: leash/unleash are fixed words every Sub understands, so there's nothing
         // to customize any more - only these two, plus any custom follow words saved by an older version
