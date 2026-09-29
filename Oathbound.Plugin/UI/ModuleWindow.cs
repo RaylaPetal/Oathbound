@@ -286,6 +286,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     var canSend = DrawOwnerCanSendBanner();
                     IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
                     ImGui.Separator();
+                    // collar/custom-triggers "Revert custom triggers": undo what Custom Triggers applied, without
+                    // "revert all" or unlocking each category by hand.
+                    using (Section.Begin("ctqRevert", "Revert"))
+                    {
+                        DrawFixedQuickRow("Revert custom triggers", "customtrigger revert", canSend, FixedActionIds.CustomTriggerRevert);
+                        IconGlyph.HelpMarker("Undoes what Custom Triggers applied on your Sub since the last revert: their title, outfit, animation, moodles and restraints. Leash, toys, the collar and anything you sent on its own stay as they are. A chat message that was already sent can't be taken back.");
+                    }
                     using (Section.Begin("ctqSaved", "Saved"))
                         DrawSavedAliasCommands(canSend);
                     using (Section.Begin("ctqBuilder", "Build a bundle"))
@@ -1088,7 +1095,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton("Edit"))
                 LoadDeviceDraft(device);
             ImGui.SameLine();
-            if (ImGui.SmallButton("Remove"))
+            // "Delete", not "Remove": this deletes the saved restraint, it doesn't take it off anyone.
+            if (ImGui.SmallButton("Delete"))
             {
                 plugin.RestraintCommand.RemoveDevice(device.Id);
                 selectedDeviceId = null;
@@ -1207,7 +1215,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                         OpenSubModEditor(key, FromRules(created.Rules));
                 }
                 ImGui.SameLine();
-                if (ImGui.SmallButton($"Remove##{key}"))
+                if (ImGui.SmallButton($"Delete##{key}"))
                 {
                     configured.Remove(created);
                     if (expandedSubModKey == key)
@@ -2854,8 +2862,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
             expanded = !expanded;
         }
-        ContinueRowOrWrap(ButtonWidth("Remove"));
-        if (ImGui.SmallButton("Remove"))
+        // "Delete", not "Remove": on the Owner's side "Remove" reads as "take this restraint off my Sub".
+        ContinueRowOrWrap(ButtonWidth("Delete"));
+        if (ImGui.SmallButton("Delete"))
         {
             list.Remove(cmd);
             expandedRestraintRuleEditors.Remove(cmd.Label);

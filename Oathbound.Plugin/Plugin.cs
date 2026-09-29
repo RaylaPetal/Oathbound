@@ -78,11 +78,11 @@ public sealed class Plugin : IDalamudPlugin
     public CustomizePresetPickerWindow CustomizePresetPickerWindow { get; }
     public ItemPickerWindow ItemPickerWindow { get; }
     public FavoritesWindow FavoritesWindow { get; }
-    public FavoritesBarButton FavoritesBarButton { get; }
+    private QuickAccessMenuHost QuickAccessMenuHost { get; }
     private RecoveryCodeWindow RecoveryCodeWindow { get; }
 
     /// collar/ui-organization "A server info bar entry always opens the quick-access menu": the
-    /// guaranteed fallback access point for QuickAccessMenu, independent of FavoritesButtonSettings.Visible.
+    /// only access point for QuickAccessMenu (the on-screen button was removed).
     private readonly IDtrBarEntry favoritesDtrEntry;
 
     /// Shown only while a toy is running (Sub: actual state; Owner: estimate from what was sent), so both
@@ -239,6 +239,7 @@ public sealed class Plugin : IDalamudPlugin
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand);
 
         PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
+        PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -250,13 +251,13 @@ public sealed class Plugin : IDalamudPlugin
         CustomizePresetPickerWindow = new CustomizePresetPickerWindow(this);
         ItemPickerWindow = new ItemPickerWindow(this);
         FavoritesWindow = new FavoritesWindow(this);
-        FavoritesBarButton = new FavoritesBarButton(this);
+        QuickAccessMenuHost = new QuickAccessMenuHost(this);
         RecoveryCodeWindow = new RecoveryCodeWindow(this);
 
         favoritesDtrEntry = DtrBar.Get("Oathbound Quick Access");
         favoritesDtrEntry.Text = ((char)SeIconChar.BoxedStar).ToString();
         favoritesDtrEntry.Tooltip = "Favorited Collar commands";
-        favoritesDtrEntry.OnClick = _ => QuickAccessMenu.Toggle(anchorToButton: false);
+        favoritesDtrEntry.OnClick = _ => QuickAccessMenu.Toggle();
         favoritesDtrEntry.Shown = true;
 
         toyStatusDtrEntry = DtrBar.Get("Oathbound Toy Status");
@@ -275,7 +276,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(CustomizePresetPickerWindow);
         WindowSystem.AddWindow(ItemPickerWindow);
         WindowSystem.AddWindow(FavoritesWindow);
-        WindowSystem.AddWindow(FavoritesBarButton);
+        WindowSystem.AddWindow(QuickAccessMenuHost);
         WindowSystem.AddWindow(RecoveryCodeWindow);
 
         // collar/onboarding "Welcome window appears once on first plugin load": shown before CollarWindow
@@ -387,7 +388,7 @@ public sealed class Plugin : IDalamudPlugin
         AnimationPickerWindow.Dispose();
         CustomizePresetPickerWindow.Dispose();
         ItemPickerWindow.Dispose();
-        FavoritesBarButton.Dispose();
+        QuickAccessMenuHost.Dispose();
         favoritesDtrEntry.Remove();
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();

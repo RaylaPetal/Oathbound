@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.Safety;
 using Oathbound.Plugin.UI;
 using ECommons.Automation;
 
@@ -41,6 +42,7 @@ public sealed class CustomTriggerCommand
     {
         var applied = new List<string>();
         var skipped = new List<string>();
+        var effects = config.CustomTriggerEffects;
 
         foreach (var action in actions)
         {
@@ -49,6 +51,7 @@ public sealed class CustomTriggerCommand
                 case CustomTriggerActionKind.Title:
                     if (!config.Permissions.Title) { skipped.Add("title (permission)"); break; }
                     title.Apply(new TitleAliasDefinition { Text = action.TitleText, IsPrefix = action.TitleIsPrefix, Color = action.TitleColor, Glow = action.TitleGlow });
+                    effects.Title = true;
                     applied.Add("title");
                     break;
 
@@ -64,7 +67,10 @@ public sealed class CustomTriggerCommand
                         ? outfit.Apply(new OutfitAliasDefinition { DesignId = action.OutfitDesignId, DesignName = action.OutfitDesignName, Locked = true })
                         : outfit.ForceApply(action.OutfitDesignName);
                     if (outfitOk)
+                    {
+                        effects.Outfit = true;
                         applied.Add("outfit");
+                    }
                     else
                         skipped.Add("outfit (force-locked, not found, or apply failed)");
                     break;
@@ -79,7 +85,10 @@ public sealed class CustomTriggerCommand
                         ? gesture.Apply(new GestureAliasDefinition { GestureId = action.GestureId, AnimationName = action.GestureAnimationName })
                         : gesture.ForceApply(action.GestureAnimationName);
                     if (gestureOk)
+                    {
+                        effects.Gesture = true;
                         applied.Add("gesture");
+                    }
                     else
                         skipped.Add("gesture (not found or failed to play)");
                     break;
@@ -87,13 +96,22 @@ public sealed class CustomTriggerCommand
                 case CustomTriggerActionKind.Moodle:
                     if (!config.Permissions.Moodles) { skipped.Add("moodle (permission)"); break; }
                     if (moodles.Apply(new MoodlesAliasDefinition { StatusId = action.MoodleStatusId, StatusName = action.MoodleStatusName }))
+                    {
+                        // Held under the same per-status "manual" ledger source Apply itself uses, so revert can
+                        // release exactly this status and nothing else.
+                        if ((Guid.TryParse(action.MoodleStatusId, out var statusId) || moodles.TryResolveStatusId(action.MoodleStatusName, out statusId))
+                            && !effects.MoodleStatusIds.Contains(statusId))
+                            effects.MoodleStatusIds.Add(statusId);
                         applied.Add("moodle");
+                    }
                     else
                         skipped.Add("moodle (not found or failed to apply)");
                     break;
 
                 case CustomTriggerActionKind.Restraint:
                     if (!(config.Permissions.Restraints && config.TosAcknowledged)) { skipped.Add("restraint (permission/acknowledgement)"); break; }
+                    // Which devices this action added, whatever path it takes - revert releases exactly these.
+                    var activeBefore = restraints.ActiveDeviceIds.ToHashSet();
                     // Both branches are apply-only because the bundle itself arrived as an Owner command.
                     // In particular, do not route stable IDs through the Sub self-service Toggle method:
                     // Toggle is rejected by an Owner force-lock and made multi-restraint bundles depend on
@@ -111,7 +129,11 @@ public sealed class CustomTriggerCommand
                             ? restraints.ForceApplyById(action.RestraintDeviceId, restraintLock)
                             : restraints.ForceApply(action.RestraintDeviceName, restraintLock: restraintLock);
                     if (restraintOk)
+                    {
+                        foreach (var id in restraints.ActiveDeviceIds.Where(id => !activeBefore.Contains(id) && !effects.RestraintDeviceIds.Contains(id)))
+                            effects.RestraintDeviceIds.Add(id);
                         applied.Add($"restraint \"{action.RestraintDeviceName}\"");
+                    }
                     else
                         skipped.Add($"restraint \"{action.RestraintDeviceName}\" ({restraints.LastFailureReason ?? "apply failed"})");
                     break;
@@ -131,10 +153,59 @@ public sealed class CustomTriggerCommand
             }
         }
 
+        config.Save();
         var skippedSuffix = skipped.Count > 0 ? $" (skipped: {string.Join(", ", skipped)})" : "";
         return applied.Count > 0
             ? LocalTestResult.Ok($"Applied: {string.Join(", ", applied)}{skippedSuffix}")
             : LocalTestResult.Fail($"Nothing applied{skippedSuffix}");
+    }
+
+    /// collar/custom-triggers "Revert custom triggers" (`customtrigger revert`): undoes what Custom Triggers
+    /// applied since the last revert, and nothing else - the title and outfit they set, a playing animation,
+    /// the moodles they added, and the restraint devices they put on. Leash, toy, collar, and anything applied
+    /// by its own command are untouched (that's "revert all"). A sent chat message can't be undone. Each step
+    /// is isolated so one failing IPC never stops the rest.
+    public LocalTestResult RevertEffects()
+    {
+        var effects = config.CustomTriggerEffects;
+        if (!effects.Any)
+            return LocalTestResult.Fail("Nothing to revert - no Custom Trigger effects are active.");
+
+        var done = new List<string>();
+        var failed = new List<string>();
+        void Step(string name, bool applies, Action action)
+        {
+            if (!applies) return;
+            try { action(); done.Add(name); }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning(ex, $"customtrigger revert: {name} step failed - continuing.");
+                failed.Add(name);
+            }
+        }
+
+        // Restraints first, like revert all: releasing their slot lock can hand a slot back to the outfit.
+        Step("restraints", effects.RestraintDeviceIds.Count > 0, () => restraints.ReleaseDevices(effects.RestraintDeviceIds));
+        Step("outfit", effects.Outfit, () => outfit.RevertToBase());
+        Step("title", effects.Title, title.ForceClear);
+        Step("animation", effects.Gesture, gesture.ResetActiveTemporary);
+        Step("moodles", effects.MoodleStatusIds.Count > 0, () =>
+        {
+            foreach (var statusId in effects.MoodleStatusIds)
+                moodles.Ledger.Release(AttachedMoodleLedger.ManualSource(statusId));
+        });
+
+        ForgetEffects();
+        var summary = $"Reverted Custom Trigger effects: {string.Join(", ", done)}.";
+        return failed.Count == 0 ? LocalTestResult.Ok(summary) : LocalTestResult.Fail($"{summary} Failed: {string.Join(", ", failed)}.");
+    }
+
+    /// Called when those effects are already gone another way (revert all, panic), so a later revert never
+    /// undoes something applied afterwards by a plain command.
+    public void ForgetEffects()
+    {
+        config.CustomTriggerEffects = new CustomTriggerEffectsState();
+        config.Save();
     }
 
     /// design.md "customtrigger cast wire shape": mirrors `RestraintCommand.BuildWearCommand`'s quoted-label

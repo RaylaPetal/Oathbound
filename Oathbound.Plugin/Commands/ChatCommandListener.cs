@@ -434,6 +434,9 @@ public sealed class ChatCommandListener : IDisposable
         Step("teleport", permissions.Teleport && teleport.IsInProgress, () => teleport.Stop("Owner sent Revert all"));
         // Last, so the releases above have already dropped their own holds; the collar's is re-applied.
         Step("moodles", permissions.Moodles, () => moodles.Ledger.ClearAllExceptCollar());
+        // Everything a Custom Trigger could have applied is gone now, so a later "revert custom triggers"
+        // must not undo something applied after this.
+        customTriggers.ForgetEffects();
 
         if (done.Count == 0 && failed.Count == 0)
             return LocalTestResult.Fail("Revert all did nothing - every category it covers has its permission turned off.");
@@ -682,6 +685,11 @@ public sealed class ChatCommandListener : IDisposable
 
     private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock)
     {
+        // collar/custom-triggers "Revert custom triggers". An older Sub doesn't know this sub-verb and rejects
+        // it, so it fails closed (nothing is reverted) rather than doing anything unexpected.
+        if (rest.Trim().Equals("revert", StringComparison.OrdinalIgnoreCase))
+            return customTriggers.RevertEffects();
+
         const string castPrefix = "cast ";
         if (rest.StartsWith(castPrefix, StringComparison.OrdinalIgnoreCase))
         {

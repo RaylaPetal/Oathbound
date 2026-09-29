@@ -684,6 +684,18 @@ public sealed class RestraintCommand
         if (removed) penumbra.TryRedrawLocalPlayer();
     }
 
+    /// collar/custom-triggers "Revert custom triggers": releases just these devices (each with its own rules,
+    /// animations, moodle and mod setting), leaving any other active restraint on. Once nothing is left
+    /// active, the Owner's force-lock (and any timer) goes too, since there's nothing left for it to hold.
+    public void ReleaseDevices(IEnumerable<string> deviceIds)
+    {
+        foreach (var deviceId in deviceIds.ToList())
+            if (activeDeviceIds.Contains(deviceId))
+                ReleaseDevice(deviceId);
+        if (activeDeviceIds.Count == 0)
+            runtimeState.RestraintsForceLocked = false;
+    }
+
     private void ReleaseDevice(string deviceId)
     {
         restrictionRules.Release(deviceId);

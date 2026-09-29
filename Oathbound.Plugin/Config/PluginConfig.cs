@@ -32,15 +32,6 @@ public enum PairingDirection
     SubSide,
 }
 
-/// collar/ui-organization "A movable on-screen button opens the quick-access favorites menu".
-public enum ScreenCorner
-{
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
-}
-
 /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel" - which chat
 /// channel an Owner's outgoing commands are composed for. Linkshell/CrossWorldLinkshell each need a
 /// specific numbered slot (see PluginConfig.LinkshellNumber/CrossWorldLinkshellNumber) to actually send
@@ -52,20 +43,6 @@ public enum ChatChannel
     Alliance,
     Linkshell,
     CrossWorldLinkshell,
-}
-
-/// Where the on-screen quick-access button sits - a corner preset plus a pixel margin from it, rather than
-/// free drag placement (design.md's "Alternative considered": simpler to persist/validate, and matches how
-/// the DTR bar itself is positioned by Dalamud, not dragged by this plugin).
-[Serializable]
-public class FavoritesButtonSettings
-{
-    public ScreenCorner Corner { get; set; } = ScreenCorner.BottomRight;
-    public Vector2 Margin { get; set; } = new(16, 16);
-
-    /// collar/ui-organization "On-screen quick-access button can be hidden" - the DTR bar entry still
-    /// opens QuickAccessMenu regardless of this setting.
-    public bool Visible { get; set; } = true;
 }
 
 /// collar/pairing's relay-assisted pairing state. There is no manual code handshake any more - identity is
@@ -240,6 +217,20 @@ public class RevocationRetryEntry
 /// collar/pairing: one code invitation in flight. `IsInviter` says which side this install is on. The
 /// normalized code is kept because it's the key to both character blobs; it's short-lived (7 days) and
 /// dropped as soon as the invitation reaches an end state.
+/// collar/custom-triggers: the effects Custom Triggers applied (and haven't been reverted since). Chat is
+/// never tracked - a sent message can't be taken back.
+[Serializable]
+public class CustomTriggerEffectsState
+{
+    public bool Title { get; set; }
+    public bool Outfit { get; set; }
+    public bool Gesture { get; set; }
+    public List<Guid> MoodleStatusIds { get; set; } = new();
+    public List<string> RestraintDeviceIds { get; set; } = new();
+
+    public bool Any => Title || Outfit || Gesture || MoodleStatusIds.Count > 0 || RestraintDeviceIds.Count > 0;
+}
+
 [Serializable]
 public class CodeInvitationState
 {
@@ -446,6 +437,7 @@ public static class FixedActionIds
     public const string LeashDefault = "leashDefault";
     public const string UnleashDefault = "unleashDefault";
     public const string Teleport = "teleport";
+    public const string CustomTriggerRevert = "customTriggerRevert";
 }
 
 /// The Sub's configured collar item (collar/collaring) - a single Neck-slot item, picked from a
@@ -810,6 +802,10 @@ public class PluginConfig : IPluginConfiguration
     public PairingState? Pairing { get; set; }
 
     public DeviceIdentityState DeviceIdentity { get; set; } = new();
+
+    /// collar/custom-triggers "Revert custom triggers": what Custom Triggers have applied since the last
+    /// revert, so `customtrigger revert` can undo exactly that. Persisted so it survives a reload.
+    public CustomTriggerEffectsState CustomTriggerEffects { get; set; } = new();
     public List<RevocationRetryEntry> RevocationOutbox { get; set; } = new();
     public List<PendingRelayOperationState> PendingRelayOperations { get; set; } = new();
 
@@ -855,10 +851,7 @@ public class PluginConfig : IPluginConfiguration
     /// Owner-side only in practice (a Sub has no use for their own names here) - see OwnerQuickCommands.
     public OwnerQuickCommands QuickCommands { get; set; } = new();
 
-    /// collar/ui-organization: persisted position of the on-screen quick-access favorites button.
-    public FavoritesButtonSettings FavoritesButton { get; set; } = new();
-
-    /// collar/status-indicators "Viewer can turn the icons off": only gates what this client draws.
+        /// collar/status-indicators "Viewer can turn the icons off": only gates what this client draws.
     public bool ShowStatusIcons { get; set; } = true;
 
     /// collar/leash-visual "Viewer can turn the leash line off": only gates the drawing - the leash's

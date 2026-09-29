@@ -54,6 +54,10 @@ public sealed class PanicHandler
 
     /// Reverts every local restriction/effect - does not touch any pairing. Every relationship this device
     /// holds remains exactly as paired as it was before.
+    /// collar/custom-triggers: extra resets that must happen with every local revert, wired by Plugin (the
+    /// Custom Trigger effects record - panic already removed those effects).
+    public Action? AfterLocalRevert { get; set; }
+
     public void Panic()
     {
         RevertLocalState();
@@ -75,6 +79,8 @@ public sealed class PanicHandler
 
     private void RevertLocalState()
     {
+        if (AfterLocalRevert is { } after)
+            RunStep("forget custom trigger effects", after);
         RunStep("revert outfit/collar", () => glamourer.RevertToAutomationFull());
         RunStep("release slot locks", slotLocks.ReleaseAllForPanic);
         RunStep("clear collar moodle", collar.PanicRelease);

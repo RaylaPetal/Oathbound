@@ -12,11 +12,11 @@ namespace Oathbound.Plugin.UI;
 
 /// collar/ui-organization "Compact favorites window lists only favorited commands" (reworked): replaces
 /// the former `FavoritesWindow` with a two-level ImGui popup (design.md's "Quick-access menu is an ImGui
-/// popup, not a window") - opened by both the DTR bar entry and the on-screen `FavoritesBarButton`, so it
-/// lives as its own static-ish helper rather than a `Window` subclass.
+/// popup, not a window") - opened by the DTR bar entry, so it lives as its own static-ish helper rather than a
+/// `Window` subclass.
 ///
-/// `Toggle()` is called from two different contexts (a DTR bar click callback, which Dalamud can invoke
-/// outside any ImGui frame entirely, and the on-screen button's own click inside its Draw()) - it MUST
+/// `Toggle()` is called from a DTR bar click callback, which Dalamud can invoke outside any ImGui frame
+/// entirely - it MUST
 /// NOT call any ImGui popup API (OpenPopup/BeginPopup/IsPopupOpen) directly. Every one of those is scoped
 /// to Dear ImGui's "current window" at the time of the call (its ID is hashed together with whatever
 /// window happens to be current), so calling them from mismatched contexts computes mismatched popup IDs
@@ -24,7 +24,7 @@ namespace Oathbound.Plugin.UI;
 /// calling them when there is no current ImGui frame/window at all (as a DTR click callback can do)
 /// dereferences invalid internal ImGui state, which is what was crashing the game on click. `Toggle()`
 /// therefore only flips a plain flag; every real ImGui popup call happens inside `Draw()`, which is always
-/// invoked from the exact same place every frame (`FavoritesBarButton.Draw()`), so Open/Begin are always
+/// invoked from the exact same place every frame (`QuickAccessMenuHost.Draw()`), so Open/Begin are always
 /// called from one consistent, always-valid context.
 public static class QuickAccessMenu
 {
@@ -32,22 +32,12 @@ public static class QuickAccessMenu
     private static bool openRequested;
     private static bool closeRequested;
 
-    /// Whether the most recently *requested* open should anchor to the on-screen button's own position.
-    /// `FavoritesBarButton` opens anchored there; the DTR bar entry (screen-top server info bar) opens
-    /// with this false, so Draw() skips the button anchor and lets Dear ImGui's own default mouse-position
-    /// popup placement apply instead - anchoring to the button's position regardless of trigger source was
-    /// the reported bug (DTR click at the top opening the menu down at the button's corner).
-    private static bool openAnchorToButton = true;
-
-    public static void Toggle(bool anchorToButton = true)
+    public static void Toggle()
     {
         if (closeRequested || (!openRequested && IsLikelyOpen))
             closeRequested = true;
         else
-        {
             openRequested = true;
-            openAnchorToButton = anchorToButton;
-        }
     }
 
     /// Best-effort only - real open/closed state is Dear ImGui's, only ever queried from inside `Draw()`
@@ -71,28 +61,7 @@ public static class QuickAccessMenu
         using var popupRounding = ImRaii.PushStyle(ImGuiStyleVar.PopupRounding, Theme.CardRounding);
         using var headerHovered = ImRaii.PushColor(ImGuiCol.HeaderHovered, Theme.TileBgHover);
 
-        // Anchors the popup to the on-screen button's own rect when that's what opened it - explicit
-        // rather than relying on Dear ImGui's default mouse-position popup placement, and pivoted so the
-        // menu grows away from whichever screen edges the button sits against instead of potentially
-        // opening off-screen (the bug report: menu appearing up near the top while the button sits at the
-        // bottom). Cheap to call every frame - ImGuiCond.Appearing only actually applies it on the frame
-        // the popup opens. When opened from the DTR bar entry instead, skip this entirely so Dear ImGui's
-        // own default (anchored to the click position) applies - the DTR bar sits at the opposite end of
-        // the screen from wherever the button is configured, so anchoring to the button there reproduces
-        // the same bug from the other direction.
-        if (openAnchorToButton)
-        {
-            var buttonSettings = plugin.Configuration.FavoritesButton;
-            var buttonPos = FavoritesBarButton.ComputePosition(buttonSettings);
-            var isTop = buttonSettings.Corner is ScreenCorner.TopLeft or ScreenCorner.TopRight;
-            var isLeft = buttonSettings.Corner is ScreenCorner.TopLeft or ScreenCorner.BottomLeft;
-            var pivot = new Vector2(isLeft ? 0f : 1f, isTop ? 0f : 1f);
-            var anchor = new Vector2(
-                isLeft ? buttonPos.X : buttonPos.X + FavoritesBarButton.ButtonSize,
-                isTop ? buttonPos.Y + FavoritesBarButton.ButtonSize : buttonPos.Y);
-            ImGui.SetNextWindowPos(anchor, ImGuiCond.Appearing, pivot);
-        }
-
+        // Dear ImGui's own default placement (at the click on the server info bar entry) applies.
         if (!ImGui.BeginPopup(PopupId))
         {
             IsLikelyOpen = false;
@@ -174,6 +143,7 @@ public static class QuickAccessMenu
         (FixedActionIds.UnlockOutfit, "Unlock outfit", "Outfit", "outfit unlock"),
         (FixedActionIds.LeashDefault, "Leash", "Follow", ControlWords.Leash),
         (FixedActionIds.UnleashDefault, "Unleash", "Follow", ControlWords.Unleash),
+        (FixedActionIds.CustomTriggerRevert, "Revert custom triggers", "Custom Triggers", "customtrigger revert"),
     ];
 
     internal static List<(string Label, List<QuickCommand> Favorites)> CategorizedFavorites(OwnerQuickCommands quick)
