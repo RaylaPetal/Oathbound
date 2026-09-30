@@ -580,7 +580,7 @@ public sealed class RestraintCommand
         {
             if (!boundAnimations.ContainsKey((deviceId, rule.Kind)))
                 continue;
-            if (ResolveAnimation(rule.AnimationId)?.Trigger is { } trigger)
+            if (ResolveAnimation(rule.AnimationId)?.PlayableTrigger is { } trigger)
                 pendingBoundPlays[(deviceId, rule.Kind)] = (trigger, now);
         }
     }
@@ -634,8 +634,8 @@ public sealed class RestraintCommand
         }
 
         boundAnimations[(deviceId, rule.Kind)] = (collection.Value, entry.ModDirectory);
-        if (entry.Trigger is not null)
-            pendingBoundPlays[(deviceId, rule.Kind)] = (entry.Trigger, Environment.TickCount64 + PlayDelayMs);
+        if (entry.PlayableTrigger is { } boundTrigger)
+            pendingBoundPlays[(deviceId, rule.Kind)] = (boundTrigger, Environment.TickCount64 + PlayDelayMs);
         return true;
     }
 

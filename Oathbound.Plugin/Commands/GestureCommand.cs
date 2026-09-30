@@ -211,6 +211,12 @@ public sealed class GestureCommand
             EmotePlayed?.Invoke();
             return true;
         }
+        if (trigger.EmoteModeId == 0)
+        {
+            RotateStandingIdle(trigger.CPoseState);
+            EmotePlayed?.Invoke();
+            return true;
+        }
         var playerState = PlayerState.Instance();
         if (playerState == null || trigger.EmoteModeId is < 1 or > 3) return false;
         var poseType = trigger.EmoteModeId switch
@@ -249,6 +255,31 @@ public sealed class GestureCommand
             if (IsStanding())
                 Chat.SendMessage(command);
         }, PoseRetryDelay);
+    }
+
+    /// How long to let one /cpose step land before reading the pose again.
+    private static readonly TimeSpan CPoseStepDelay = TimeSpan.FromMilliseconds(700);
+    private const int MaxStandingIdleSteps = 7;
+
+    /// Standing idles have no "switch to pose N" command - /cpose only steps to the next one - so step until
+    /// the character's current idle is `target`. Only while standing with the weapon sheathed: there /cpose
+    /// would change a sitting pose or the battle stance instead. Capped at one full cycle, so a character
+    /// without that many idles doesn't keep cycling.
+    internal static unsafe void RotateStandingIdle(byte target, int stepsLeft = MaxStandingIdleSteps)
+    {
+        var player = Control.GetLocalPlayer();
+        if (player == null || player->Mode != CharacterModes.Normal || player->IsWeaponDrawn)
+            return;
+        if (player->EmoteController.CPoseState == target)
+            return;
+        if (stepsLeft == 0)
+        {
+            Plugin.Log.Warning($"Couldn't rotate to standing idle {target}: still on {player->EmoteController.CPoseState} after a full /cpose cycle.");
+            return;
+        }
+
+        Chat.SendMessage("/cpose");
+        Plugin.Framework.RunOnTick(() => RotateStandingIdle(target, stepsLeft - 1), CPoseStepDelay);
     }
 
     private static unsafe bool IsStanding()

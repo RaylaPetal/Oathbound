@@ -49,7 +49,16 @@ public class GestureCatalogEntry
     public int TriggerOrder { get; set; }
     public Dictionary<string, List<string>> GroupSelections { get; set; } = new();
     public GestureTrigger? Trigger { get; set; }
+    /// The standing idle (/cpose number) this option replaces, when it replaces one - set only on its
+    /// trigger-less "idle/walk" entry. Kept out of Trigger/Id/Label on purpose so saved commands and restraint
+    /// rules that already reference the entry keep resolving. Local-only: never part of the slim export.
+    public byte? IdlePose { get; set; }
     public bool ModEnabled { get; set; }
+
+    /// What a restraint's bound animation plays: the entry's own trigger, else a rotation to its standing idle.
+    [JsonIgnore]
+    public GestureTrigger? PlayableTrigger => Trigger
+        ?? (IdlePose is { } idle ? new GestureTrigger { Kind = GestureTriggerKind.Pose, EmoteModeId = 0, CPoseState = idle } : null);
     public string Label => $"{ModName} — {AnimationName}" + (Trigger is null ? " — no playable trigger" : $" — {Trigger.DisplayName}");
 
     /// Display counterpart of Label (which stays the matching text) - see GestureTrigger.Label.

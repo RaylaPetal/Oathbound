@@ -1238,15 +1238,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 using (Section.Begin(key))
                 {
                     Section.Heading("Name, alias & item");
-                    var nameBuffer = created.Name;
-                    if (ImGui.InputText($"Name##{key}", ref nameBuffer, 80) && nameBuffer.Trim().Length > 0)
+                    if (DrawDeferredTextInput($"Name##{key}", (created, "name"), created.Name, 80, out var nameBuffer) && nameBuffer.Trim().Length > 0)
                     {
                         created.Name = nameBuffer;
                         config.Save();
                     }
                     IconGlyph.HelpMarker("Your own label for this configured restraint - rename it so you can tell entries for the same mod apart.");
-                    var aliasBuffer = created.Alias;
-                    if (ImGui.InputTextWithHint($"Alias##{key}", "optional", ref aliasBuffer, 32))
+                    if (DrawDeferredTextInput($"Alias##{key}", (created, "alias"), created.Alias, 32, out var aliasBuffer, "optional"))
                     {
                         created.Alias = aliasBuffer.Trim();
                         config.Save();
@@ -2828,6 +2826,28 @@ public sealed partial class ModuleWindow : Window, IDisposable
         editingOwnerActionIndex = null;
     }
 
+    private readonly Dictionary<object, string> textInputDrafts = new();
+
+    /// A text field that edits a local draft and returns true only once, when editing ends (focus leaves or
+    /// Enter) with a changed value - so callers save once per edit instead of on every keystroke, which wrote
+    /// the whole config (and woke catalog sync) per character. `draftKey` identifies the edited value.
+    private bool DrawDeferredTextInput(string label, object draftKey, string current, int maxLength, out string committed, string? hint = null)
+    {
+        var draft = textInputDrafts.TryGetValue(draftKey, out var pending) ? pending : current;
+        var edited = hint is null ? ImGui.InputText(label, ref draft, maxLength) : ImGui.InputTextWithHint(label, hint, ref draft, maxLength);
+        if (edited)
+            textInputDrafts[draftKey] = draft;
+        committed = draft;
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            textInputDrafts.Remove(draftKey);
+            return draft != current;
+        }
+        if (!ImGui.IsItemActive())
+            textInputDrafts.Remove(draftKey);
+        return false;
+    }
+
     private void DrawRestraintQuickRow(QuickCommand cmd, List<QuickCommand> list, bool canSend)
     {
         ImGui.PushID($"restraintQuick_{cmd.Label}");
@@ -2888,8 +2908,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (expanded && restraintRuleEdits.TryGetValue(cmd.Label, out var edit))
         {
             using var editorBox = Section.Begin("restraintQuickEditor", "Name & item");
-            var labelBuffer = cmd.Label;
-            if (ImGui.InputText("Name##restraintQuickLabel", ref labelBuffer, 80))
+            // Committed only when editing ends: the row's ImGui ID and the editor bookkeeping are keyed by the label,
+            // so renaming per keystroke dropped focus after every character (and trimmed away typed spaces).
+            if (DrawDeferredTextInput("Name##restraintQuickLabel", cmd, cmd.Label, 80, out var labelBuffer))
             {
                 var trimmedLabel = labelBuffer.Trim();
                 var oldLabel = cmd.Label;

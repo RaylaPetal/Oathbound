@@ -38,7 +38,8 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
         foreach (var option in raw.Entries)
         {
             var triggers = GestureTriggerResolver.Detect(option.GroupName, option.OptionName, option.Paths);
-            var hasIdle = HasIdleHint(option.GroupName) || HasIdleHint(option.OptionName) || option.Paths.Any(HasIdleHint);
+            var standingIdle = GestureTriggerResolver.DetectStandingIdle(option.Paths);
+            var hasIdle = standingIdle is not null || HasIdleHint(option.GroupName) || HasIdleHint(option.OptionName) || option.Paths.Any(HasIdleHint);
             if (triggers.Count == 0) triggers.Add(null);
             else if (hasIdle) triggers.Insert(0, null);
             for (var triggerOrder = 0; triggerOrder < triggers.Count; triggerOrder++)
@@ -49,6 +50,7 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
                     AnimationName = option.OptionName, GroupSelections = option.GroupSelections, Trigger = triggers[triggerOrder],
                     ModEnabled = option.ModEnabled, GroupOrder = option.GroupOrder, OptionOrder = option.OptionOrder,
                     TriggerOrder = triggerOrder,
+                    IdlePose = triggers[triggerOrder] is null ? standingIdle : null,
                 };
                 entry.Id = StableId(entry);
                 entries.Add(entry);
@@ -250,6 +252,26 @@ internal static partial class GestureTriggerResolver
             // catalog an unplayable "/ motion"-style trigger that always fails when played.
             else if (path.EndsWith(".pap", StringComparison.OrdinalIgnoreCase) && Lookup(path[..^4]) is { Length: > 0 } cmd)
                 Add(new GestureTrigger { Kind = GestureTriggerKind.SlashCommand, SlashCommand = cmd });
+        }
+        return result;
+    }
+
+    // Standing idles live under bt_common: the default one (/cpose 0) is resident/idle.pap, the others are
+    // emote/poseNN_loop/_start.pap. Weapon-stance folders (bt_2sw_emp etc.) are battle idles, not /cpose ones.
+    private static readonly Regex StandingIdlePose = new(@"/bt_common/emote/pose(\d+)_(loop|start)\.pap$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// The /cpose standing idle an option replaces, or null. When it replaces several, the lowest wins.
+    public static byte? DetectStandingIdle(IEnumerable<string> paths)
+    {
+        byte? result = null;
+        foreach (var raw in paths)
+        {
+            var path = raw.Replace('\\', '/');
+            byte? pose = path.EndsWith("/bt_common/resident/idle.pap", StringComparison.OrdinalIgnoreCase) ? 0
+                : StandingIdlePose.Match(path) is { Success: true } m && byte.TryParse(m.Groups[1].Value, out var n) && n <= 6 ? n
+                : null;
+            if (pose is { } p && (result is null || p < result))
+                result = p;
         }
         return result;
     }
