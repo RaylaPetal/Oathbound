@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.ImGuiNotification;
+using ECommons.Automation;
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Oathbound.Plugin.Config;
@@ -54,6 +55,8 @@ public sealed class TeleportCommand
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan ProgressWindow = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan TravelStallTimeout = TimeSpan.FromSeconds(90);
+    private const float TravelProgressDistance = 2f;
 
     private readonly PluginConfig config;
     private readonly LifestreamIpc lifestream;
@@ -73,6 +76,8 @@ public sealed class TeleportCommand
     private DateTime stageStartedAt;
     private bool observedTravelBusy;
     private bool dismountSent;
+    private DateTime lastProgressAt;
+    private Vector3? lastProgressPosition;
 
     // Navigation.
     private CancellationTokenSource? pathCancel;
@@ -192,6 +197,12 @@ public sealed class TeleportCommand
         if (!IsInProgress || target is null)
             return;
 
+        if (IsLifestreamTravelStage(stage) && HasTravelStalled())
+        {
+            Fail($"Travel stalled while {StageLabel(stage)}.");
+            return;
+        }
+
         switch (stage)
         {
             case TeleportStage.ChangingWorld:
@@ -259,7 +270,12 @@ public sealed class TeleportCommand
         CancelPendingPath();
         vnavmesh.TryStop();
         if (wasLifestreamStage)
+        {
             lifestream.TryAbort();
+            // teleport-lifestream-autorun D4: Lifestream may have left its aetheryte-approach autorun on. After the
+            // abort so its queue can't turn it back on; a no-op when autorun isn't running.
+            Chat.SendMessage("/automove off");
+        }
         movementLock.ReleaseImmobilize(LockOwner);
         movementLock.ReleaseSuppressInput(LockOwner);
         Plugin.Log.Info($"Teleport stopped at {stage}: {reason}");
@@ -302,7 +318,43 @@ public sealed class TeleportCommand
         stage = next;
         stageStartedAt = DateTime.UtcNow;
         observedTravelBusy = false;
+        lastProgressAt = stageStartedAt;
+        lastProgressPosition = Plugin.ObjectTable.LocalPlayer?.Position;
+
+        // teleport-lifestream-autorun D2: Lifestream walks up to aetherytes with `/automove on`, so autorun is let
+        // through only while it's driving; the cast and vnavmesh navigation keep it blocked.
+        if (IsLifestreamTravelStage(next))
+            movementLock.AllowAutorun(LockOwner);
+        else
+            movementLock.DisallowAutorun(LockOwner);
     }
+
+    private static bool IsLifestreamTravelStage(TeleportStage s) =>
+        s is TeleportStage.ChangingWorld or TeleportStage.TravelingToWard or TeleportStage.ChangingInstance;
+
+    /// teleport-lifestream-autorun D3: a loading screen, a zone transition, or TravelProgressDistance of movement
+    /// counts as progress. TravelStallTimeout without any means Lifestream is stuck (e.g. out of interaction range).
+    private bool HasTravelStalled()
+    {
+        var now = DateTime.UtcNow;
+        var position = Plugin.ObjectTable.LocalPlayer?.Position;
+        if (position is null || Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51]
+            || lastProgressPosition is null || Vector3.Distance(position.Value, lastProgressPosition.Value) >= TravelProgressDistance)
+        {
+            lastProgressAt = now;
+            lastProgressPosition = position;
+            return false;
+        }
+        return now - lastProgressAt > TravelStallTimeout;
+    }
+
+    private static string StageLabel(TeleportStage s) => s switch
+    {
+        TeleportStage.ChangingWorld => "changing world",
+        TeleportStage.TravelingToWard => "traveling to ward",
+        TeleportStage.ChangingInstance => "changing instance",
+        _ => s.ToString(),
+    };
 
     // --- Travel stages -----------------------------------------------------------------------------------
 

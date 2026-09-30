@@ -76,6 +76,10 @@ public sealed unsafe class MovementLockService : IDisposable
     /// never the game's force-disable flag - vnavmesh and Lifestream drive the character by rewriting the
     /// walk vector, and force-disable would freeze that too - and never the Follow-only unfollow block.
     private readonly HashSet<string> inputSuppressedBy = new();
+    /// teleport-lifestream-autorun D1: SuppressInput owners that currently let autorun through, so Lifestream's
+    /// `/automove on` aetheryte approach works. Only honored while every claim is one of these - an
+    /// immobilize or follow-preserve claim (Leash, a restraint) always keeps autorun blocked.
+    private readonly HashSet<string> autorunAllowedBy = new();
     private bool ownsForceDisable;
 
     public MovementLockService()
@@ -126,7 +130,13 @@ public sealed unsafe class MovementLockService : IDisposable
     public void EngagePreserveFollow(string owner) { if (IsAvailable) followPreservedBy.Add(owner); }
     public void ReleasePreserveFollow(string owner) => followPreservedBy.Remove(owner);
     public void EngageSuppressInput(string owner) { if (IsAvailable) inputSuppressedBy.Add(owner); }
-    public void ReleaseSuppressInput(string owner) => inputSuppressedBy.Remove(owner);
+    public void ReleaseSuppressInput(string owner)
+    {
+        inputSuppressedBy.Remove(owner);
+        autorunAllowedBy.Remove(owner);
+    }
+    public void AllowAutorun(string owner) => autorunAllowedBy.Add(owner);
+    public void DisallowAutorun(string owner) => autorunAllowedBy.Remove(owner);
 
     /// Panic's own release: drops every caller's claim unconditionally, regardless of who engaged it -
     /// same "full teardown, nothing needs preserving" shape as SlotLockManager.ReleaseAllForPanic.
@@ -135,6 +145,7 @@ public sealed unsafe class MovementLockService : IDisposable
         immobilizedBy.Clear();
         followPreservedBy.Clear();
         inputSuppressedBy.Clear();
+        autorunAllowedBy.Clear();
         ClearForceDisable();
     }
 
@@ -174,9 +185,14 @@ public sealed unsafe class MovementLockService : IDisposable
 
     private void AutoMoveDetour(void* state, nint request)
     {
-        if (IsLocked && request != 0 && *(byte*)(request + 8) == 3) return;
+        // TEMP (teleport-lifestream-autorun task 1.1): confirms `/automove on` arrives here as type 3.
+        if (IsLocked && request != 0)
+            Plugin.Log.Debug($"AutoMoveDetour: type {*(byte*)(request + 8)}, autorun allowed {AutorunAllowed}");
+        if (IsLocked && !AutorunAllowed && request != 0 && *(byte*)(request + 8) == 3) return;
         autoMoveHook!.Original(state, request);
     }
+
+    private bool AutorunAllowed => immobilizedBy.Count == 0 && followPreservedBy.Count == 0 && autorunAllowedBy.IsSupersetOf(inputSuppressedBy);
 
     private unsafe void ClearForceDisable()
     {
