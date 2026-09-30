@@ -185,9 +185,6 @@ public sealed unsafe class MovementLockService : IDisposable
 
     private void AutoMoveDetour(void* state, nint request)
     {
-        // TEMP (teleport-lifestream-autorun task 1.1): confirms `/automove on` arrives here as type 3.
-        if (IsLocked && request != 0)
-            Plugin.Log.Debug($"AutoMoveDetour: type {*(byte*)(request + 8)}, autorun allowed {AutorunAllowed}");
         if (IsLocked && !AutorunAllowed && request != 0 && *(byte*)(request + 8) == 3) return;
         autoMoveHook!.Original(state, request);
     }
