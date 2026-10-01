@@ -44,6 +44,17 @@ public sealed class ChatComposer
     /// since this class stays dependency-free by construction. The Sub picks its own route from this.
     public string ComposeTeleport(TeleportTarget target) => Wrap($"teleport {target.ToPayload()}");
 
+    /// collar/leash-travel: the Owner client's automatic `leash travel` to one leashed Sub (design D2). Always a
+    /// `/tell` to that pairing - never the configured channel, which can't address one Sub of several and would
+    /// broadcast the Owner's location - and never the active pairing unless it is that one.
+    public string ComposeLeashTravel(PairingState pairing, TeleportTarget target)
+    {
+        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
+        return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Leash} {LeashTravelWord} {target.ToPayload()}";
+    }
+
+    public const string LeashTravelWord = "travel";
+
     /// collar/pairing's relay-assisted handshake: a short lifecycle tell carrying only the invitation's
     /// capability id - everything else (role, trigger phrase, expiry) lives in the signed invitation itself,
     /// fetched from the relay once this tell's verified sender is captured (see Relay/PairingService.cs).

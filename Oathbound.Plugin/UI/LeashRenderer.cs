@@ -15,10 +15,6 @@ namespace Oathbound.Plugin.UI;
 /// line"). Never sends anything and never touches the leash itself.
 public sealed class LeashRenderer : IDisposable
 {
-    /// Leash length in yalms: short enough that the line is taut at normal trailing distance and only hangs
-    /// a little when the two stand together (5 yalms dropped the curve through the floor up close).
-    private const float LeashLength = 2f;
-
     /// The curve's lowest point never goes below this height above the lower character's feet (about waist
     /// height), so a close pair's slack can't dip into the ground.
     private const float MinClearance = 0.5f;
@@ -64,8 +60,8 @@ public sealed class LeashRenderer : IDisposable
 
         try
         {
-            foreach (var (sub, owner) in state.LeashedPairs())
-                DrawPair(sub, owner);
+            foreach (var (sub, owner, length) in state.LeashedPairs())
+                DrawPair(sub, owner, length);
         }
         catch (Exception ex)
         {
@@ -74,7 +70,7 @@ public sealed class LeashRenderer : IDisposable
         }
     }
 
-    private void DrawPair(ICharacter sub, ICharacter owner)
+    private void DrawPair(ICharacter sub, ICharacter owner, float length)
     {
         if (!BoneLocator.TryGetWorld(sub, BoneLocator.Neck, out var neck) ||
             !BoneLocator.TryGetWorld(owner, BoneLocator.RightHand, out var hand))
@@ -84,7 +80,7 @@ public sealed class LeashRenderer : IDisposable
             return;
         }
 
-        BuildCurve(neck, hand, MathF.Min(sub.Position.Y, owner.Position.Y));
+        BuildCurve(neck, hand, length, MathF.Min(sub.Position.Y, owner.Position.Y));
 
         if (pictomancy is not null)
         {
@@ -101,12 +97,13 @@ public sealed class LeashRenderer : IDisposable
     }
 
     /// A parabola hanging between the anchors: sag is half the "spare" leash (sqrt(L^2 - d^2) / 2), so it
-    /// droops when close and is exactly straight at or beyond the leash length. Capped so the midpoint stays
+    /// droops when close and is exactly straight at or beyond the leash length (collar/leash: the engaged
+    /// length, so a long leash hangs slack well before the Sub reaches its end). Capped so the midpoint stays
     /// MinClearance above the ground.
-    private void BuildCurve(Vector3 neck, Vector3 hand, float groundY)
+    private void BuildCurve(Vector3 neck, Vector3 hand, float length, float groundY)
     {
         var distance = Vector3.Distance(neck, hand);
-        var sag = 0.5f * MathF.Sqrt(MathF.Max(LeashLength * LeashLength - distance * distance, 0f));
+        var sag = 0.5f * MathF.Sqrt(MathF.Max(length * length - distance * distance, 0f));
         var midY = (neck.Y + hand.Y) / 2f;
         sag = Math.Clamp(sag, 0f, MathF.Max(midY - (groundY + MinClearance), 0f));
         for (var i = 0; i <= Segments; i++)

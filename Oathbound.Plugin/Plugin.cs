@@ -142,6 +142,7 @@ public sealed class Plugin : IDalamudPlugin
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
     public StatusIndicatorState StatusIndicators { get; }
     private readonly LeashRenderer leashRenderer;
+    private readonly LeashTravelWatcher leashTravelWatcher;
     private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
@@ -206,18 +207,20 @@ public sealed class Plugin : IDalamudPlugin
         temporaryModSettings = new TemporaryModSettingsCoordinator(PenumbraIpc);
         GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore);
         ReactionService = new ReactionService(Configuration, RuntimeState, EmoteWatcher, GlamourerIpc, SlotLockManager, PenumbraIpc, temporaryModSettings, MoodlesIpc, RestrictionRuleManager);
-        FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand);
+        // Before Follow: the leash rides Teleport's journey across areas (collar/leash-travel).
+        TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
+        FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand, TeleportCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
         ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
-        TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
         ChatComposer = new ChatComposer(Configuration);
         ChatSender = new ChatSender();
         OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
         OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
+        leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators);
         statusIconRenderer = new StatusIconRenderer(Configuration, StatusIndicators);
@@ -476,6 +479,7 @@ public sealed class Plugin : IDalamudPlugin
         MoodlesCommand.Ledger.OnFrameworkUpdate();
         CollarCommand.OnFrameworkUpdate();
         TeleportCommand.OnFrameworkUpdate();
+        leashTravelWatcher.OnFrameworkUpdate();
         TitleCommand.OnFrameworkUpdate();
 
         var utcNow = DateTime.UtcNow;

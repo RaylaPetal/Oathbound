@@ -70,6 +70,9 @@ public sealed class TeleportCommand
     private uint aetheryteId;
     private string? districtName;
     private int housingPlot;
+    /// collar/leash-travel (design D6): started by ApplyLeashTravel for a leashed Sub, rather than by the
+    /// Owner's own Teleport.
+    private bool isLeashJourney;
 
     // Stage bookkeeping.
     private TeleportStage stage;
@@ -101,6 +104,36 @@ public sealed class TeleportCommand
 
     public TeleportStage Stage => stage;
     public bool IsInProgress => stage != TeleportStage.Idle;
+    public bool IsLeashJourneyInProgress => IsInProgress && isLeashJourney;
+
+    /// collar/leash-travel: raised once when a leash journey ends - true on arrival, false for any stop or
+    /// failure. Not raised when a newer leash travel from the same Owner replaces the journey.
+    public event Action<bool>? LeashJourneyEnded;
+
+    /// collar/leash-travel "A newer trip replaces the current one": a leash journey from the same pairing is
+    /// replaced silently; anything else in progress (the Owner's own Teleport) wins and this is refused.
+    /// Every guard in Apply applies unchanged.
+    public (bool Success, string? Reason) ApplyLeashTravel(TeleportTarget destination, PairingState source)
+    {
+        if (IsInProgress)
+        {
+            if (!isLeashJourney || sourcePairingId != source.Id)
+                return (false, "Refused: a Teleport is already in progress.");
+            StopCore("replaced by a newer leash travel", arrived: false, notifyLeash: false);
+        }
+
+        var result = Apply(destination, source);
+        if (result.Success)
+            isLeashJourney = true;
+        return result;
+    }
+
+    /// Stops the journey only if it is a leash journey (the leash being released mid-trip).
+    public void StopLeashJourney(string reason)
+    {
+        if (IsLeashJourneyInProgress)
+            Stop(reason);
+    }
 
     /// 0..1 while the zone's navmesh is still building, otherwise negative (see VnavmeshIpc).
     public float NavBuildProgress => stage == TeleportStage.PreparingNav ? vnavmesh.TryGetBuildProgress() : -1f;
@@ -261,7 +294,9 @@ public sealed class TeleportCommand
 
     /// collar/teleport "Sub can stop an in-progress Teleport from the header" + panic/revert-all/unpair: halts
     /// everything immediately. Safe to call when idle.
-    public void Stop(string reason)
+    public void Stop(string reason) => StopCore(reason, arrived: false, notifyLeash: true);
+
+    private void StopCore(string reason, bool arrived, bool notifyLeash)
     {
         if (!IsInProgress)
             return;
@@ -283,6 +318,10 @@ public sealed class TeleportCommand
         target = null;
         sourcePairingId = null;
         ownerName = null;
+        var wasLeashJourney = isLeashJourney;
+        isLeashJourney = false;
+        if (wasLeashJourney && notifyLeash)
+            LeashJourneyEnded?.Invoke(arrived);
     }
 
     /// collar/teleport "Panic, Revert all, and unpair end an in-progress Teleport" (unpair case): PairingService
@@ -310,7 +349,7 @@ public sealed class TeleportCommand
 
     private void Finish()
     {
-        Stop("arrived");
+        StopCore("arrived", arrived: true, notifyLeash: true);
     }
 
     private void EnterStage(TeleportStage next)

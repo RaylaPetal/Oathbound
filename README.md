@@ -40,7 +40,7 @@ everything instantly with their safeword.
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
-| 🔗 | **Follow / Leash** | Make your Sub follow you, with their own movement held until you let go. A leash line runs from their neck to your hand while it lasts. |
+| 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on when you teleport or change area: your Sub is brought along to you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
 | 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
@@ -165,6 +165,11 @@ further, and you should decide for yourself before turning them on:
 
 - **Animations** make your character perform emotes and poses.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
+  When your Owner walks farther away than the leash length, the leash steers your character after them
+  (or uses the game's own follow if that gets stuck), with your own movement ignored until you're back in range.
+  If your Owner teleports or changes area while you're leashed, their plugin automatically tells yours where
+  they went, and (if you've allowed **Teleport**) your character travels to them the same way Teleport does.
+  If you haven't, or they go somewhere you can't follow (a house, an inn room, a duty), the leash comes off.
 - **Teleport** moves your character for you: it changes world, teleports, and then walks, rides or
   flies your character across the open world or a housing ward to your Owner, with your own movement
   locked until you arrive. Walking a character around automatically looks more like a bot than anything
@@ -177,9 +182,11 @@ further, and you should decide for yourself before turning them on:
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
   add a chat reply if you're comfortable with it.
 
-Every command the Owner sends is one deliberate click that sends one tell. Apart from a chat reply you
-set up yourself in Reactions, the plugin never auto-replies to chat. The only tells it sends on its own
-are ones tied directly to something you just did, like confirming a pairing you accepted.
+Every command the Owner sends is one deliberate click that sends one tell, with one exception: while a Sub
+is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
+area, so the Sub can follow. Apart from that and a chat reply you set up yourself in Reactions, the plugin
+never auto-replies to chat. The only other tells it sends on its own are ones tied directly to something you
+just did, like confirming a pairing you accepted.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.

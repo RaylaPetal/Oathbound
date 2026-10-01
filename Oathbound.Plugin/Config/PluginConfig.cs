@@ -421,6 +421,9 @@ public class OwnerQuickCommands
     /// collar/attached-moodles: the Owner's moodle pick for the fixed `leash` command (which has no
     /// QuickCommand of its own to hold it). Null = the Sub's own leash default.
     public string? LeashMoodleOverride { get; set; }
+
+    /// collar/leash: the length (yalms) sent with every `leash` this Owner sends.
+    public int LeashLengthYalms { get; set; } = 3;
 }
 
 /// Stable ids for OwnerQuickCommands.FavoriteFixedActions, shared between CollarWindow (which draws the

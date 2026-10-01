@@ -72,6 +72,9 @@ public class FollowAliasWords
 
     /// collar/attached-moodles: the Sub's default moodle while leashed, if any.
     public AttachedMoodleRef? AttachedMoodle { get; set; }
+
+    /// collar/leash "Sub's longest accepted leash": a longer requested length is shortened to this.
+    public int MaxLeashLengthYalms { get; set; } = 15;
 }
 
 /// collar/control-vocabulary: the fixed control words every Oathbound client understands. Not renamable, so

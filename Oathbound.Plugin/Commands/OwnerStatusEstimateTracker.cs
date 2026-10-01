@@ -45,6 +45,13 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
     /// The Owner's manual "Clear estimate" (spec: "The Owner can see and clear a stale estimate").
     public void Clear(Guid pairingId) => estimates.Remove(pairingId);
 
+    /// collar/leash-travel "Owner's client skips places the leash can't follow": the Sub's leash will time out.
+    public void MarkUnleashed(Guid pairingId)
+    {
+        if (estimates.TryGetValue(pairingId, out var estimate))
+            estimate.Leashed = false;
+    }
+
     private void OnSent(string text)
     {
         // Same attribution as ChatComposer.Wrap and OwnerToyStatusTracker: a command goes to the active pairing.
@@ -94,8 +101,15 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         var (word, rest) = SplitFirst(body);
         switch (word.ToLowerInvariant())
         {
+            case ControlWords.Leash when rest.StartsWith(ChatComposer.LeashTravelWord + " ", StringComparison.OrdinalIgnoreCase):
+                // collar/leash-travel: the automatic follow-me, not a new leash - and it may be addressed to a
+                // pairing other than the active one this attribution assumes.
+                break;
             case ControlWords.Leash:
+                // collar/leash "Leash line drawn at the leash length": the length the Owner sent, 3 when bare.
+                LengthOption.Strip(MoodleOption.Strip(rest, out _), out var length);
                 estimate.Leashed = true;
+                estimate.LeashLength = length ?? LengthOption.DefaultYalms;
                 break;
             case ControlWords.Unleash:
                 estimate.Leashed = false;
@@ -180,6 +194,7 @@ public sealed class OwnerStatusEstimate
     public bool Gagged { get; internal set; }
     public bool Restrained { get; internal set; }
     public bool Leashed { get; internal set; }
+    public float LeashLength { get; internal set; } = LengthOption.DefaultYalms;
     public DateTime? RestrainedUntilUtc { get; internal set; }
 
     public bool Any => Gagged || Restrained || Leashed;

@@ -2199,11 +2199,24 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using (Section.Begin("leashFixed", "Fixed words"))
         {
-            IconGlyph.WrappedDisabled("The words your Owner sends to engage or release the movement lock.");
+            IconGlyph.WrappedDisabled("The words your Owner sends to put the leash on or take it off.");
             DrawFixedWord("Leash", ControlWords.Leash);
-            IconGlyph.HelpMarker("Engages follow and blocks your own movement while the Follow / Leash permission is enabled.");
+            IconGlyph.HelpMarker("Puts on a leash of the length your Owner picked, while the Follow / Leash permission is enabled. You move freely inside it, can't walk past its end, and get pulled along when your Owner walks farther away.");
             DrawFixedWord("Unleash", ControlWords.Unleash);
-            IconGlyph.HelpMarker("Releases the movement lock and restores normal input.");
+            IconGlyph.HelpMarker("Takes the leash off and gives you full control back.");
+        }
+
+        using (Section.Begin("leashLimit", "Leash length"))
+        {
+            var follow = config.Aliases.Follow;
+            var maxLength = follow.MaxLeashLengthYalms;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderInt("Longest leash I'll accept (yalms)##subLeashMax", ref maxLength, LengthOption.MinYalms, LengthOption.MaxYalms))
+            {
+                follow.MaxLeashLengthYalms = Math.Clamp(maxLength, LengthOption.MinYalms, LengthOption.MaxYalms);
+                config.Save();
+            }
+            IconGlyph.HelpMarker("If your Owner asks for a longer leash, it's shortened to this. Changing it while leashed applies right away.");
         }
 
         using (Section.Begin("leashMoodle", "Attached moodle"))
@@ -3258,6 +3271,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
             // Favorites, the quick-access menu).
             var leashMoodle = plugin.Configuration.QuickCommands.LeashMoodleOverride;
             ImGui.Indent();
+            // collar/leash: the length sent with every Leash, saved like the moodle pick.
+            var leashLength = plugin.Configuration.QuickCommands.LeashLengthYalms;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderInt("Length (yalms)##ownerLeashLength", ref leashLength, LengthOption.MinYalms, LengthOption.MaxYalms))
+            {
+                plugin.Configuration.QuickCommands.LeashLengthYalms = Math.Clamp(leashLength, LengthOption.MinYalms, LengthOption.MaxYalms);
+                plugin.Configuration.Save();
+            }
+            IconGlyph.HelpMarker("How far your Sub can move from you. They move freely inside it, can't walk past the end, and get pulled along when you walk farther away. Your Sub may have set a shorter limit, and needs a plugin version that understands leash lengths - older versions ignore the whole command.");
             OwnerMoodleOverride.Draw("leash", plugin.Configuration, ref leashMoodle);
             ImGui.Unindent();
             if (leashMoodle != plugin.Configuration.QuickCommands.LeashMoodleOverride)

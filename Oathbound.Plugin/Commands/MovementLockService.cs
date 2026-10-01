@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using Dalamud.Game.Config;
 using Dalamud.Hooking;
 using Dalamud.Utility.Signatures;
 using ECommons.DalamudServices;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
 
 namespace Oathbound.Plugin.Commands;
@@ -35,6 +39,11 @@ public sealed unsafe class MovementLockService : IDisposable
     private const string SigMouseMoveBlock = "48 8b c4 4c 89 48 ?? 53 55 57 41 54 48 81 ec ?? 00 00 00";
     private const string SigUnfollowTarget = "48 89 5c 24 ?? 48 89 74 24 ?? 57 48 83 ec ?? 48 8b d9 48 8b fa 0f b6 89 ?? ?? 00 00 be 00 00 00 e0";
     private const string SigAutoMoveUpdate = "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 56 41 57 48 83 EC 20 44 0F B6 7A ?? 48 8B D9";
+    // collar/leash steering: the walk-input sum vnavmesh rewrites to drive the character (awgil/ffxiv_navmesh,
+    // Movement/OverrideMovement.cs) - keyboard, controller and mouse movement are all summed into it.
+    private const string SigRmiWalk = "E8 ?? ?? ?? ?? 80 7B 3E 00 48 8D 3D";
+    private const string SigRmiWalkIsInputEnabled1 = "E8 ?? ?? ?? ?? 84 C0 75 10 38 43 3C";
+    private const string SigRmiWalkIsInputEnabled2 = "E8 ?? ?? ?? ?? 84 C0 75 03 88 47 3F";
 
     public unsafe delegate byte IsInputIdDelegate(void* unk, InputId inputId);
 
@@ -65,6 +74,18 @@ public sealed unsafe class MovementLockService : IDisposable
     [Signature(SigAutoMoveUpdate, DetourName = nameof(AutoMoveDetour), Fallibility = Fallibility.Auto)]
     private readonly Hook<AutoMoveDelegate>? autoMoveHook;
 
+    public unsafe delegate void RmiWalkDelegate(void* self, float* sumLeft, float* sumForward, float* sumTurnLeft, byte* haveBackwardOrStrafe, byte* a6, byte bAdditiveUnk);
+    [Signature(SigRmiWalk, DetourName = nameof(RmiWalkDetour), Fallibility = Fallibility.Auto)]
+    private readonly Hook<RmiWalkDelegate>? rmiWalkHook;
+
+    private delegate byte RmiWalkIsInputEnabledDelegate(void* self);
+    private readonly RmiWalkIsInputEnabledDelegate? rmiWalkIsInputEnabled1;
+    private readonly RmiWalkIsInputEnabledDelegate? rmiWalkIsInputEnabled2;
+
+    /// collar/leash: rewrites this frame's walk direction. Given the player's own wish as a world-space
+    /// ground vector (X, Z), returns the one to actually walk.
+    public delegate Vector2 SteerFunction(Vector2 worldWish);
+
     /// Which independent callers currently want movement suppressed - a Set rather than a bare bool so two
     /// unrelated callers (Follow's leash, a forced-pose restraint device - collar/restraints) can each
     /// Engage/Release their own claim without one caller's Release prematurely lifting the other's.
@@ -80,11 +101,21 @@ public sealed unsafe class MovementLockService : IDisposable
     /// `/automove on` aetheryte approach works. Only honored while every claim is one of these - an
     /// immobilize or follow-preserve claim (Leash, a restraint) always keeps autorun blocked.
     private readonly HashSet<string> autorunAllowedBy = new();
+    /// collar/leash (design D1): at most one caller rewrites the walk vector at a time (only the leash does).
+    /// Never counts as a lock, and never applies while an immobilize or input-suppress claim exists - a
+    /// restraint (nothing moves) or teleport navigation (vnavmesh owns the vector) always wins over it.
+    private string? steerOwner;
+    private SteerFunction? steer;
+    private bool legacyMoveMode;
     private bool ownsForceDisable;
 
     public MovementLockService()
     {
         Svc.Hook.InitializeFromAttributes(this);
+        if (Svc.SigScanner.TryScanText(SigRmiWalkIsInputEnabled1, out var inputEnabled1))
+            rmiWalkIsInputEnabled1 = Marshal.GetDelegateForFunctionPointer<RmiWalkIsInputEnabledDelegate>(inputEnabled1);
+        if (Svc.SigScanner.TryScanText(SigRmiWalkIsInputEnabled2, out var inputEnabled2))
+            rmiWalkIsInputEnabled2 = Marshal.GetDelegateForFunctionPointer<RmiWalkIsInputEnabledDelegate>(inputEnabled2);
 
         // task 7.5: fail closed. If any signature didn't resolve on this game version, never claim the
         // lock works - IsAvailable stays false and FollowCommand must refuse to engage it.
@@ -113,10 +144,23 @@ public sealed unsafe class MovementLockService : IDisposable
             if (autoMoveHook is null) Plugin.Log.Error("MovementLockService unavailable: autorun hook did not resolve.");
         }
         if (forceDisableMovementPtr == 0) Plugin.Log.Error("Movement immobilization unavailable: complete-movement-disable state did not resolve.");
+
+        IsSteerAvailable = IsAvailable && rmiWalkHook is not null && rmiWalkIsInputEnabled1 is not null && rmiWalkIsInputEnabled2 is not null;
+        if (IsSteerAvailable)
+        {
+            rmiWalkHook!.Enable();
+            Plugin.GameConfig.UiControlChanged += OnUiControlChanged;
+            UpdateLegacyMoveMode();
+        }
+        else Plugin.Log.Error("Leash steering unavailable: walk-input hook did not resolve.");
     }
 
     public bool IsAvailable { get; }
     public bool IsImmobilizeAvailable { get; }
+    public bool IsSteerAvailable { get; }
+
+    /// Whether a steer function would run this frame - false while a stronger claim holds movement.
+    public bool IsSteerSuspended => immobilizedBy.Count > 0 || inputSuppressedBy.Count > 0;
 
     public bool IsLocked => IsAvailable && AnyInputClaim;
 
@@ -135,6 +179,18 @@ public sealed unsafe class MovementLockService : IDisposable
         inputSuppressedBy.Remove(owner);
         autorunAllowedBy.Remove(owner);
     }
+    public void SetSteering(string owner, SteerFunction function)
+    {
+        if (!IsSteerAvailable) return;
+        steerOwner = owner;
+        steer = function;
+    }
+    public void ClearSteering(string owner)
+    {
+        if (steerOwner != owner) return;
+        steerOwner = null;
+        steer = null;
+    }
     public void AllowAutorun(string owner) => autorunAllowedBy.Add(owner);
     public void DisallowAutorun(string owner) => autorunAllowedBy.Remove(owner);
 
@@ -146,6 +202,8 @@ public sealed unsafe class MovementLockService : IDisposable
         followPreservedBy.Clear();
         inputSuppressedBy.Clear();
         autorunAllowedBy.Clear();
+        steerOwner = null;
+        steer = null;
         ClearForceDisable();
     }
 
@@ -189,6 +247,43 @@ public sealed unsafe class MovementLockService : IDisposable
         autoMoveHook!.Original(state, request);
     }
 
+    private void RmiWalkDetour(void* self, float* sumLeft, float* sumForward, float* sumTurnLeft, byte* haveBackwardOrStrafe, byte* a6, byte bAdditiveUnk)
+    {
+        rmiWalkHook!.Original(self, sumLeft, sumForward, sumTurnLeft, haveBackwardOrStrafe, a6, bAdditiveUnk);
+        var function = steer;
+        if (function is null || IsSteerSuspended) return;
+        // Same guard vnavmesh uses: writing a non-zero vector on a frame the game skipped reading input breaks movement.
+        if (bAdditiveUnk != 0 || rmiWalkIsInputEnabled1!(self) == 0 || rmiWalkIsInputEnabled2!(self) == 0) return;
+        if (Plugin.ObjectTable.LocalPlayer is not { } player) return;
+
+        // The walk sums are relative to a reference yaw: the character's facing in Standard movement, the
+        // camera's (plus 180 degrees) in Legacy - vnavmesh's DirectionToDestination.
+        var referenceYaw = player.Rotation;
+        if (legacyMoveMode)
+        {
+            var camera = (OathboundCameraEx*)CameraManager.Instance()->GetActiveCamera();
+            if (camera == null) return;
+            referenceYaw = camera->DirH + MathF.PI;
+        }
+
+        var world = Rotate(new Vector2(*sumLeft, *sumForward), referenceYaw);
+        var local = Rotate(function(world), -referenceYaw);
+        *sumLeft = local.X;
+        *sumForward = local.Y;
+    }
+
+    /// (left, forward) at reference yaw `yaw` to world (X, Z), where a world direction's yaw is atan2(X, Z).
+    /// The same rotation with -yaw goes back.
+    private static Vector2 Rotate(Vector2 v, float yaw)
+    {
+        var (sin, cos) = MathF.SinCos(yaw);
+        return new Vector2(v.X * cos + v.Y * sin, v.Y * cos - v.X * sin);
+    }
+
+    private void OnUiControlChanged(object? sender, ConfigChangeEvent e) => UpdateLegacyMoveMode();
+    private void UpdateLegacyMoveMode() =>
+        legacyMoveMode = Plugin.GameConfig.UiControl.TryGetUInt("MoveMode", out var mode) && mode == 1;
+
     private bool AutorunAllowed => immobilizedBy.Count == 0 && followPreservedBy.Count == 0 && autorunAllowedBy.IsSupersetOf(inputSuppressedBy);
 
     private unsafe void ClearForceDisable()
@@ -211,5 +306,7 @@ public sealed unsafe class MovementLockService : IDisposable
         mouseMoveHook?.Dispose();
         unfollowHook?.Dispose();
         autoMoveHook?.Dispose();
+        rmiWalkHook?.Dispose();
+        if (IsSteerAvailable) Plugin.GameConfig.UiControlChanged -= OnUiControlChanged;
     }
 }

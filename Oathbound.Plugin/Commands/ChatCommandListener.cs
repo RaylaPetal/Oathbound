@@ -379,6 +379,10 @@ public sealed class ChatCommandListener : IDisposable
                 // dedicated acknowledgement) individually as it dispatches (design.md's "orchestrator,
                 // not a reimplementation" decision - see also the ResolveAlias CustomTriggers branch).
                 return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock);
+            case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
+                // collar/leash-travel (design D4): `leash travel <teleport payload>`. Bare `leash [options]` falls
+                // through to ResolveAlias's fixed-word handling as before.
+                return permissions.Follow ? HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing) : LocalTestResult.Fail("Follow permission is not enabled.");
             case "teleport":
                 // Deliberately no outer permission gate here either, unlike the categories above - unlike
                 // them, every one of Teleport's guards (permission, ToS acknowledgement, duty, combat,
@@ -718,6 +722,20 @@ public sealed class ChatCommandListener : IDisposable
             : LocalTestResult.Fail(reason ?? "Teleport failed.");
     }
 
+    /// collar/leash-travel: the leashed Owner's automatic "I moved, come along". Only acts while this Sub is
+    /// leashed to the sender (FollowCommand checks); Teleport's own guards (permission, acknowledgement,
+    /// duty, plugins, aetheryte) apply through TeleportCommand, and a refusal ends the leash.
+    private LocalTestResult HandleLeashTravel(string payload, PairingState? sourcePairing)
+    {
+        if (!TeleportTarget.TryParse(payload, out var destination))
+            return LocalTestResult.Fail($"Unrecognized \"leash travel\" payload \"{payload}\".");
+
+        var (success, reason) = follow.TravelTo(destination, sourcePairing);
+        return success
+            ? LocalTestResult.Ok($"Leash travel: following your Owner to \"{destination.World}\".")
+            : LocalTestResult.Fail(reason ?? "Leash travel failed.");
+    }
+
     private static PairingState? SingleOrDefaultIfUnambiguous(IEnumerable<PairingState> candidates)
     {
         using var e = candidates.GetEnumerator();
@@ -759,15 +777,15 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Ok($"\"{alias}\" matched unlock-outfit.");
         }
 
-        // collar/control-vocabulary "Leash accepts options": `leash` is matched as the first word, so it can
-        // carry a trailing `moodle:"..."`. Anything else after it isn't a leash command.
-        var leashRest = MoodleOption.Strip(alias, out var leashMoodle);
+        // collar/control-vocabulary "Leash accepts options": `leash [length:N] [moodle:"..."]`, moodle always
+        // last, so it's stripped first. Anything else after it (an invalid length included) isn't a leash command.
+        var leashRest = LengthOption.Strip(MoodleOption.Strip(alias, out var leashMoodle), out var leashLength);
         if (Matches(leashRest, ControlWords.Leash))
         {
             if (!permissions.Follow)
                 return LocalTestResult.Fail("Follow permission is not enabled.");
-            return follow.Engage(sourcePairing?.PeerName, leashMoodle)
-                ? LocalTestResult.Ok($"\"{alias}\" matched leash-engage.")
+            return follow.Engage(sourcePairing?.PeerName, leashLength ?? LengthOption.DefaultYalms, leashMoodle)
+                ? LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).")
                 : LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.");
         }
 

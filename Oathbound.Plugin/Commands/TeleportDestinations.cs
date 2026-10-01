@@ -94,6 +94,9 @@ public static class TeleportDestinations
 
     public static bool IsResidentialArea(uint territory) => IntendedUse(territory) == ResidentialAreaUse;
 
+    /// collar/leash-travel: inn rooms are private instances nobody else can be brought into.
+    public static bool IsInnRoom(uint territory) => IntendedUse(territory) == (uint)ECommons.ExcelServices.TerritoryIntendedUseEnum.Inn;
+
     private static uint? IntendedUse(uint territory) =>
         Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.TerritoryIntendedUse.RowId;
 

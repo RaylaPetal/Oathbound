@@ -20,10 +20,14 @@ public static class OwnerMoodleOverride
     /// the fixed `leash` command, otherwise the command unchanged. Every Owner send surface (module tabs, Sub
     /// Control, Favorites, the quick-access menu) goes through this, so a moodle always travels with the
     /// one command it was picked for - never a tab- or window-wide setting.
-    public static string ForSend(PluginConfig config, string command, string? commandMoodle) =>
-        Apply(command, commandMoodle ?? (command.Trim().Equals(ControlWords.Leash, StringComparison.OrdinalIgnoreCase)
-            ? config.QuickCommands.LeashMoodleOverride
-            : null));
+    /// The fixed `leash` also always carries the Owner's saved length (collar/leash), before the moodle.
+    public static string ForSend(PluginConfig config, string command, string? commandMoodle)
+    {
+        if (!command.Trim().Equals(ControlWords.Leash, StringComparison.OrdinalIgnoreCase))
+            return Apply(command, commandMoodle);
+        var withLength = LengthOption.Append(command.Trim(), config.QuickCommands.LeashLengthYalms);
+        return MoodleOption.Append(withLength, commandMoodle ?? config.QuickCommands.LeashMoodleOverride);
+    }
 
     /// A saved command's full outgoing text. Also where its lock timer (collar/restraint-lock-timer) is added,
     /// since every send surface for a saved command already comes through here.
