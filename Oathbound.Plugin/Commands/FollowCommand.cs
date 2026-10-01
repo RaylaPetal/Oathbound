@@ -15,7 +15,8 @@ namespace Oathbound.Plugin.Commands;
 /// before Engage/Release ever runs. Inside the leash length the Sub moves freely; at the edge their outward
 /// movement is removed; past it they're steered along the Owner's breadcrumb trail, falling back to the
 /// game's own follow when that gets stuck or someone is mounted (design.md D2-D5). collar/leash-travel adds
-/// Waiting (the Owner left the area) and Traveling (a leash journey to the Owner is running).
+/// Waiting (the Owner left the area) and Traveling (a leash journey to the Owner is running). collar/leash-mounts
+/// adds pillion / mounting alongside / flying through LeashMountController.
 public sealed class FollowCommand
 {
     private const string Owner = "Follow";
@@ -36,6 +37,9 @@ public sealed class FollowCommand
     private static readonly TimeSpan StuckWindow = TimeSpan.FromSeconds(3);
     private const float StuckProgress = 0.5f;
 
+    /// collar/leash-mounts: pitch (radians) used to bring a flying Sub down when the Owner lands.
+    private const float DescendPitch = -0.8f;
+
     // Normal auto-follow trailing distance is a few yalms; a gap growing past this while following means
     // the game silently dropped follow (e.g. a gesture cancelled it through a path MovementLockService's
     // UnfollowDetour doesn't cover) rather than the Sub just lagging behind.
@@ -47,6 +51,7 @@ public sealed class FollowCommand
     private readonly PluginConfig config;
     private readonly MoodlesCommand moodles;
     private readonly TeleportCommand teleport;
+    private readonly LeashMountController mount;
     private readonly List<Vector3> crumbs = new();
 
     private LeashState state;
@@ -60,6 +65,7 @@ public sealed class FollowCommand
     private Vector2 outward;
     private float groundDistance;
     private Vector2 pullDirection;
+    private float pullPitch;
     private bool zeroNextFrame;
 
     private DateTime lastCrumbAt;
@@ -80,6 +86,7 @@ public sealed class FollowCommand
         this.runtimeState = runtimeState;
         this.moodles = moodles;
         this.teleport = teleport;
+        mount = new LeashMountController(config);
         GestureCommand.EmotePlayed += OnEmotePlayed;
         teleport.LeashJourneyEnded += OnLeashJourneyEnded;
     }
@@ -140,6 +147,8 @@ public sealed class FollowCommand
             zeroNextFrame = false;
             state = LeashState.Free;
             movementLock.SetSteering(Owner, Steer);
+            movementLock.SetFlySteering(Owner, FlySteer);
+            mount.Reset();
         }
         else if (state is LeashState.Waiting or LeashState.Traveling)
         {
@@ -162,6 +171,8 @@ public sealed class FollowCommand
         moodles.Ledger.Release(AttachedMoodleLedger.FollowSource);
         movementLock.ClearSteering(Owner);
         StopFollowing();
+        // collar/leash-mounts "Release never drops the Sub from the air": automation stops, no dismount.
+        mount.Reset();
         followedObjectId = 0;
         ownerName = null;
         crumbs.Clear();
@@ -191,6 +202,7 @@ public sealed class FollowCommand
             return (false, reason);
         }
         state = LeashState.Traveling;
+        mount.Reset();
         return (true, null);
     }
 
@@ -223,6 +235,7 @@ public sealed class FollowCommand
     private void EnterWaiting(DateTime now)
     {
         StopFollowing();
+        mount.Reset();
         state = LeashState.Waiting;
         waitingSince = now;
         zeroNextFrame = true;
@@ -280,10 +293,25 @@ public sealed class FollowCommand
         outward = groundDistance > 0.01f ? offset / groundDistance : Vector2.Zero;
         var suspended = movementLock.IsSteerSuspended;
 
+        mount.Tick(owner, player, now);
+        if (mount.IsPillion && state is LeashState.Pulling or LeashState.Following)
+        {
+            // Seated behind the Owner: the game carries the Sub, nothing to pull.
+            StopFollowing();
+            state = LeashState.Free;
+            zeroNextFrame = true;
+        }
+        else if (mount.HoldStill && state == LeashState.Following)
+        {
+            // Game follow would walk the Sub out of the mount cast - stand still until mounted, then pull.
+            StopFollowing();
+            StartPull(now);
+        }
+
         switch (state)
         {
             case LeashState.Free:
-                if (groundDistance > EffectiveLength)
+                if (groundDistance > EffectiveLength && !mount.IsPillion)
                     StartPull(now);
                 break;
 
@@ -294,13 +322,14 @@ public sealed class FollowCommand
                     zeroNextFrame = true;
                     break;
                 }
-                if (suspended)
+                if (suspended || mount.HoldStill)
                 {
-                    // design D5: a restraint or teleport holds the Sub - the stuck timer waits for it.
+                    // design D5: a restraint or teleport holds the Sub (or a mount cast is in progress) - the
+                    // stuck timer waits for it.
                     pullProgressAt = now;
                     break;
                 }
-                if (AnyoneMountedOrAirborne(owner))
+                if (NeedsGameFollow(owner))
                 {
                     StartFollowing(owner, now);
                     break;
@@ -316,11 +345,16 @@ public sealed class FollowCommand
                     StartFollowing(owner, now);
                     break;
                 }
-                pullDirection = DirectionToNextCrumb(player.Position, owner.Position);
+                var target = NextCrumb(player.Position, owner.Position);
+                var toTarget = Ground(target) - Ground(player.Position);
+                var horizontal = toTarget.Length();
+                pullDirection = horizontal > 0.01f ? toTarget / horizontal : Vector2.Zero;
+                // collar/leash-mounts "Fly with the Owner": climb or descend toward the crumb's height.
+                pullPitch = MathF.Atan2(target.Y - player.Position.Y, MathF.Max(horizontal, 0.5f));
                 break;
 
             case LeashState.Following:
-                if (groundDistance <= ReleaseDistance && !AnyoneMountedOrAirborne(owner))
+                if (groundDistance <= ReleaseDistance && !NeedsGameFollow(owner))
                 {
                     StopFollowing();
                     state = LeashState.Free;
@@ -341,17 +375,40 @@ public sealed class FollowCommand
             zeroNextFrame = false;
             return Vector2.Zero;
         }
+        if (mount.HoldStill)
+            return Vector2.Zero;
 
         switch (state)
         {
             case LeashState.Pulling:
                 return pullDirection;
-            case LeashState.Free when groundDistance >= EffectiveLength:
+            case LeashState.Free when groundDistance >= EffectiveLength && !mount.IsPillion:
                 var away = Vector2.Dot(wish, outward);
                 return away > 0f ? wish - away * outward : wish;
             default:
                 return wish;
         }
+    }
+
+    /// collar/leash-mounts (design D3): the flying counterpart of Steer. The Sub keeps their own pitch while free;
+    /// the pull aims in 3D; and a Sub left in the air after the Owner lands is brought down.
+    private (Vector2 Horizontal, float Pitch) FlySteer(Vector2 wish, float pitch)
+    {
+        if (zeroNextFrame)
+        {
+            zeroNextFrame = false;
+            return (Vector2.Zero, 0f);
+        }
+        if (mount.HoldStill)
+            return (Vector2.Zero, 0f);
+        if (state == LeashState.Pulling)
+            return (pullDirection, pullPitch);
+        if (mount.Descend)
+        {
+            var direction = wish.LengthSquared() > 0.01f ? Vector2.Normalize(wish) : outward != Vector2.Zero ? -outward : Vector2.UnitY;
+            return (direction, DescendPitch);
+        }
+        return (Steer(wish), pitch);
     }
 
     private void StartPull(DateTime now)
@@ -392,8 +449,8 @@ public sealed class FollowCommand
     }
 
     /// The oldest crumb still ahead of the Sub: everything older than the crumb nearest to them is behind,
-    /// and crumbs within reach are done. With none left, straight at the Owner.
-    private Vector2 DirectionToNextCrumb(Vector3 subPosition, Vector3 ownerPosition)
+    /// and crumbs within reach are done. With none left, the Owner themselves.
+    private Vector3 NextCrumb(Vector3 subPosition, Vector3 ownerPosition)
     {
         var sub = Ground(subPosition);
         if (crumbs.Count > 0)
@@ -410,19 +467,18 @@ public sealed class FollowCommand
                 crumbs.RemoveAt(0);
         }
 
-        var target = crumbs.Count > 0 ? Ground(crumbs[0]) : Ground(ownerPosition);
-        var toTarget = target - sub;
-        var length = toTarget.Length();
-        return length > 0.01f ? toTarget / length : Vector2.Zero;
+        return crumbs.Count > 0 ? crumbs[0] : ownerPosition;
     }
 
-    private static unsafe bool AnyoneMountedOrAirborne(IGameObject owner)
+    /// collar/leash-mounts "Game follow only as a fallback" (design D4): swimming/diving always; a mounted Owner
+    /// only when the mount controller isn't carrying the Sub along (no acknowledgement, the Sub hopped off, or
+    /// mounting failed here). The 3 s stuck rule in Pulling still applies on top.
+    private unsafe bool NeedsGameFollow(IGameObject owner)
     {
-        if (Plugin.Condition[ConditionFlag.Mounted] || Plugin.Condition[ConditionFlag.InFlight]
-            || Plugin.Condition[ConditionFlag.Swimming] || Plugin.Condition[ConditionFlag.Diving])
+        if (Plugin.Condition[ConditionFlag.Swimming] || Plugin.Condition[ConditionFlag.Diving])
             return true;
         var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)owner.Address;
-        return character != null && character->IsMounted();
+        return character != null && character->IsMounted() && !mount.HandlesOwnerMount;
     }
 
     private static Vector2 Ground(Vector3 position) => new(position.X, position.Z);

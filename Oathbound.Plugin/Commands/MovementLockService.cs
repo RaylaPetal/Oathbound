@@ -44,6 +44,8 @@ public sealed unsafe class MovementLockService : IDisposable
     private const string SigRmiWalk = "E8 ?? ?? ?? ?? 80 7B 3E 00 48 8D 3D";
     private const string SigRmiWalkIsInputEnabled1 = "E8 ?? ?? ?? ?? 84 C0 75 10 38 43 3C";
     private const string SigRmiWalkIsInputEnabled2 = "E8 ?? ?? ?? ?? 84 C0 75 03 88 47 3F";
+    // collar/leash-mounts: the flying counterpart vnavmesh rewrites (OverrideMovement.RMIFlyDetour).
+    private const string SigRmiFly = "E8 ?? ?? ?? ?? 0F B6 0D ?? ?? ?? ?? B8";
 
     public unsafe delegate byte IsInputIdDelegate(void* unk, InputId inputId);
 
@@ -86,6 +88,14 @@ public sealed unsafe class MovementLockService : IDisposable
     /// ground vector (X, Z), returns the one to actually walk.
     public delegate Vector2 SteerFunction(Vector2 worldWish);
 
+    public unsafe delegate void RmiFlyDelegate(void* self, OathboundFlyInput* result);
+    [Signature(SigRmiFly, DetourName = nameof(RmiFlyDetour), Fallibility = Fallibility.Auto)]
+    private readonly Hook<RmiFlyDelegate>? rmiFlyHook;
+
+    /// collar/leash-mounts (design D3): the flying version - the player's horizontal wish as a world-space ground
+    /// vector plus their pitch (radians, positive up, as vnavmesh writes it), returning the ones to fly.
+    public delegate (Vector2 Horizontal, float Pitch) FlySteerFunction(Vector2 worldWish, float pitch);
+
     /// Which independent callers currently want movement suppressed - a Set rather than a bare bool so two
     /// unrelated callers (Follow's leash, a forced-pose restraint device - collar/restraints) can each
     /// Engage/Release their own claim without one caller's Release prematurely lifting the other's.
@@ -106,6 +116,7 @@ public sealed unsafe class MovementLockService : IDisposable
     /// restraint (nothing moves) or teleport navigation (vnavmesh owns the vector) always wins over it.
     private string? steerOwner;
     private SteerFunction? steer;
+    private FlySteerFunction? flySteer;
     private bool legacyMoveMode;
     private bool ownsForceDisable;
 
@@ -153,11 +164,16 @@ public sealed unsafe class MovementLockService : IDisposable
             UpdateLegacyMoveMode();
         }
         else Plugin.Log.Error("Leash steering unavailable: walk-input hook did not resolve.");
+
+        IsFlySteerAvailable = IsSteerAvailable && rmiFlyHook is not null;
+        if (IsFlySteerAvailable) rmiFlyHook!.Enable();
+        else Plugin.Log.Error("Leash flying unavailable: fly-input hook did not resolve.");
     }
 
     public bool IsAvailable { get; }
     public bool IsImmobilizeAvailable { get; }
     public bool IsSteerAvailable { get; }
+    public bool IsFlySteerAvailable { get; }
 
     /// Whether a steer function would run this frame - false while a stronger claim holds movement.
     public bool IsSteerSuspended => immobilizedBy.Count > 0 || inputSuppressedBy.Count > 0;
@@ -190,6 +206,14 @@ public sealed unsafe class MovementLockService : IDisposable
         if (steerOwner != owner) return;
         steerOwner = null;
         steer = null;
+        flySteer = null;
+    }
+
+    /// Same owner as SetSteering (the leash): adds the flying counterpart. Cleared with ClearSteering.
+    public void SetFlySteering(string owner, FlySteerFunction function)
+    {
+        if (IsFlySteerAvailable && steerOwner == owner)
+            flySteer = function;
     }
     public void AllowAutorun(string owner) => autorunAllowedBy.Add(owner);
     public void DisallowAutorun(string owner) => autorunAllowedBy.Remove(owner);
@@ -204,6 +228,7 @@ public sealed unsafe class MovementLockService : IDisposable
         autorunAllowedBy.Clear();
         steerOwner = null;
         steer = null;
+        flySteer = null;
         ClearForceDisable();
     }
 
@@ -258,18 +283,38 @@ public sealed unsafe class MovementLockService : IDisposable
 
         // The walk sums are relative to a reference yaw: the character's facing in Standard movement, the
         // camera's (plus 180 degrees) in Legacy - vnavmesh's DirectionToDestination.
-        var referenceYaw = player.Rotation;
-        if (legacyMoveMode)
-        {
-            var camera = (OathboundCameraEx*)CameraManager.Instance()->GetActiveCamera();
-            if (camera == null) return;
-            referenceYaw = camera->DirH + MathF.PI;
-        }
+        if (!TryReferenceYaw(player.Rotation, out var referenceYaw)) return;
 
         var world = Rotate(new Vector2(*sumLeft, *sumForward), referenceYaw);
         var local = Rotate(function(world), -referenceYaw);
         *sumLeft = local.X;
         *sumForward = local.Y;
+    }
+
+    private void RmiFlyDetour(void* self, OathboundFlyInput* result)
+    {
+        rmiFlyHook!.Original(self, result);
+        var function = flySteer;
+        if (function is null || IsSteerSuspended) return;
+        if (Plugin.ObjectTable.LocalPlayer is not { } player) return;
+        if (!TryReferenceYaw(player.Rotation, out var referenceYaw)) return;
+
+        var world = Rotate(new Vector2(result->Left, result->Forward), referenceYaw);
+        var (horizontal, pitch) = function(world, result->Up);
+        var local = Rotate(horizontal, -referenceYaw);
+        result->Left = local.X;
+        result->Forward = local.Y;
+        result->Up = pitch;
+    }
+
+    private bool TryReferenceYaw(float playerRotation, out float yaw)
+    {
+        yaw = playerRotation;
+        if (!legacyMoveMode) return true;
+        var camera = (OathboundCameraEx*)CameraManager.Instance()->GetActiveCamera();
+        if (camera == null) return false;
+        yaw = camera->DirH + MathF.PI;
+        return true;
     }
 
     /// (left, forward) at reference yaw `yaw` to world (X, Z), where a world direction's yaw is atan2(X, Z).
@@ -307,6 +352,7 @@ public sealed unsafe class MovementLockService : IDisposable
         unfollowHook?.Dispose();
         autoMoveHook?.Dispose();
         rmiWalkHook?.Dispose();
+        rmiFlyHook?.Dispose();
         if (IsSteerAvailable) Plugin.GameConfig.UiControlChanged -= OnUiControlChanged;
     }
 }
