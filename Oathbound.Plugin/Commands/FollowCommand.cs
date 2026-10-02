@@ -90,6 +90,7 @@ public sealed class FollowCommand
 
     /// Bare `/follow` is a toggle, so the stop is only sent when we know follow is on.
     private bool followActive;
+    private bool gameHeldLastFrame;
     private DateTime lastDesyncCheck;
     private float lastDesyncDistance;
 
@@ -393,6 +394,31 @@ public sealed class FollowCommand
         var offset = playerGround - Ground(owner.Position);
         groundDistance = offset.Length();
         outward = groundDistance > 0.01f ? offset / groundDistance : Vector2.Zero;
+
+        // Dead, loading or in a cutscene, the Sub can't move at all: wait instead of counting it as stuck.
+        if (GameHoldsSub())
+        {
+            gameHeldLastFrame = true;
+            if (state is LeashState.Pulling or LeashState.Following)
+            {
+                // The game ends its own follow here; sending the /follow toggle could turn it back on.
+                movementLock.ReleasePreserveFollow(Owner);
+                followActive = false;
+                state = LeashState.Pulling;
+                pullDirection = Vector2.Zero;
+                pullProgressAt = now;
+                ResetStuck(now);
+            }
+            return;
+        }
+        if (gameHeldLastFrame)
+        {
+            gameHeldLastFrame = false;
+            if (state is LeashState.Pulling or LeashState.Following)
+                StartPull(now);
+            zeroNextFrame = true;
+        }
+
         var suspended = movementLock.IsSteerSuspended;
 
         mount.Tick(owner, player, now);
@@ -617,6 +643,15 @@ public sealed class FollowCommand
     }
 
     private static Vector2 Ground(Vector3 position) => new(position.X, position.Z);
+
+    private static bool GameHoldsSub()
+    {
+        var c = Plugin.Condition;
+        return c[ConditionFlag.Unconscious] || c[ConditionFlag.BetweenAreas] || c[ConditionFlag.BetweenAreas51]
+            || c[ConditionFlag.OccupiedInCutSceneEvent] || c[ConditionFlag.WatchingCutscene] || c[ConditionFlag.WatchingCutscene78]
+            || c[ConditionFlag.Occupied33] || c[ConditionFlag.OccupiedInEvent] || c[ConditionFlag.OccupiedInQuestEvent]
+            || c[ConditionFlag.Jumping61];
+    }
 
     /// Re-sends `/follow` only once the gap grows past normal trailing distance without closing.
     private void CheckForDesync(IGameObject owner, Vector3 playerPosition, DateTime now)
