@@ -269,6 +269,33 @@ internal static partial class GestureTriggerResolver
         return emotes.TryGetValue(basename, out var hits) ? hits.FirstOrDefault(x => path.EndsWith(x.Key, StringComparison.OrdinalIgnoreCase)).Command : null;
     }
 
+    private static Dictionary<string, (ushort EmoteId, bool Looping)>? emoteModes;
+
+    /// The game loops an emote by its row, whatever animation a mod puts in its place. Null if the command isn't
+    /// an emote.
+    public static (ushort EmoteId, bool Looping)? LookupEmoteMode(string command)
+    {
+        emoteModes ??= BuildEmoteModeIndex();
+        return emoteModes.TryGetValue(command.TrimStart('/'), out var hit) ? hit : null;
+    }
+
+    private static Dictionary<string, (ushort, bool)> BuildEmoteModeIndex()
+    {
+        var result = new Dictionary<string, (ushort, bool)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var emote in Plugin.DataManager.GetExcelSheet<Emote>())
+        {
+            if (!emote.TextCommand.IsValid) continue;
+            var text = emote.TextCommand.Value;
+            var mode = ((ushort)emote.RowId, emote.EmoteMode.RowId != 0);
+            foreach (var command in new[] { text.Command, text.ShortCommand, text.Alias, text.ShortAlias })
+            {
+                var key = command.ExtractText().TrimStart('/');
+                if (key.Length > 0) result.TryAdd(key, mode);
+            }
+        }
+        return result;
+    }
+
     private static Dictionary<string, List<(string, string)>> BuildIndex()
     {
         var result = new Dictionary<string, List<(string, string)>>();

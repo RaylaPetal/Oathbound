@@ -169,8 +169,10 @@ keep working. The old `/collar` commands are gone - update any macro that still 
 Most of what Oathbound does only changes how your own character looks on your screen. A few features go
 further, and you should decide for yourself before turning them on:
 
-- **Animations** make your character perform emotes and poses, and hold you in place while they play: you
-  can't move until your Owner stops the animation or sends revert all, or you use your safeword. To try one on
+- **Animations** make your character perform emotes and poses, and hold you in place while they play. A
+  one-off emote (like a wave or a bow) lets you go as soon as it finishes. A looping emote or a pose holds you
+  until your Owner stops the animation or sends revert all, or you use your safeword. Stopping a looping emote
+  makes your character take one tiny step, because moving is the only way the game ends one. To try one on
   yourself from Settings' Test Commands tab, type `gesture stop` there to release it again.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
   When your Owner walks farther away than the leash length, the leash steers your character after them

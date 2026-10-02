@@ -101,6 +101,14 @@ public sealed unsafe class MovementLockService : IDisposable
     private bool legacyMoveMode;
     private bool ownsForceDisable;
 
+    /// A tiny forward step, the way the game ends a looping emote when its player moves.
+    private const int StepPulseFrames = 2;
+    private const float StepPulseForward = 1f;
+    /// A step that can't run soon (another hold still on) is dropped, so it never fires after an unrelated hold ends.
+    private const long StepPulseWindowMs = 1_000;
+    private int stepPulseFramesLeft;
+    private long stepPulseExpiresTicks;
+
     public MovementLockService()
     {
         Svc.Hook.InitializeFromAttributes(this);
@@ -192,6 +200,14 @@ public sealed unsafe class MovementLockService : IDisposable
         if (IsFlySteerAvailable && steerOwner == owner)
             flySteer = function;
     }
+    /// Takes effect only on a frame with no movement claim at all. Does nothing without the walk hook.
+    public void RequestStepPulse()
+    {
+        if (!IsSteerAvailable) return;
+        stepPulseFramesLeft = StepPulseFrames;
+        stepPulseExpiresTicks = Environment.TickCount64 + StepPulseWindowMs;
+    }
+
     public void AllowAutorun(string owner) => autorunAllowedBy.Add(owner);
     public void DisallowAutorun(string owner) => autorunAllowedBy.Remove(owner);
 
@@ -205,6 +221,7 @@ public sealed unsafe class MovementLockService : IDisposable
         steerOwner = null;
         steer = null;
         flySteer = null;
+        stepPulseFramesLeft = 0;
         ClearForceDisable();
     }
 
@@ -251,6 +268,8 @@ public sealed unsafe class MovementLockService : IDisposable
     private void RmiWalkDetour(void* self, float* sumLeft, float* sumForward, float* sumTurnLeft, byte* haveBackwardOrStrafe, byte* a6, byte bAdditiveUnk)
     {
         rmiWalkHook!.Original(self, sumLeft, sumForward, sumTurnLeft, haveBackwardOrStrafe, a6, bAdditiveUnk);
+        if (stepPulseFramesLeft > 0 && TryStepPulse(self, sumLeft, sumForward, bAdditiveUnk))
+            return;
         var function = steer;
         if (function is null || IsSteerSuspended) return;
         // Writing a non-zero vector on a frame the game skipped reading input breaks movement.
@@ -264,6 +283,27 @@ public sealed unsafe class MovementLockService : IDisposable
         var local = Rotate(function(world), -referenceYaw);
         *sumLeft = local.X;
         *sumForward = local.Y;
+    }
+
+    private bool TryStepPulse(void* self, float* sumLeft, float* sumForward, byte bAdditiveUnk)
+    {
+        if (Environment.TickCount64 > stepPulseExpiresTicks)
+        {
+            Plugin.Log.Debug("Step pulse dropped: another movement hold stayed on.");
+            stepPulseFramesLeft = 0;
+            return false;
+        }
+        // The released claim's force-disable flag only clears on the next framework update.
+        if (AnyInputClaim || (forceDisableMovementPtr != 0 && *(int*)(forceDisableMovementPtr + 4) != 0))
+            return false;
+        if (bAdditiveUnk != 0 || rmiWalkIsInputEnabled1!(self) == 0 || rmiWalkIsInputEnabled2!(self) == 0)
+            return false;
+
+        *sumLeft = 0;
+        *sumForward = StepPulseForward;
+        stepPulseFramesLeft--;
+        Plugin.Log.Debug($"Step pulse frame written ({stepPulseFramesLeft} left).");
+        return true;
     }
 
     private void RmiFlyDetour(void* self, OathboundFlyInput* result)

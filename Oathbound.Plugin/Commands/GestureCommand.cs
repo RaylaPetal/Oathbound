@@ -42,6 +42,13 @@ public sealed class GestureCommand
     /// The trigger the Sub is held in, so Stop can stand them up from a seated pose.
     private GestureTrigger? heldTrigger;
     private Guid? heldBySourcePairingId;
+    /// The held slash emote's row, so Stop knows whether it's still looping and a one-shot knows when it's over.
+    private (ushort EmoteId, bool Looping)? heldEmote;
+    private bool heldEmoteSeenPlaying;
+    private long heldEmoteDeadlineTicks;
+
+    /// A one-shot whose end is never seen still frees the Sub after this long.
+    private const long OneShotCapMs = 30_000;
 
     public int? LastScanTotalMods { get; private set; }
     public string? LastScanError { get; private set; }
@@ -72,6 +79,9 @@ public sealed class GestureCommand
                 Plugin.Log.Warning($"Gesture playback failed after redraw for '{pending.Trigger.DisplayName}'.");
         }
 
+        if (pendingPlay is null && heldEmote is { Looping: false } oneShot)
+            WatchOneShot(oneShot.EmoteId, now);
+
         // A held animation keeps its mod until Stop.
         if (heldTrigger is null && activeTemporary is { } active && now >= active.IdleUntilTicks)
         {
@@ -92,21 +102,60 @@ public sealed class GestureCommand
         ReleaseTemporary();
     }
 
-    /// Ends an Owner-sent animation: movement back, mod off, and up out of a seated pose. A looping slash emote has
-    /// no cancel call, so it ends with the Sub's first step. Returns whether anything was held.
+    /// Ends an Owner-sent animation: movement back, mod off, up out of a seated pose, and a looping slash emote
+    /// ended with a tiny step (the game has no cancel call; moving is how it ends one). Returns whether anything was held.
     public bool Stop()
     {
         pendingPlay = null;
         if (heldTrigger is not { } trigger)
             return false;
 
-        heldTrigger = null;
-        heldBySourcePairingId = null;
-        movementLock.ReleaseImmobilize(HoldOwner);
-        ReleaseTemporary();
+        var emote = heldEmote;
+        ReleaseHold();
         if (trigger.Kind != GestureTriggerKind.SlashCommand && trigger.EmoteModeId is >= 1 and <= 3 && !IsStanding())
             Chat.SendMessage(trigger.EmoteModeId switch { 1 => "/groundsit", 2 => "/sit", _ => "/doze" });
+        if (emote is { Looping: true } looping && CurrentEmoteId() == looping.EmoteId)
+            movementLock.RequestStepPulse();
         return true;
+    }
+
+    private void ReleaseHold()
+    {
+        heldTrigger = null;
+        heldBySourcePairingId = null;
+        heldEmote = null;
+        movementLock.ReleaseImmobilize(HoldOwner);
+        ReleaseTemporary();
+    }
+
+    /// Released only once the emote was seen playing and then seen over, so the gap before it starts doesn't count.
+    private void WatchOneShot(ushort emoteId, long now)
+    {
+        var current = CurrentEmoteId();
+        if (current == emoteId)
+        {
+            if (!heldEmoteSeenPlaying)
+                Plugin.Log.Debug($"One-shot emote {emoteId} started.");
+            heldEmoteSeenPlaying = true;
+        }
+        else if (heldEmoteSeenPlaying)
+        {
+            Plugin.Log.Debug($"One-shot emote {emoteId} over (emote now {current}); releasing the hold.");
+            ReleaseHold();
+            return;
+        }
+
+        if (now >= heldEmoteDeadlineTicks)
+        {
+            Plugin.Log.Debug($"One-shot emote {emoteId} hit the {OneShotCapMs / 1000}s cap (seen playing: {heldEmoteSeenPlaying}); releasing the hold.");
+            ReleaseHold();
+        }
+    }
+
+    private static unsafe ushort CurrentEmoteId()
+    {
+        var player = Control.GetLocalPlayer();
+        return player == null ? (ushort)0 : player->EmoteController.EmoteId;
     }
 
     /// Pairing-ended events don't say which pairing, so check whether it was the one holding the Sub.
@@ -219,6 +268,11 @@ public sealed class GestureCommand
         // Every caller of Apply/ForceApply is an Owner command, so it holds the Sub like a Forced Pose.
         heldTrigger = entry.Trigger;
         heldBySourcePairingId = sourcePairingId;
+        // Unknown commands stay held until stopped, like before.
+        heldEmote = entry.Trigger.Kind == GestureTriggerKind.SlashCommand ? GestureTriggerResolver.LookupEmoteMode(entry.Trigger.SlashCommand) : null;
+        heldEmoteSeenPlaying = false;
+        heldEmoteDeadlineTicks = now + PlayDelayMs + OneShotCapMs;
+        Plugin.Log.Debug($"Holding for {entry.Trigger.DisplayName}: emote {heldEmote?.EmoteId.ToString() ?? "unknown"}, {(heldEmote is { Looping: false } ? "one-shot" : "holds until stopped")}.");
         movementLock.EngageImmobilize(HoldOwner);
         return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
     }
