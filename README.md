@@ -40,7 +40,7 @@ everything instantly with their safeword.
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
-| 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on when you teleport or change area: your Sub is brought along to you. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
+| 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on until you unleash them: when you teleport or change area your Sub is brought along to you, and anywhere they can't follow (your house, an inn room, a duty) it just pauses until you're together again. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
 | 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
@@ -175,7 +175,10 @@ further, and you should decide for yourself before turning them on:
   pulling again after 15 seconds).
   If your Owner teleports or changes area while you're leashed, their plugin automatically tells yours where
   they went, and (if you've allowed **Teleport**) your character travels to them the same way Teleport does.
-  If you haven't, or they go somewhere you can't follow (a house, an inn room, a duty), the leash comes off.
+  If you haven't, or they go somewhere you can't follow (a house, an inn room, a duty), the leash pauses
+  instead: you get full control back, and it picks up again as soon as you're in the same place. A trip you
+  couldn't take (in combat or a duty, for example) is tried again on your next area change or once combat
+  ends; one you stopped yourself isn't. Only your Owner's unleash, your safeword, or unpairing ends the leash.
   When your Owner mounts, the leash also mounts you: it rides pillion behind them if you're in their party
   and their mount has a free seat, otherwise it summons a mount with Mount Roulette, takes off and lands with
   them, and dismounts when they do. That needs the automation acknowledgement. If you hop off yourself, it
@@ -195,8 +198,7 @@ further, and you should decide for yourself before turning them on:
 Every command the Owner sends is one deliberate click that sends one tell, with one exception: while a Sub
 is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
 area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
-side (their safeword, a trip that couldn't happen, the 2-minute wait running out, or a leash their plugin
-couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
+side (their safeword, or a leash their plugin couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
 leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
 from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
 other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing

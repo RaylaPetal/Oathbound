@@ -13,15 +13,19 @@ using ECommons.Automation;
 namespace Oathbound.Plugin.Commands;
 
 /// The leash. Inside its length the Sub moves freely; at the edge outward movement is removed; past it they're
-/// steered along the Owner's breadcrumbs, falling back to game follow when stuck or mounted. Waiting/Traveling
-/// cover the Owner changing area; Slack hands a stuck Sub their own steering until they're back in range.
+/// steered along the Owner's breadcrumbs, falling back to game follow when stuck or mounted. Waiting (the pause) and
+/// Traveling cover being apart and have no time limit - only Release ends a leash. Slack hands a stuck Sub their own
+/// steering until they're back in range.
 public sealed class FollowCommand
 {
     private const string Owner = "Follow";
 
     private enum LeashState { Released, Free, Pulling, Following, Slack, Waiting, Traveling }
 
-    private static readonly TimeSpan WaitTimeout = TimeSpan.FromMinutes(2);
+    /// Within this an Owner's leash travel just re-attaches and the pull closes the gap; farther, a journey does.
+    private const float ReattachReach = 30f;
+    /// Lets the position settle after loading in before a kept trip is retried.
+    private static readonly TimeSpan RetrySettleDelay = TimeSpan.FromSeconds(1);
 
     // Owner breadcrumbs: a point every CrumbInterval once the Owner has moved CrumbMinStep.
     private static readonly TimeSpan CrumbInterval = TimeSpan.FromMilliseconds(250);
@@ -58,7 +62,14 @@ public sealed class FollowCommand
     /// Object ids change between areas, so the Owner is found again by name.
     private string? ownerName;
     private Guid ownerPairingId;
-    private DateTime waitingSince;
+
+    /// The Owner's latest leash travel, retried while paused on the Sub's area change or combat end.
+    private (TeleportTarget Destination, Guid PairingId)? keptTrip;
+    private (string World, uint Territory, int Instance)? retryArea;
+    private DateTime? loadedAt;
+    private bool areaChangePending;
+    private bool wasInCombat;
+    private bool pauseNotified;
     private int requestedLength = LengthOption.DefaultYalms;
 
     // Written by OnFrameworkUpdate, read by Steer (both on the main thread).
@@ -181,6 +192,8 @@ public sealed class FollowCommand
         mount.Reset();
         followedObjectId = 0;
         ownerName = null;
+        keptTrip = null;
+        pauseNotified = false;
         crumbs.Clear();
         runtimeState.MovementLockActive = false;
         // State is already Released, so the journey's end event is ignored.
@@ -191,7 +204,7 @@ public sealed class FollowCommand
             LeashEnded?.Invoke(pairingId, reason);
     }
 
-    /// Only for the Owner this Sub is leashed to; if the journey can't start, the leash ends.
+    /// Only for the Owner this Sub is leashed to. A journey that can't start pauses the leash and keeps the trip.
     public (bool Success, string? Reason) TravelTo(TeleportTarget destination, PairingState? source)
     {
         if (state == LeashState.Released)
@@ -199,52 +212,140 @@ public sealed class FollowCommand
         if (source is null || !string.Equals(source.PeerName, ownerName, StringComparison.OrdinalIgnoreCase))
             return (false, "Not leashed to the sender - leash travel ignored.");
 
-        StopFollowing();
-        var (success, reason) = teleport.ApplyLeashTravel(destination, source);
-        if (!success)
+        keptTrip = (destination, source.Id);
+        if (FindOwner() is { } owner && Plugin.ObjectTable.LocalPlayer is { } player &&
+            Vector2.Distance(Ground(player.Position), Ground(owner.Position)) <= ReattachReach)
         {
-            Plugin.Log.Info($"Leash released: leash travel couldn't start ({reason}).");
-            Release(LeashEnd.Travel);
-            return (false, reason);
+            // Already together (the Owner walked out of a door the Sub was waiting at): no journey needed.
+            var wasTraveling = state == LeashState.Traveling;
+            if (state is LeashState.Waiting or LeashState.Traveling)
+                TryReattach();
+            keptTrip = null;
+            if (wasTraveling)
+                teleport.StopLeashJourney("the Owner is already here");
+            return (true, null);
         }
-        state = LeashState.Traveling;
-        mount.Reset();
-        return (true, null);
+
+        var (success, reason) = StartTrip(destination, source);
+        if (success)
+            return (true, null);
+
+        Plugin.Log.Info($"Leash paused: leash travel couldn't start ({reason}).");
+        EnterWaiting(notify: false);
+        pauseNotified = true;
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Leash paused",
+            Content = $"You couldn't follow {ownerName}: {reason} Your leash stays on and picks back up when you're together again.",
+            Type = NotificationType.Info,
+        });
+        return (false, reason);
     }
 
-    private void OnLeashJourneyEnded(bool arrived)
+    private (bool Success, string? Reason) StartTrip(TeleportTarget destination, PairingState source)
+    {
+        StopFollowing();
+        var result = teleport.ApplyLeashTravel(destination, source);
+        if (!result.Success)
+            return result;
+        state = LeashState.Traveling;
+        mount.Reset();
+        return result;
+    }
+
+    /// A failed retry keeps the trip for the next trigger and tells the Sub nothing new.
+    private void RetryKeptTrip()
+    {
+        if (keptTrip is not { } trip || config.FindPairingById(trip.PairingId) is not { IsPaired: true } source)
+        {
+            keptTrip = null;
+            return;
+        }
+        var (success, reason) = StartTrip(trip.Destination, source);
+        Plugin.Log.Info(success ? "Leash: retrying the kept trip to the Owner." : $"Leash: kept trip still can't start ({reason}).");
+    }
+
+    private void OnLeashJourneyEnded(LeashJourneyOutcome outcome)
     {
         if (state != LeashState.Traveling) return;
-        if (!arrived)
+        // Stopping is the Sub choosing not to go, so it isn't retried.
+        if (outcome == LeashJourneyOutcome.StoppedBySub)
+            keptTrip = null;
+        if (outcome != LeashJourneyOutcome.Arrived)
         {
-            Plugin.Log.Info("Leash released: the leash journey was stopped.");
-            Release(LeashEnd.Travel);
+            Plugin.Log.Info($"Leash paused: the leash journey ended ({outcome}).");
+            EnterWaiting();
             return;
         }
         if (!TryReattach())
-            EnterWaiting(DateTime.UtcNow);
+            EnterWaiting();
     }
+
+    private IGameObject? FindOwner() =>
+        Plugin.ObjectTable.FirstOrDefault(o => o is IPlayerCharacter && string.Equals(o.Name.TextValue, ownerName, StringComparison.OrdinalIgnoreCase));
 
     private bool TryReattach()
     {
-        var owner = Plugin.ObjectTable.FirstOrDefault(o => o is IPlayerCharacter && string.Equals(o.Name.TextValue, ownerName, StringComparison.OrdinalIgnoreCase));
+        var owner = FindOwner();
         if (owner is null) return false;
         followedObjectId = owner.GameObjectId;
         crumbs.Clear();
         lastCrumbAt = DateTime.MinValue;
         zeroNextFrame = true;
         state = LeashState.Free;
+        keptTrip = null;
+        pauseNotified = false;
         return true;
     }
 
-    private void EnterWaiting(DateTime now)
+    private void EnterWaiting(bool notify = true)
     {
         StopFollowing();
         mount.Reset();
         state = LeashState.Waiting;
-        waitingSince = now;
         zeroNextFrame = true;
         crumbs.Clear();
+        // Only area changes during the pause trigger a retry, so a failed journey's own hops don't loop.
+        retryArea = null;
+        areaChangePending = false;
+        if (!notify || pauseNotified) return;
+        pauseNotified = true;
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Leash paused",
+            Content = $"Your leash stays on while you're apart from {ownerName}. You can move freely, and it picks back up when you're together again.",
+            Type = NotificationType.Info,
+        });
+    }
+
+    /// True once per settled area change on the Sub's side, or when combat ends.
+    private bool RetryTriggered(DateTime now)
+    {
+        var inCombat = Plugin.Condition[ConditionFlag.InCombat];
+        var combatEnded = wasInCombat && !inCombat;
+        wasInCombat = inCombat;
+
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player is null || Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51])
+        {
+            loadedAt = null;
+            return false;
+        }
+        loadedAt ??= now;
+        var area = (player.CurrentWorld.Value.Name.ExtractText(), Plugin.ClientState.TerritoryType, TeleportDestinations.CurrentPublicInstance());
+        if (retryArea is null)
+            retryArea = area;
+        else if (area != retryArea.Value)
+        {
+            retryArea = area;
+            areaChangePending = true;
+        }
+        if (areaChangePending && now - loadedAt.Value >= RetrySettleDelay)
+        {
+            areaChangePending = false;
+            return true;
+        }
+        return combatEnded;
     }
 
     public void OnFrameworkUpdate()
@@ -264,26 +365,23 @@ public sealed class FollowCommand
         if (state == LeashState.Traveling)
         {
             if (!teleport.IsLeashJourneyInProgress)
-                OnLeashJourneyEnded(arrived: true);
+                OnLeashJourneyEnded(LeashJourneyOutcome.Arrived);
             return;
         }
 
         if (state == LeashState.Waiting)
         {
             if (TryReattach()) return;
-            if (now - waitingSince > WaitTimeout)
-            {
-                Plugin.Log.Info("Leash released: the Owner did not come back or send leash travel in time.");
-                Release(LeashEnd.Timeout);
-            }
+            if (RetryTriggered(now) && keptTrip is not null)
+                RetryKeptTrip();
             return;
         }
 
         var owner = Plugin.ObjectTable.FirstOrDefault(o => o.GameObjectId == followedObjectId);
         if (owner is null)
         {
-            Plugin.Log.Info("Leash waiting: the paired Owner left the current area.");
-            EnterWaiting(now);
+            Plugin.Log.Info("Leash paused: the paired Owner left the current area.");
+            EnterWaiting();
             return;
         }
 

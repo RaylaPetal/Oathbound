@@ -30,6 +30,8 @@ public enum TeleportStage
     Arriving,
 }
 
+public enum LeashJourneyOutcome { Arrived, Failed, StoppedBySub }
+
 /// The Sub's whole journey to the Owner: world change, aetheryte or ward travel, instance change, then vnavmesh
 /// navigation, with movement locked throughout. Every guard runs on the Sub's client before anything moves.
 /// Every end goes through Stop/Finish, so the lock and vnavmesh are always torn down together.
@@ -98,8 +100,8 @@ public sealed class TeleportCommand
     public bool IsInProgress => stage != TeleportStage.Idle;
     public bool IsLeashJourneyInProgress => IsInProgress && isLeashJourney;
 
-    /// True on arrival, false for any stop or failure. Not raised when a newer leash travel replaces the journey.
-    public event Action<bool>? LeashJourneyEnded;
+    /// Not raised when a newer leash travel replaces the journey.
+    public event Action<LeashJourneyOutcome>? LeashJourneyEnded;
 
     /// A leash journey from the same pairing is replaced silently; anything else in progress wins.
     public (bool Success, string? Reason) ApplyLeashTravel(TeleportTarget destination, PairingState source)
@@ -108,7 +110,7 @@ public sealed class TeleportCommand
         {
             if (!isLeashJourney || sourcePairingId != source.Id)
                 return (false, "Refused: a Teleport is already in progress.");
-            StopCore("replaced by a newer leash travel", arrived: false, notifyLeash: false);
+            StopCore("replaced by a newer leash travel", LeashJourneyOutcome.Failed, notifyLeash: false);
         }
 
         var result = Apply(destination, source);
@@ -276,9 +278,12 @@ public sealed class TeleportCommand
     }
 
     /// Safe to call when idle.
-    public void Stop(string reason) => StopCore(reason, arrived: false, notifyLeash: true);
+    public void Stop(string reason) => StopCore(reason, LeashJourneyOutcome.Failed, notifyLeash: true);
 
-    private void StopCore(string reason, bool arrived, bool notifyLeash)
+    /// The Sub's own Stop button: a leash journey stopped this way isn't retried.
+    public void StopBySub(string reason) => StopCore(reason, LeashJourneyOutcome.StoppedBySub, notifyLeash: true);
+
+    private void StopCore(string reason, LeashJourneyOutcome outcome, bool notifyLeash)
     {
         if (!IsInProgress)
             return;
@@ -302,7 +307,7 @@ public sealed class TeleportCommand
         var wasLeashJourney = isLeashJourney;
         isLeashJourney = false;
         if (wasLeashJourney && notifyLeash)
-            LeashJourneyEnded?.Invoke(arrived);
+            LeashJourneyEnded?.Invoke(outcome);
     }
 
     /// Pairing-ended events don't say which pairing, so check whether it was this journey's.
@@ -329,7 +334,7 @@ public sealed class TeleportCommand
 
     private void Finish()
     {
-        StopCore("arrived", arrived: true, notifyLeash: true);
+        StopCore("arrived", LeashJourneyOutcome.Arrived, notifyLeash: true);
     }
 
     private void EnterStage(TeleportStage next)

@@ -685,7 +685,7 @@ public sealed class ChatCommandListener : IDisposable
             : LocalTestResult.Fail(reason ?? "Teleport failed.");
     }
 
-    /// Only acts while leashed to the sender; Teleport's guards apply and a refusal ends the leash.
+    /// Only acts while leashed to the sender; Teleport's guards apply and a refusal pauses the leash.
     private LocalTestResult HandleLeashTravel(string payload, PairingState? sourcePairing)
     {
         if (!TeleportTarget.TryParse(payload, out var destination))

@@ -308,7 +308,7 @@ public class CollarWindow : Window, IDisposable
 
         using (ImRaii.PushColor(ImGuiCol.Button, Theme.Danger))
             if (ImGui.Button("Stop teleport##teleportStop"))
-                teleport.Stop("stopped from the header");
+                teleport.StopBySub("stopped from the header");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Stops navigation right away and gives you back control of your movement.");
     }

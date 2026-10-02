@@ -8,7 +8,7 @@ using Oathbound.Plugin.Config;
 namespace Oathbound.Plugin.Commands;
 
 /// Owner side: after arriving in a new area (or jumping far inside one), sends one `leash travel` to every Sub it
-/// shows as leashed - an automatic tell the README documents. Nothing where the leash can't follow.
+/// shows as leashed - an automatic tell the README documents. Where the Sub can't be sent, the leash pauses.
 public sealed class LeashTravelWatcher
 {
     /// Farther than this between two updates is a relocation (an aethernet hop), not walking.
@@ -86,14 +86,13 @@ public sealed class LeashTravelWatcher
             || Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95];
         if (cantFollow || !TeleportSendAction.TryResolveTarget(out var target, out _))
         {
-            foreach (var pairing in leashed)
-                estimates.MarkUnleashed(pairing.Id);
+            // The Sub's leash pauses on its own and picks back up once they're together again.
             Plugin.NotificationManager.AddNotification(new Notification
             {
-                Title = "Leash came off",
+                Title = "Leash paused",
                 Content = leashed.Count == 1
-                    ? $"{leashed[0].PeerName} can't follow you here, so their leash came off."
-                    : "Your Subs can't follow you here, so their leashes came off.",
+                    ? $"{leashed[0].PeerName} can't be brought here, so their leash is paused until they join you or you come back out."
+                    : "Your Subs can't be brought here, so their leashes are paused until they join you or you come back out.",
                 Type = NotificationType.Info,
             });
             return;

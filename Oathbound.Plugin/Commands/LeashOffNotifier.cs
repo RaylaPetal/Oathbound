@@ -10,6 +10,7 @@ public enum LeashEnd
     OwnerRevertAll,
     PairingEnded,
     Panic,
+    // Travel and Timeout now pause the leash; kept only to read notices from older Sub builds.
     Travel,
     Timeout,
     Refused,
