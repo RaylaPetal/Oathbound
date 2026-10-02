@@ -17,12 +17,12 @@ public sealed class CatalogStore
     public void LoadOrMigrate(PluginConfig config)
     {
         if (!File.Exists(FilePath))
-        {
             MigrateLegacy(config);
-            return;
-        }
-
-        LoadInto(config);
+        else
+            LoadInto(config);
+        // Rewrites a config that still carries inline catalogs, so it shrinks right away.
+        if (ClearLegacy(config))
+            config.Save();
     }
 
     /// Temp-file-then-replace, so a crash mid-write can't leave a corrupt file.
@@ -72,35 +72,30 @@ public sealed class CatalogStore
 
     private void MigrateLegacy(PluginConfig config)
     {
-        TryAssign<GestureCatalogEntry>(config.GestureMapping.LegacyExtensionData, "LocalCatalog", v => config.GestureMapping.LocalCatalog = v);
-        TryAssign<GestureExportEntry>(config.GestureMapping.LegacyExtensionData, "ImportedPeerCatalog", v => config.GestureMapping.ImportedPeerCatalog = v);
-        TryAssign<RestraintCatalogEntry>(config.RestraintMapping.LegacyExtensionData, "LocalCatalog", v => config.RestraintMapping.LocalCatalog = v);
-        TryAssign<RestraintCatalogExportEntry>(config.RestraintMapping.LegacyExtensionData, "ImportedPeerCatalog", v => config.RestraintMapping.ImportedPeerCatalog = v);
-        TryAssign<MoodlesStatusEntry>(config.MoodlesMapping.LegacyExtensionData, "LocalCatalog", v => config.MoodlesMapping.LocalCatalog = v);
-
-        // Never let the legacy inline data round-trip back into the main config.
-        config.GestureMapping.LegacyExtensionData = null;
-        config.RestraintMapping.LegacyExtensionData = null;
-        config.MoodlesMapping.LegacyExtensionData = null;
+        var gesture = config.GestureMapping;
+        var restraint = config.RestraintMapping;
+        var moodles = config.MoodlesMapping;
+        if (gesture.LegacyLocalCatalog is { } gl) gesture.LocalCatalog = gl;
+        if (gesture.LegacyImportedPeerCatalog is { } gp) gesture.ImportedPeerCatalog = gp;
+        if (restraint.LegacyLocalCatalog is { } rl) restraint.LocalCatalog = rl;
+        if (restraint.LegacyImportedPeerCatalog is { } rp) restraint.ImportedPeerCatalog = rp;
+        if (moodles.LegacyLocalCatalog is { } ml) moodles.LocalCatalog = ml;
 
         Save(config);
     }
 
-    private static void TryAssign<T>(Dictionary<string, JsonElement>? extensionData, string propertyName, Action<Dictionary<string, T>> assign)
+    /// The inline copies are only a migration source; with catalogs.json present they're stale and just held memory.
+    private static bool ClearLegacy(PluginConfig config)
     {
-        if (extensionData is null) return;
-        var key = extensionData.Keys.FirstOrDefault(k => string.Equals(k, propertyName, StringComparison.OrdinalIgnoreCase));
-        if (key is null) return;
-
-        try
-        {
-            var value = JsonSerializer.Deserialize<Dictionary<string, T>>(extensionData[key]);
-            if (value is not null) assign(value);
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Warning(ex, $"Failed to migrate legacy '{propertyName}' catalog; it will need a rescan.");
-        }
+        var had = config.GestureMapping.LegacyLocalCatalog is not null || config.GestureMapping.LegacyImportedPeerCatalog is not null
+            || config.RestraintMapping.LegacyLocalCatalog is not null || config.RestraintMapping.LegacyImportedPeerCatalog is not null
+            || config.MoodlesMapping.LegacyLocalCatalog is not null;
+        config.GestureMapping.LegacyLocalCatalog = null;
+        config.GestureMapping.LegacyImportedPeerCatalog = null;
+        config.RestraintMapping.LegacyLocalCatalog = null;
+        config.RestraintMapping.LegacyImportedPeerCatalog = null;
+        config.MoodlesMapping.LegacyLocalCatalog = null;
+        return had;
     }
 
     private sealed class CatalogStoreData

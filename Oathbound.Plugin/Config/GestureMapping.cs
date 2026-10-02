@@ -20,7 +20,7 @@ public class GestureTrigger
 
     /// Display only ("Pose 1" like the file's numbering). DisplayName keeps the old +1 numbering because saved commands
     /// resolve by it.
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public string Label => Kind == GestureTriggerKind.SlashCommand
         ? DisplayName
         : (EmoteModeId, CPoseState) switch
@@ -52,29 +52,36 @@ public class GestureCatalogEntry
     public bool ModEnabled { get; set; }
 
     /// The entry's own trigger, else a rotation to its standing idle.
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public GestureTrigger? PlayableTrigger => Trigger
         ?? (IdlePose is { } idle ? new GestureTrigger { Kind = GestureTriggerKind.Pose, EmoteModeId = 0, CPoseState = idle } : null);
     public string Label => $"{ModName} — {AnimationName}" + (Trigger is null ? " — no playable trigger" : $" — {Trigger.DisplayName}");
 
     /// Display counterpart of Label, which stays the matching text.
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public string DisplayLabel => $"{ModName} — {AnimationName}" + (Trigger is null ? " — no playable trigger" : $" — {Trigger.Label}");
 }
 
-/// Catalogs are [JsonIgnore]d and persisted by CatalogStore so a config save doesn't re-serialize them.
-/// LegacyExtensionData only lets CatalogStore migrate an older inline catalog.
+/// Catalogs are persisted by CatalogStore so a config save doesn't re-serialize them. Dalamud saves the config with
+/// Newtonsoft, so its JsonIgnore is the one that keeps them out.
 [Serializable]
 public class GestureMapping
 {
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Dictionary<string, GestureCatalogEntry> LocalCatalog { get; set; } = new();
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Dictionary<string, GestureExportEntry> ImportedPeerCatalog { get; set; } = new();
 
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? LegacyExtensionData { get; set; }
+    // Set-only, so an older config's inline catalogs are read for CatalogStore's migration but never written back.
+    [Newtonsoft.Json.JsonProperty("LocalCatalog")]
+    private Dictionary<string, GestureCatalogEntry>? InlineLocalCatalog { set => LegacyLocalCatalog = value; }
+
+    [Newtonsoft.Json.JsonProperty("ImportedPeerCatalog")]
+    private Dictionary<string, GestureExportEntry>? InlineImportedPeerCatalog { set => LegacyImportedPeerCatalog = value; }
+
+    internal Dictionary<string, GestureCatalogEntry>? LegacyLocalCatalog;
+    internal Dictionary<string, GestureExportEntry>? LegacyImportedPeerCatalog;
 }
 
 /// The slim export shape. Excludes the playback-only fields; GroupSelections made exports scale combinatorially.
@@ -91,7 +98,7 @@ public class GestureExportEntry
     public string Label => $"{ModName} — {AnimationName}" + (Trigger is null ? " — no playable trigger" : $" — {Trigger.DisplayName}");
 
     /// Display counterpart of Label, which stays the matching text.
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public string DisplayLabel => $"{ModName} — {AnimationName}" + (Trigger is null ? " — no playable trigger" : $" — {Trigger.Label}");
 
     public static GestureExportEntry From(GestureCatalogEntry entry) => new()

@@ -60,7 +60,7 @@ public sealed class BackupService
     public void AcknowledgeCode()
     {
         config.Recovery.CodeAcknowledged = true;
-        config.Save();
+        config.SaveNow();
     }
 
     /// Groups of four.
@@ -88,7 +88,7 @@ public sealed class BackupService
         config.Recovery.IsProtected = wasProtected;
         config.Recovery.CodeAcknowledged = acknowledged;
         config.Recovery.UploadedFingerprint = null;
-        config.Save();
+        config.SaveNow();
     }
 
     /// Issues a code once the first pairing exists, and keeps the relay copy current.
@@ -120,14 +120,14 @@ public sealed class BackupService
                 await relay.PutBackupAsync(PairingCodes.BackupId(code), nonce, ciphertext, ct).ConfigureAwait(false);
                 config.Recovery.UploadedFingerprint = fingerprint;
                 config.Recovery.LastUploadAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                config.Save();
+                config.SaveNow();
             }
 
             foreach (var oldBackupId in config.Recovery.PendingDeletes.ToList())
             {
                 await relay.DeleteBackupAsync(oldBackupId, ct).ConfigureAwait(false);
                 config.Recovery.PendingDeletes.Remove(oldBackupId);
-                config.Save();
+                config.SaveNow();
             }
             LastError = null;
         }
@@ -173,7 +173,7 @@ public sealed class BackupService
             catch (RelayException ex) { Plugin.Log.Information($"Backup delete on identity reset failed: {ex.Code}."); }
         }
         config.Recovery = new RecoveryState();
-        config.Save();
+        config.SaveNow();
     }
 
     /// NeedsConfirmation, changing nothing, when this install holds pairings under a different identity.
@@ -250,7 +250,7 @@ public sealed class BackupService
         await revocation.CheckPairStatusAsync(ct).ConfigureAwait(false);
         var after = config.Pairings.Count(p => p.IsPaired);
         config.Pairings.RemoveAll(p => !p.IsPaired);
-        config.Save();
+        config.SaveNow();
 
         nextCheckUtc = DateTime.MinValue;
         LastError = null;

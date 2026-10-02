@@ -111,7 +111,7 @@ public sealed class CatalogMailboxService
 
                 pairing.LastPublishedCatalogDigest = digest;
                 pairing.LastPublishedCatalogUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                config.Save();
+                config.SaveNow();
                 return new(MailboxPublishOutcome.Published);
             }
             return new(MailboxPublishOutcome.Failed);
@@ -172,7 +172,7 @@ public sealed class CatalogMailboxService
 
             // The id is bound into the AAD, so it's settled before the one encryption.
             envelope.SnapshotId = ++pairing.NextOutgoingSnapshotId;
-            config.Save();
+            config.SaveNow();
             ciphertext = RelayCrypto.AesGcmEncrypt(aesKey, nonceBytes, compressed, CatalogPushAad.Build(envelope));
             envelope.CiphertextSizeBytes = ciphertext.Length;
             envelope.CiphertextDigest = RelayCrypto.Sha256Hex(ciphertext);
@@ -223,7 +223,7 @@ public sealed class CatalogMailboxService
                 pairing.LastMailboxCheckError = status.HasSnapshot && status.SnapshotId > pairing.LastImportedSnapshotId
                     ? "A newer catalog was waiting but couldn't be read with this device's key - your Sub's plugin will send it again within the hour."
                     : null;
-                config.Save();
+                config.SaveNow();
                 return;
             }
 
@@ -234,7 +234,7 @@ public sealed class CatalogMailboxService
 
             pairing.LastMailboxCheckOkUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             pairing.LastMailboxCheckError = importError;
-            config.Save();
+            config.SaveNow();
         }
         catch (RelayException ex)
         {
@@ -273,7 +273,7 @@ public sealed class CatalogMailboxService
         var nextEnvelope = BuildSignedKeyEnvelope(pairing, nextKey, RelayCrypto.RandomReceiveKeyId());
         var (envelope, ciphertext) = await relay.ConsumeMailboxSnapshotAsync(pairing.PairIdHash!, pairing.PairEpoch, snapshotId, nextEnvelope, ct).ConfigureAwait(false);
         StoreReceiveKey(pairing, nextEnvelope, nextKey);
-        config.Save();
+        config.SaveNow();
 
         if (!TryDecryptPush(pairing, envelope, ciphertext, ownerReceive, usedKeyId, out var exportText, out var error))
             return error;
@@ -285,7 +285,7 @@ public sealed class CatalogMailboxService
 
         pairing.LastImportedSnapshotId = envelope.SnapshotId;
         pairing.LastAcceptedCatalogSyncUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        config.Save();
+        config.SaveNow();
         LastAutoImport = (pairing.Id, result);
         if (result.Added + result.Updated + result.Removed > 0)
         {
@@ -350,7 +350,7 @@ public sealed class CatalogMailboxService
         var envelope = BuildSignedKeyEnvelope(pairing, key, RelayCrypto.RandomReceiveKeyId());
         await relay.PublishMailboxKeyAsync(envelope, ct).ConfigureAwait(false);
         StoreReceiveKey(pairing, envelope, key);
-        config.Save();
+        config.SaveNow();
     }
 
     private CatalogMailboxKeyEnvelope BuildSignedKeyEnvelope(PairingState pairing, RelayEcKeyPair key, string receiveKeyId)
@@ -411,7 +411,7 @@ public sealed class CatalogMailboxService
     private void RecordCheckFailure(PairingState pairing, string message)
     {
         pairing.LastMailboxCheckError = message;
-        config.Save();
+        config.SaveNow();
     }
 
     private static string DescribeError(RelayException ex) => ex.Code switch

@@ -323,6 +323,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
         RestrictionRuleManager.ReleaseAllForPanic();
+        Configuration.FlushPendingSave(force: true);
         RelayClient.CancelPendingRequests();
         relayBackgroundWorkCts.Cancel();
         relayBackgroundWorkCts.Dispose();
@@ -395,6 +396,8 @@ public sealed class Plugin : IDalamudPlugin
         // After every feature has released what it could: a locked temporary setting can only be removed with Oathbound's own key.
         temporaryModSettings.Dispose();
         PenumbraIpc.Dispose();
+        // Last, so whatever the features above changed while releasing is written too.
+        Configuration.FlushPendingSave(force: true);
 
         ECommons.ECommonsMain.Dispose();
     }
@@ -497,6 +500,7 @@ public sealed class Plugin : IDalamudPlugin
         }
         CatalogAutoSync.OnFrameworkUpdate();
         UpdateToyStatusDtr();
+        Configuration.FlushPendingSave();
     }
 
     private void UpdateToyStatusDtr()
@@ -600,7 +604,7 @@ public sealed class Plugin : IDalamudPlugin
             cmd.Command = readable;
             changed = true;
         }
-        if (changed) Configuration.Save();
+        if (changed) Configuration.SaveNow();
     }
 
     internal static void FireAndForget(Task task) =>

@@ -120,7 +120,7 @@ public sealed class CodePairingService
                 Direction = direction,
                 ExpiresAt = envelope.ExpiresAt,
             });
-            config.Save();
+            config.SaveNow();
             Notice = null;
             Succeed();
             return PairingCodes.Format(code);
@@ -297,7 +297,7 @@ public sealed class CodePairingService
             await relay.AcceptInvitationAsync(preview.InvitationId, envelope, ct).ConfigureAwait(false);
 
             config.CodeInvitations.Add(state);
-            config.Save();
+            config.SaveNow();
             Preview = null;
 
             // Must run on the main thread (MoodlesIpc touches the object table).
@@ -384,7 +384,7 @@ public sealed class CodePairingService
                 state.PeerDeviceKeyId = acceptance.AccepterDeviceKeyId;
                 state.PeerPublicKeyX = acceptance.AccepterPublicKey.X;
                 state.PeerPublicKeyY = acceptance.AccepterPublicKey.Y;
-                config.Save();
+                config.SaveNow();
                 Plugin.ChatGui.Print($"[Oathbound] {character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
                 break;
             case "cancelled" or "rejected" or "consumed":
@@ -453,7 +453,7 @@ public sealed class CodePairingService
     private void Remove(CodeInvitationState state)
     {
         config.CodeInvitations.RemoveAll(c => c.Id == state.Id);
-        config.Save();
+        config.SaveNow();
     }
 
     private static string Describe(RelayException ex) => ex.Code switch

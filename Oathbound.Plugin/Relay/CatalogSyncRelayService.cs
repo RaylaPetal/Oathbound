@@ -48,7 +48,7 @@ public sealed class CatalogSyncRelayService
 
         if (config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request") > 0)
         {
-            config.Save();
+            config.SaveNow();
             LastError = "A catalog refresh was interrupted by a plugin restart. Request a fresh snapshot.";
         }
     }
@@ -114,7 +114,7 @@ public sealed class CatalogSyncRelayService
             unownedEphemeral = null;
             config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request");
             config.PendingRelayOperations.Add(new PendingRelayOperationState { Kind = "catalog-request", OperationId = requestId, ExpiresAt = envelope.ExpiresAt });
-            config.Save();
+            config.SaveNow();
 
             var tell = composer.ComposeCatalogRequestNotice(pairing.PeerName!, pairing.PeerWorld!, requestId);
             sender.Send(tell);
@@ -198,7 +198,7 @@ public sealed class CatalogSyncRelayService
 
             pairing.LastAcceptedCatalogSyncUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             pairing.LastImportedSnapshotId = envelope.SnapshotId;
-            config.Save();
+            config.SaveNow();
             LastImportResult = result;
             SetPhase("Complete");
             SetError(null);
@@ -214,7 +214,7 @@ public sealed class CatalogSyncRelayService
         {
             if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();
             if (config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request" && o.OperationId == requestId) > 0)
-                config.Save();
+                config.SaveNow();
             SetInFlight(false);
             if (Phase != "Complete") SetPhase("Idle");
         }
@@ -380,7 +380,7 @@ public sealed class CatalogSyncRelayService
             var nonceBytes = RelayCrypto.RandomBytes(RelayCrypto.AeadNonceLengthBytes);
 
             var snapshotId = ++pairing.NextOutgoingSnapshotId;
-            config.Save();
+            config.SaveNow();
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var envelope = new CatalogResponseEnvelope
@@ -434,7 +434,7 @@ public sealed class CatalogSyncRelayService
         if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();
         deniedRequestIds.Add(requestId);
         config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request" && o.OperationId == requestId);
-        config.Save();
+        config.SaveNow();
         SetError("Your Sub has not enabled catalog synchronization.");
         SetPhase("Idle");
         SetInFlight(false);

@@ -48,13 +48,13 @@ public sealed class RevocationService
         // Reserved and persisted even if the publish fails, so a retry never reuses a sequence the peer may have consumed.
         pairing.OutgoingRevocationSequence = sequence;
         SetDeliveryStatus(pairing, "pending");
-        config.Save();
+        config.SaveNow();
 
         try
         {
             await relay.PublishRevocationAsync(envelope, ct).ConfigureAwait(false);
             SetDeliveryStatus(pairing, "delivered");
-            config.Save();
+            config.SaveNow();
         }
         catch (RelayException)
         {
@@ -71,7 +71,7 @@ public sealed class RevocationService
                 NextAttemptAtUnixSeconds = now + 30,
             });
             SetDeliveryStatus(pairing, "pending");
-            config.Save();
+            config.SaveNow();
         }
     }
 
@@ -91,7 +91,7 @@ public sealed class RevocationService
                 Plugin.Log.Warning($"Revocation retry for pair {entry.PairIdHash} (sequence {entry.Sequence}) expired without confirmed delivery.");
                 config.RevocationOutbox.Remove(entry);
                 SetDeliveryStatus(entry, "expired");
-                config.Save();
+                config.SaveNow();
                 continue;
             }
             if (now < entry.NextAttemptAtUnixSeconds) continue;
@@ -113,21 +113,21 @@ public sealed class RevocationService
                 await relay.PublishRevocationAsync(envelope, ct).ConfigureAwait(false);
                 config.RevocationOutbox.Remove(entry);
                 SetDeliveryStatus(entry, "delivered");
-                config.Save();
+                config.SaveNow();
             }
             catch (RelayException ex) when (PermanentFailureCodes.Contains(ex.Code))
             {
                 Plugin.Log.Warning($"Revocation retry for pair {entry.PairIdHash} (sequence {entry.Sequence}) permanently rejected ({ex.Code}); giving up.");
                 config.RevocationOutbox.Remove(entry);
                 SetDeliveryStatus(entry, "failed");
-                config.Save();
+                config.SaveNow();
             }
             catch (RelayException ex)
             {
                 entry.Attempt++;
                 var backoffSeconds = ex.RetryAfterSeconds ?? Math.Min(30 * (1 << Math.Min(entry.Attempt, 8)), 3600) + Random.Shared.Next(0, 15);
                 entry.NextAttemptAtUnixSeconds = now + backoffSeconds;
-                config.Save();
+                config.SaveNow();
             }
         }
     }
@@ -160,7 +160,7 @@ public sealed class RevocationService
             return;
 
         pairing.LastRevocationCheckUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        config.Save();
+        config.SaveNow();
 
         RevocationEnvelope[] revocations;
         try
@@ -217,7 +217,7 @@ public sealed class RevocationService
             else
             {
                 pairing.Paired = false;
-                config.Save();
+                config.SaveNow();
                 PairingRevoked?.Invoke();
             }
             Plugin.ChatGui.Print($"[Oathbound] Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
@@ -241,7 +241,7 @@ public sealed class RevocationService
         pairing.IncomingRevocationSequence = revocation.Sequence;
         pairing.Paired = false;
         PairingRevoked?.Invoke();
-        config.Save();
+        config.SaveNow();
         Plugin.Log.Information($"Pairing ended locally: a valid signed revocation (sequence {revocation.Sequence}, reason \"{revocation.Reason}\") was observed from the paired peer.");
         return false;
     }

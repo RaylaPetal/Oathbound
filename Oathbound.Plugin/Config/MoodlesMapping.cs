@@ -24,10 +24,13 @@ public class AttachedMoodleRef
 [Serializable]
 public class MoodlesMapping
 {
-    /// Local only. [JsonIgnore]d and persisted separately by CatalogStore.
-    [JsonIgnore]
+    /// Local only. Persisted separately by CatalogStore.
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Dictionary<string, MoodlesStatusEntry> LocalCatalog { get; set; } = new();
 
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? LegacyExtensionData { get; set; }
+    // Set-only: an older config's inline catalog is read for CatalogStore's migration, never written back.
+    [Newtonsoft.Json.JsonProperty("LocalCatalog")]
+    private Dictionary<string, MoodlesStatusEntry>? InlineLocalCatalog { set => LegacyLocalCatalog = value; }
+
+    internal Dictionary<string, MoodlesStatusEntry>? LegacyLocalCatalog;
 }

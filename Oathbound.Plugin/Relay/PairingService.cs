@@ -119,7 +119,7 @@ public sealed class PairingService
             outgoingInvitation = new OutgoingInvitation(created.InvitationId, direction, targetTellAddress.Trim(), created.ExpiresAt);
             config.PendingRelayOperations.RemoveAll(o => o.Kind == "pair-invite");
             config.PendingRelayOperations.Add(new PendingRelayOperationState { Kind = "pair-invite", OperationId = created.InvitationId, Target = targetTellAddress.Trim(), ExpiresAt = created.ExpiresAt, Direction = direction });
-            config.Save();
+            config.SaveNow();
 
             var tell = composer.ComposeRelayInvitation(targetTellAddress, created.InvitationId);
             sender.Send(tell);
@@ -384,7 +384,7 @@ public sealed class PairingService
             config.ActivePairingId ??= pairing.Id;
         }
         config.PendingRelayOperations.RemoveAll(o => o.Kind is "pair-invite" or "pair-accept");
-        config.Save();
+        config.SaveNow();
         PairingActivated?.Invoke();
         return true;
     }
@@ -393,7 +393,7 @@ public sealed class PairingService
     {
         if (!pairing.IsPaired) return;
         pairing.Paired = false;
-        config.Save();
+        config.SaveNow();
         PairingEnded?.Invoke();
         // Ending an unrelated pairing never touches the collar.
         if (config.CollarOwningPairingId == pairing.Id)
@@ -435,7 +435,7 @@ public sealed class PairingService
         pairing.PeerPublicKeyY = null;
         pairing.PairIdHash = null;
         pairing.Paired = false;
-        config.Save();
+        config.SaveNow();
         PairingEnded?.Invoke();
         if (config.CollarOwningPairingId == pairing.Id)
             collar.ReleaseOnUnpair();

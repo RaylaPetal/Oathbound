@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 using System.Text.Json.Serialization;
 using Dalamud.Configuration;
 using Dalamud.Game.ClientState.Keys;
@@ -466,22 +467,29 @@ public class ToyTriggerRule
     public int CooldownSeconds { get; set; } = 5;
 }
 
-/// LocalCatalog/ImportedPeerCatalog are [JsonIgnore]d and persisted separately by CatalogStore.
+/// LocalCatalog/ImportedPeerCatalog are persisted separately by CatalogStore.
 [Serializable]
 public class RestraintMapping
 {
     public Dictionary<string, RestraintDeviceDefinition> Devices { get; set; } = new();
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Dictionary<string, RestraintCatalogEntry> LocalCatalog { get; set; } = new();
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Dictionary<string, RestraintCatalogExportEntry> ImportedPeerCatalog { get; set; } = new();
 
     public List<ConfiguredModRestraint> ConfiguredMods { get; set; } = new();
 
-    [JsonExtensionData]
-    public Dictionary<string, System.Text.Json.JsonElement>? LegacyExtensionData { get; set; }
+    // Set-only: an older config's inline catalogs are read for CatalogStore's migration, never written back.
+    [Newtonsoft.Json.JsonProperty("LocalCatalog")]
+    private Dictionary<string, RestraintCatalogEntry>? InlineLocalCatalog { set => LegacyLocalCatalog = value; }
+
+    [Newtonsoft.Json.JsonProperty("ImportedPeerCatalog")]
+    private Dictionary<string, RestraintCatalogExportEntry>? InlineImportedPeerCatalog { set => LegacyImportedPeerCatalog = value; }
+
+    internal Dictionary<string, RestraintCatalogEntry>? LegacyLocalCatalog;
+    internal Dictionary<string, RestraintCatalogExportEntry>? LegacyImportedPeerCatalog;
 }
 
 [Serializable]
@@ -684,11 +692,11 @@ public class PluginConfig : IPluginConfiguration
     /// Not cleared by SubRuntimeState.Reset(), so a trigger can't re-fire right after panic.
     public bool ToyTriggersSuspended { get; set; }
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Action? SaveOverride { get; set; }
 
     /// Never returns a pairing that has since become unpaired.
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public PairingState? ActivePairing => ActivePairingId is { } id ? FindPairingById(id) is { IsPaired: true } p ? p : null : null;
 
     public PairingState? GetActivePairing() => ActivePairing;
@@ -713,13 +721,13 @@ public class PluginConfig : IPluginConfiguration
 
     public PairingState? FindPairingById(Guid id) => Pairings.FirstOrDefault(p => p.Id == id);
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public IEnumerable<PairingState> ActivePairings => Pairings.Where(p => p.IsPaired);
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public bool HasActiveSubSidePairing => Pairings.Any(p => p.IsPaired && p.Direction == PairingDirection.SubSide);
 
-    [JsonIgnore]
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public bool HasActiveOwnerSidePairing => Pairings.Any(p => p.IsPaired && p.Direction == PairingDirection.OwnerSide);
 
     /// Active pairing's direction, else Role, else (Switch) the last shown direction.
@@ -731,11 +739,48 @@ public class PluginConfig : IPluginConfiguration
         _ => SwitchLastUsedOwnerView ? PairingDirection.OwnerSide : PairingDirection.SubSide,
     };
 
+    private const long SaveQuietMs = 750;
+    private const long SaveMaxDelayMs = 3000;
+
+    // Set from any thread; the write itself only happens in SaveNow or FlushPendingSave. 0 means nothing pending.
+    private long saveDirtySinceTicks;
+    private long saveRequestedAtTicks;
+
+    /// Coalesced: a full config write costs a visible frame hitch, so routine changes are written once they settle.
+    /// Identity, pairing and relay state must use SaveNow so a crash can't lose it.
     public void Save()
+    {
+        var now = Environment.TickCount64;
+        Interlocked.Exchange(ref saveRequestedAtTicks, now);
+        Interlocked.CompareExchange(ref saveDirtySinceTicks, now, 0);
+        NotifyChanged();
+    }
+
+    /// Writes immediately, taking any pending coalesced change with it.
+    public void SaveNow()
+    {
+        Interlocked.Exchange(ref saveDirtySinceTicks, 0);
+        Write();
+        NotifyChanged();
+    }
+
+    /// Writes a pending change once it has been quiet for a moment, or has waited long enough during a continuous drag.
+    public void FlushPendingSave(bool force = false)
+    {
+        var since = Interlocked.Read(ref saveDirtySinceTicks);
+        if (since == 0) return;
+        var now = Environment.TickCount64;
+        if (!force && now - Interlocked.Read(ref saveRequestedAtTicks) < SaveQuietMs && now - since < SaveMaxDelayMs)
+            return;
+        // Cleared before writing, so a change made during the write is picked up by the next flush.
+        Interlocked.Exchange(ref saveDirtySinceTicks, 0);
+        Write();
+    }
+
+    private void Write()
     {
         if (SaveOverride is not null) SaveOverride();
         else Plugin.PluginInterface.SavePluginConfig(this);
-        NotifyChanged();
     }
 
     /// Raised on every save, including CatalogStore's, so the Sub's change detector re-checks its export.

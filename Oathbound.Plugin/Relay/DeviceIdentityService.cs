@@ -48,7 +48,7 @@ public sealed class DeviceIdentityService
         cachedKey = null;
         GenerateAndPersist();
         config.DeviceIdentity.LastResetUtc = DateTime.UtcNow;
-        config.Save();
+        config.SaveNow();
     }
 
     /// Throws if there's no identity or the blob can't be unprotected - callers prompt for a reset, never silently regenerate.
@@ -100,7 +100,7 @@ public sealed class DeviceIdentityService
         config.DeviceIdentity.ProtectedPrivateKey = protectedPrivateKey;
         config.DeviceIdentity.IsProtected = wasProtected;
         config.DeviceIdentity.DeviceKeyId = RelayCrypto.DeviceKeyId(publicKeyJwk);
-        config.Save();
+        config.SaveNow();
         cachedKey?.Dispose();
         cachedKey = null;
     }
@@ -117,7 +117,7 @@ public sealed class DeviceIdentityService
         config.DeviceIdentity.ProtectedPrivateKey = protectedPrivateKey;
         config.DeviceIdentity.IsProtected = wasProtected;
         config.DeviceIdentity.DeviceKeyId = RelayCrypto.DeviceKeyId(publicKeyJwk);
-        config.Save();
+        config.SaveNow();
 
         Array.Clear(privateD);
         cachedKey?.Dispose();
