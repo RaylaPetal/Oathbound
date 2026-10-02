@@ -16,7 +16,7 @@
     <Description>A consent-based collar control plugin. An Owner sends gameplay commands through ordinary
 in-game tells; relay-assisted pairing and encrypted catalog synchronization use the Oathbound Cloudflare
 service, while all gameplay actions remain local to the Sub's client.</Description>
-    <RepoUrl>https://github.com/raylapetal/xiv-collar</RepoUrl>
+    <RepoUrl>https://github.com/RaylaPetal/Oathbound</RepoUrl>
     <Tags>roleplay;collar;glamourer;penumbra;honorific</Tags>
   </PropertyGroup>
 

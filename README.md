@@ -6,7 +6,7 @@
 
 Titles · Outfits · Animations · Moodles · Restraints · Leash · Collar · Toys
 
-[![Latest release](https://img.shields.io/github/v/release/RaylaPetal/xiv-collar?label=release&color=8a5cf6)](https://github.com/RaylaPetal/xiv-collar/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/RaylaPetal/Oathbound?label=release&color=8a5cf6)](https://github.com/RaylaPetal/Oathbound/releases/latest)
 ![Dalamud API](https://img.shields.io/badge/Dalamud%20API-15-6c63ff)
 ![Consent first](https://img.shields.io/badge/consent-first-e05d8c)
 
@@ -141,7 +141,7 @@ Sync tab shows whether it's up to date.
 1. In game, type `/xlsettings` and open the **Experimental** tab.
 2. Under **Custom Plugin Repositories**, add:
    ```
-   https://raw.githubusercontent.com/RaylaPetal/xiv-collar/master/repo.json
+   https://raw.githubusercontent.com/RaylaPetal/Oathbound/master/repo.json
    ```
 3. Tick the checkbox next to it, then press **Save**.
 4. Type `/xlplugins`, search for **Oathbound**, and install it.
