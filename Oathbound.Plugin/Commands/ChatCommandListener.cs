@@ -340,7 +340,7 @@ public sealed class ChatCommandListener : IDisposable
             case "outfit":
                 return permissions.Outfit ? HandleForceOutfit(MoodleOption.Strip(rest, out var outfitMoodle), outfitMoodle) : LocalTestResult.Fail("Outfit permission is not enabled.");
             case "gesture":
-                return permissions.Gesture && config.TosAcknowledged ? HandleForceGesture(rest) : LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
+                return permissions.Gesture && config.TosAcknowledged ? HandleForceGesture(rest, sourcePairing) : LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
             case "collar":
                 return permissions.Collar ? HandleForceCollar(rest, sourcePairing) : LocalTestResult.Fail("Collar permission is not enabled.");
             case "moodle":
@@ -354,7 +354,7 @@ public sealed class ChatCommandListener : IDisposable
                 return permissions.ToyControl && config.ToyControlAcknowledged ? HandleForceToy(rest) : LocalTestResult.Fail("Toy control permission or its dedicated acknowledgement is not enabled.");
             case "customtrigger":
                 // No outer gate: each bundled action checks its own permission.
-                return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock);
+                return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock, sourcePairing);
             case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
                 // Bare `leash [options]` falls through to ResolveAlias.
                 if (permissions.Follow)
@@ -489,13 +489,16 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"outfit\" override \"{rest}\" - expected \"lock <design name>\", \"wear <design name>\" or \"unlock\".");
     }
 
-    private LocalTestResult HandleForceGesture(string rest)
+    private LocalTestResult HandleForceGesture(string rest, PairingState? sourcePairing)
     {
         var name = rest.Trim();
         if (name.Length == 0)
             return LocalTestResult.Fail("\"gesture\" was given no name.");
+        // Reserved, so no animation called "stop" can be sent by name.
+        if (name.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
+            return gesture.Stop() ? LocalTestResult.Ok("Animation stopped.") : LocalTestResult.Ok("No animation was playing.");
 
-        var result = gesture.ForceApplyDetailed(name);
+        var result = gesture.ForceApplyDetailed(name, sourcePairing?.Id);
         return result.Status switch
         {
             GestureCommand.ApplyStatus.Success => LocalTestResult.Ok($"Gesture \"{result.DisplayName ?? name}\" queued for playback."),
@@ -651,7 +654,7 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"toy\" override \"{rest}\" - expected \"vibrate intensity:<0-100> [duration:<seconds>|duration:permanent]\", \"pattern:<weak|medium|strong|pulse|a custom pattern name>\", \"sequence steps:<intensity>=<ms>,... [loop:true]\", or \"stop\".");
     }
 
-    private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock)
+    private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock, PairingState? sourcePairing)
     {
         // An older Sub rejects this sub-verb, so it fails closed.
         if (rest.Trim().Equals("revert", StringComparison.OrdinalIgnoreCase))
@@ -663,7 +666,7 @@ public sealed class ChatCommandListener : IDisposable
             var remainder = rest[castPrefix.Length..];
             if (CustomTriggerCommand.TryParseCastCommand(remainder, out var label, out var actions))
             {
-                var result = customTriggers.Apply(actions, restraintLock);
+                var result = customTriggers.Apply(actions, restraintLock, sourcePairing?.Id);
                 return result.Success
                     ? LocalTestResult.Ok($"Custom trigger \"{label}\": {result.Message}")
                     : LocalTestResult.Fail($"Custom trigger \"{label}\": {result.Message}");
@@ -811,7 +814,7 @@ public sealed class ChatCommandListener : IDisposable
         {
             if (!(permissions.Gesture && config.TosAcknowledged))
                 return LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
-            return gesture.Apply(gestureAlias)
+            return gesture.Apply(gestureAlias, sourcePairing?.Id)
                 ? LocalTestResult.Ok($"Alias \"{alias}\" matched a gesture.")
                 : LocalTestResult.Fail($"Alias \"{alias}\" matched a gesture, but it failed to play.");
         }
@@ -838,7 +841,7 @@ public sealed class ChatCommandListener : IDisposable
         // No permission gate: each bundled action checks its own.
         var customTrigger = aliases.CustomTriggers.FirstOrDefault(t => Matches(alias, t.Alias));
         if (customTrigger is not null)
-            return customTriggers.Apply(customTrigger.Actions);
+            return customTriggers.Apply(customTrigger.Actions, sourcePairingId: sourcePairing?.Id);
 
         return LocalTestResult.Fail($"No matching alias or reserved-word command for \"{alias}\".");
     }

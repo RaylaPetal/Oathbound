@@ -11,22 +11,13 @@ using Dalamud.Interface.Windowing;
 namespace Oathbound.Plugin.UI;
 
 /// The main window: character/pairing header and the nav grid. Module content opens in ModuleWindow.
-/// No panic button on purpose - panic is the typed /oathboundpanic safeword, so it can't be hit by accident.
+/// No panic button on purpose - panic is the typed /obpanic safeword, so it can't be hit by accident.
 public class CollarWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private readonly ModuleWindow moduleWindow;
 
     public void OpenMainWindow() => IsOpen = true;
-
-    /// TutorialDriver's single entry point for switching modules.
-    public void SetActiveModuleForTutorial(string moduleId)
-    {
-        moduleWindow.Show(moduleId);
-        // The tutorial's Permissions step opens Settings on that tab.
-        if (moduleId == "permissions")
-            plugin.SettingsWindow.ShowPermissionsTab();
-    }
 
     private string? teleportResolveError;
 
@@ -98,11 +89,18 @@ public class CollarWindow : Window, IDisposable
         LastPosition = ImGui.GetWindowPos();
         LastSize = ImGui.GetWindowSize();
 
+        // Title-bar buttons aren't ImGui items, so the settings cog's area is reported by position.
+        var titleBarHeight = ImGui.GetFrameHeight();
+        TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
+
         DrawCharacterHeader();
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
-        if (NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id)) is { } clicked)
+        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
+            id => id == "favorites" ? TutorialAnchors.NavFavorites : null);
+        TutorialService.Anchor(TutorialAnchors.MainNav);
+        if (clicked is not null)
         {
             // Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
             if (clicked == "favorites")
@@ -136,6 +134,7 @@ public class CollarWindow : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Text, Theme.AccentHover);
         IconGlyph.Text(FontAwesomeIcon.UserCircle, character.Name ?? "Character loading…");
         ImGui.PopStyleColor();
+        TutorialService.Anchor(TutorialAnchors.MainCharacter);
 
         if (character.IsAvailable)
         {
@@ -172,14 +171,21 @@ public class CollarWindow : Window, IDisposable
             ImGui.Separator();
         }
 
+        ImGui.BeginGroup();
         DrawPairingsList(config);
+        ImGui.EndGroup();
+        TutorialService.Anchor(TutorialAnchors.MainPairing);
+        DrawCollarWarnings(config);
         DrawSubControlToggle();
 
         ImGui.Spacing();
         ImGui.Separator();
+        ImGui.BeginGroup();
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Safeword");
         SafewordEditor.Draw(config, "mainHeader", ref revealSafeword);
-        IconGlyph.HelpMarker("This only configures the typed /oathboundpanic command; editing it never triggers panic or changes pairing.");
+        ImGui.EndGroup();
+        TutorialService.Anchor(TutorialAnchors.MainSafeword);
+        IconGlyph.HelpMarker("This only configures the typed /obpanic command; editing it never triggers panic or changes pairing.");
 
         DrawTeleportJourneyRow();
 
@@ -194,6 +200,7 @@ public class CollarWindow : Window, IDisposable
                 config.OutgoingChannel = (ChatChannel)channelIndex;
                 config.Save();
             }
+            TutorialService.Anchor(TutorialAnchors.MainChannel);
             IconGlyph.HelpMarker("Which channel your commands are sent on, for every Sub you own. They listen on all of these already, so nothing needs to change on their side. Linkshell/Cross-world Linkshell number is set in Settings.");
             DrawTeleportHeaderAction();
         }
@@ -245,6 +252,27 @@ public class CollarWindow : Window, IDisposable
         }
     }
 
+    /// Owner side: what each Sub's client last reported about the collar, through the relay.
+    private void DrawCollarWarnings(PluginConfig config)
+    {
+        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.OwnerSide))
+        {
+            if (plugin.OwnerCollarStatus.For(pairing) is not { } status)
+                continue;
+
+            if (status.State == Relay.CollarStatusReporter.Broken)
+            {
+                IconGlyph.WrappedColored(Theme.StatusMissing, $"{pairing.PeerName}'s collar is unlocked");
+                IconGlyph.HelpMarker($"Their plugin reported at {status.StateAt.ToLocalTime():g} that the collar came off without you unlocking it - for example Glamourer stopped working, or the lock couldn't be put back. It clears once their collar is locked again.");
+            }
+            else if (OwnerCollarStatusStore.IsStale(status) && status.CheckinAt is { } checkin)
+            {
+                IconGlyph.WrappedDisabled($"{pairing.PeerName}'s collar status unknown since {checkin.ToLocalTime():g}");
+                IconGlyph.HelpMarker("Their plugin hasn't checked in for a while. They may just not have played - or their plugin is turned off.");
+            }
+        }
+    }
+
     private static string PairingLabel(PairingState p) => p.Direction == PairingDirection.OwnerSide
         ? $"Owns: {p.PeerName}@{p.PeerWorld}"
         : $"Owned by: {p.PeerName}@{p.PeerWorld}";
@@ -281,6 +309,7 @@ public class CollarWindow : Window, IDisposable
                 }
             }
         }
+        TutorialService.Anchor(TutorialAnchors.MainRevertAll);
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(canSend
                 ? "Reverts everything on your active Sub back to nothing: restraints, outfit (back to their normal look), title, leash, animation, toy, and moodles.\nThe collar and the pairing are never touched. Each part only applies if your Sub allows that category."
@@ -289,6 +318,7 @@ public class CollarWindow : Window, IDisposable
 
         if (IconGlyph.Button(icon, new Vector2(size, size)))
             plugin.SubControlWindow.IsOpen = !isOpen;
+        TutorialService.Anchor(TutorialAnchors.MainSubControl);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(isOpen ? "Close Sub Control" : "Open Sub Control - every configured command in one place");
     }

@@ -63,6 +63,7 @@ public static class OwnerLockOption
             cmd.LockSeconds = mode == 0 ? null : DefaultTimedMinutes * 60;
             config.Save();
         }
+        TutorialService.Anchor(TutorialAnchors.QuickLock);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(HelpText);
 

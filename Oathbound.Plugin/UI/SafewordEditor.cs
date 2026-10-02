@@ -25,7 +25,7 @@ internal static class SafewordEditor
             reveal = !reveal;
 
         IconGlyph.WrappedColored(config.PanicSafeword is null ? Theme.TextMuted : Theme.Success,
-            config.PanicSafeword is null ? "No safeword set — plain /oathboundpanic (or /collarpanic) remains available." : "Safeword configured for /oathboundpanic (or /collarpanic).");
+            config.PanicSafeword is null ? "No safeword set — plain /obpanic remains available." : "Safeword configured for /obpanic.");
         ImGui.PopID();
     }
 }

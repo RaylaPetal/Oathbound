@@ -33,7 +33,7 @@ public sealed class CustomTriggerCommand
     }
 
     /// Only the restraint action uses `restraintLock`.
-    public LocalTestResult Apply(List<CustomTriggerAction> actions, RestraintLock restraintLock = default)
+    public LocalTestResult Apply(List<CustomTriggerAction> actions, RestraintLock restraintLock = default, Guid? sourcePairingId = null)
     {
         var applied = new List<string>();
         var skipped = new List<string>();
@@ -69,8 +69,8 @@ public sealed class CustomTriggerCommand
                     if (!(config.Permissions.Gesture && config.TosAcknowledged)) { skipped.Add("gesture (permission/acknowledgement)"); break; }
                     // An Owner's ad-hoc action has no id, so it uses ForceApply's plain name match.
                     var gestureOk = action.GestureId.Length > 0
-                        ? gesture.Apply(new GestureAliasDefinition { GestureId = action.GestureId, AnimationName = action.GestureAnimationName })
-                        : gesture.ForceApply(action.GestureAnimationName);
+                        ? gesture.Apply(new GestureAliasDefinition { GestureId = action.GestureId, AnimationName = action.GestureAnimationName }, sourcePairingId)
+                        : gesture.ForceApply(action.GestureAnimationName, sourcePairingId);
                     if (gestureOk)
                     {
                         effects.Gesture = true;

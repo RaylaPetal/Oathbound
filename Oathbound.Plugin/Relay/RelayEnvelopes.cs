@@ -66,6 +66,9 @@ public sealed class PairEnvelope
     [JsonPropertyName("subDeviceKeyId")] public string SubDeviceKeyId { get; set; } = "";
     [JsonPropertyName("createdAt")] public long CreatedAt { get; set; }
     [JsonPropertyName("revokedAt")] public long? RevokedAt { get; set; }
+    [JsonPropertyName("collarState")] public string? CollarState { get; set; }
+    [JsonPropertyName("collarStateAt")] public long? CollarStateAt { get; set; }
+    [JsonPropertyName("collarCheckinAt")] public long? CollarCheckinAt { get; set; }
 }
 
 public sealed class RevocationEnvelope

@@ -108,7 +108,9 @@ public sealed partial class ModuleWindow
                 ImGui.PopID();
             }
 
-            if (reactionDraft is null && ImGui.SmallButton("New reaction"))
+            var newReaction = reactionDraft is null && ImGui.SmallButton("New reaction");
+            TutorialService.Anchor(TutorialAnchors.ReactionNew);
+            if (newReaction)
             {
                 reactionDraft = new ReactionRule();
                 reactionError = null;

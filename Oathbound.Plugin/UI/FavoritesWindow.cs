@@ -2,6 +2,7 @@ using System;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -19,6 +20,12 @@ public sealed class FavoritesWindow : Window, IDisposable
     {
         this.plugin = plugin;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(360, 240), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.QuestionCircle,
+            Click = _ => plugin.Tutorial.Start("favorites", plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide),
+            ShowTooltip = () => ImGui.SetTooltip("Tour of Favorites"),
+        });
     }
 
     public void Dispose() { }
@@ -28,6 +35,12 @@ public sealed class FavoritesWindow : Window, IDisposable
 
     public override void Draw()
     {
+        // Title-bar buttons aren't ImGui items, so the ? button's area is reported by position.
+        var windowPos = ImGui.GetWindowPos();
+        var titleBarHeight = ImGui.GetFrameHeight();
+        TutorialService.AnchorRect(TutorialAnchors.FavoritesHelp, windowPos + new Vector2(ImGui.GetWindowWidth() - titleBarHeight * 3f, 0),
+            windowPos + new Vector2(ImGui.GetWindowWidth(), titleBarHeight));
+
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (!isOwnerMode)
         {
@@ -67,6 +80,7 @@ public sealed class FavoritesWindow : Window, IDisposable
     {
         var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
         var fits = ChatComposer.AllFit(messages);
+        ImGui.BeginGroup();
         using (ImRaii.Disabled(!canSend || !fits))
         {
             if (ImGui.SmallButton($"Send##fav_{cmd.Label}_{cmd.Command}"))
@@ -74,6 +88,8 @@ public sealed class FavoritesWindow : Window, IDisposable
         }
         ImGui.SameLine();
         ImGui.TextUnformatted(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label);
+        ImGui.EndGroup();
+        TutorialService.Anchor(TutorialAnchors.FavoritesRow);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
     }

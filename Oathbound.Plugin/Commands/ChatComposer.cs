@@ -41,6 +41,9 @@ public sealed class ChatComposer
 
     public const string LeashTravelWord = "travel";
 
+    /// `gesture stop` ends a held animation on the Sub.
+    public const string StopGestureWord = "stop";
+
     /// Carries only the invitation's id; everything else lives in the signed invitation on the relay.
     public string ComposeRelayInvitation(string targetTellAddress, string invitationId) =>
         $"/tell {targetTellAddress.Trim()} collarinvite {invitationId}";

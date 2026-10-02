@@ -13,11 +13,13 @@ public sealed class SectionScope : IDisposable
     private static readonly Dictionary<uint, float> MeasuredHeights = new();
 
     private readonly uint key;
+    private readonly string id;
     private readonly bool contentsDrawn;
     private bool disposed;
 
     internal SectionScope(string id, string? heading)
     {
+        this.id = id;
         var childId = $"##section_{id}";
         key = ImGui.GetID(childId);
         var height = MeasuredHeights.TryGetValue(key, out var measured) ? measured : FirstFrameHeight;
@@ -45,6 +47,8 @@ public sealed class SectionScope : IDisposable
         }
 
         ImGui.EndChild();
+        // The child is now the last item, so a tour step can outline the whole section.
+        TutorialService.Anchor(TutorialAnchors.Section(id));
         ImGui.PopStyleColor();
         ImGui.PopStyleVar();
         ImGui.Spacing();

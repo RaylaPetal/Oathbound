@@ -14,6 +14,8 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
+public enum SettingsTab { Identity, Permissions, Tos, Test }
+
 /// Role, pairing, trigger phrase, permissions and acknowledgements. Visible regardless of Role.
 public class SettingsWindow : Window, IDisposable
 {
@@ -50,14 +52,19 @@ public class SettingsWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    private bool selectPermissionsTab;
+    private SettingsTab? selectTab;
 
-    public void ShowPermissionsTab()
+    public void ShowTab(SettingsTab tab)
     {
-        selectPermissionsTab = true;
+        selectTab = tab;
         IsOpen = true;
         BringToFront();
     }
+
+    public void ShowPermissionsTab() => ShowTab(SettingsTab.Permissions);
+
+    private ImGuiTabItemFlags TabFlags(SettingsTab? requested, SettingsTab tab) =>
+        requested == tab ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
 
     public override void OnOpen()
     {
@@ -117,7 +124,10 @@ public class SettingsWindow : Window, IDisposable
         if (!ImGui.BeginTabBar("settingsTabs"))
             return;
 
-        if (ImGui.BeginTabItem("Identity & Pairing"))
+        var requested = selectTab;
+        selectTab = null;
+
+        if (ImGui.BeginTabItem("Identity & Pairing", TabFlags(requested, SettingsTab.Identity)))
         {
             DrawIdentityCard(config);
             using (Section.Begin("recoveryCard"))
@@ -130,9 +140,7 @@ public class SettingsWindow : Window, IDisposable
         }
 
         // Only a Sub accepts anything from a peer, so an Owner gets an explanation.
-        var selectPermissions = selectPermissionsTab;
-        selectPermissionsTab = false;
-        if (ImGui.BeginTabItem("Permissions", selectPermissions ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
+        if (ImGui.BeginTabItem("Permissions", TabFlags(requested, SettingsTab.Permissions)))
         {
             if (config.Role == PluginRole.Owner)
                 IconGlyph.WrappedDisabled("Permissions only apply while you're set to Sub - they're what a Sub accepts from a paired Owner. Switch your role in Identity & Pairing to configure them.");
@@ -142,7 +150,7 @@ public class SettingsWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("ToS"))
+        if (ImGui.BeginTabItem("ToS", TabFlags(requested, SettingsTab.Tos)))
         {
             using (Section.Begin("tosCard"))
                 DrawTosCard(config);
@@ -155,7 +163,7 @@ public class SettingsWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Test"))
+        if (ImGui.BeginTabItem("Test Commands", TabFlags(requested, SettingsTab.Test)))
         {
             using (Section.Begin("testCommandCard"))
                 DrawTestCommandCard(config);
@@ -475,7 +483,7 @@ public class SettingsWindow : Window, IDisposable
             {
                 config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
                 config.Save();
-                plugin.TutorialDriver.StartIfUnseenForRole(config.Role);
+                plugin.Tutorial.StartOverviewIfUnseen(config.Role);
             }
         }
         IconGlyph.HelpMarker("Which side(s) of a pairing you can hold. A Sub reacts to command tells and applies them locally; an Owner sends them; a Switch can be both at once. Every category tab shows its Sub or Owner view based on the active pairing.");
@@ -611,10 +619,10 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.GraduationCap, "Guided tutorial");
         ImGui.Separator();
-        ImGui.TextWrapped("Replays the guided tour of each tab for your active pairing's direction (or Role, with nothing active), even if you've already seen it.");
+        ImGui.TextWrapped("Replays the guided overview for your active pairing's direction (or Role, with nothing active). Every module also has its own tour behind the ? in its title bar.");
 
         if (ImGui.Button("Rerun Tutorial"))
-            plugin.TutorialDriver.Start(config.ResolveActiveDirection());
+            plugin.Tutorial.StartOverview(config.ResolveActiveDirection());
         IconGlyph.HelpMarker("Doesn't affect the other direction's own first-time tutorial.");
     }
 
@@ -639,30 +647,31 @@ public class SettingsWindow : Window, IDisposable
 
     private void DrawTosCard(PluginConfig config)
     {
-        IconGlyph.Text(FontAwesomeIcon.ExclamationTriangle, "Automation risk acknowledgement");
+        IconGlyph.Text(FontAwesomeIcon.ExclamationTriangle, "Automation");
         ImGui.Separator();
-        ImGui.TextWrapped("Required before the Animation/Follow permission toggles can be enabled - see the README.");
+        IconGlyph.WrappedDisabled("Animations, the leash, restraints and teleport move or hold your character for you.");
 
-        if (ImGuiCheckbox("I understand the automation-risk caveat (input blocking; sending is always your own click)", config.TosAcknowledged, out var newTos))
+        if (ImGuiCheckbox("I understand my character can be moved and held", config.TosAcknowledged, out var newTos))
         {
             config.TosAcknowledged = newTos;
             config.Save();
         }
-        IconGlyph.HelpMarker("Required once before the Animation and Follow permission toggles (in the Sub window's Permissions tab) can be enabled at all - Title and Outfit don't need it.");
+        IconGlyph.HelpMarker("Needed before the Animation, Follow / Leash, Restraints and Teleport permissions can be turned on. Automating your character is against the game's rules - see the README.");
     }
 
     /// Its own card: arbitrary chat on any channel is a broader surface than the general acknowledgement covers.
     private void DrawCustomChatCard(PluginConfig config)
     {
-        IconGlyph.Text(FontAwesomeIcon.Comments, "Custom Trigger chat messages");
+        IconGlyph.Text(FontAwesomeIcon.Comments, "Custom chat messages");
         ImGui.Separator();
-        IconGlyph.WrappedColored(Theme.Danger, "A Custom Trigger's chat action can send ANY text to ANY channel (including public party/say/yell chat), as your own character, triggered remotely by your Owner - unlike Animation, which only ever fires a closed set of self-targeting pose/emote commands. Required before the \"Custom chat messages\" permission (Permissions tab) can be enabled at all.");
+        IconGlyph.WrappedDisabled("A Custom Trigger can make you say any text, in any channel, where other players see it.");
 
-        if (ImGuiCheckbox("I understand a Custom Trigger's chat action can send arbitrary text to any channel, visible to other players, as my own character", config.CustomChatAcknowledged, out var newAck))
+        if (ImGuiCheckbox("I understand my Owner can make me send chat", config.CustomChatAcknowledged, out var newAck))
         {
             config.CustomChatAcknowledged = newAck;
             config.Save();
         }
+        IconGlyph.HelpMarker("Needed before the Custom chat messages permission can be turned on.");
     }
 
     /// Its own card: this one actuates a physical device.
@@ -670,13 +679,14 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Toy control");
         ImGui.Separator();
-        IconGlyph.WrappedColored(Theme.Danger, "Toy Control lets your Owner directly actuate a physical device connected through Intiface Central - a real vibration on real hardware, not just an in-game change. This plugin enforces a maximum duration per command and always stops every device on panic, but Intiface Central itself and your device's own connection are outside this plugin's control. Required before the \"Toy control\" permission (Permissions tab) can be enabled at all.");
+        IconGlyph.WrappedDisabled("Your Owner can run a real device connected through Intiface. Commands have a time limit, and your safeword stops every device.");
 
-        if (ImGuiCheckbox("I understand my Owner can directly actuate a connected physical device through Intiface, and I have reviewed Intiface's own safety settings myself", config.ToyControlAcknowledged, out var newToyAck))
+        if (ImGuiCheckbox("I understand my Owner can control my device, and I've checked Intiface's own safety settings", config.ToyControlAcknowledged, out var newToyAck))
         {
             config.ToyControlAcknowledged = newToyAck;
             config.Save();
         }
+        IconGlyph.HelpMarker("Needed before the Toy control permission can be turned on.");
     }
 
     /// Its own card: the Sub's device firing automatically off local game state is a different risk from Owner commands.
@@ -684,13 +694,14 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Bolt, "Automatic toy triggers");
         ImGui.Separator();
-        IconGlyph.WrappedColored(Theme.Danger, "Automatic Triggers let your own client fire a toy action on its own - with no per-occurrence click from you or your Owner - in reaction to your own local game state (health dropping, being hit, a spell or emote used on you, a restriction becoming active). This can fire during combat or other content. Required before any trigger rule (Toy Control tab) can be enabled at all. Panic always suspends every trigger until you explicitly resume them.");
+        IconGlyph.WrappedDisabled("Your device can react by itself to your game - health, hits, emotes, spells - including during combat. Your safeword pauses all triggers.");
 
-        if (ImGuiCheckbox("I understand my own device can automatically vibrate in reaction to my game state, with no click required each time, and this can happen during combat or other content", config.ToyTriggersAcknowledged, out var newTriggerAck))
+        if (ImGuiCheckbox("I understand my device can react on its own", config.ToyTriggersAcknowledged, out var newTriggerAck))
         {
             config.ToyTriggersAcknowledged = newTriggerAck;
             config.Save();
         }
+        IconGlyph.HelpMarker("Needed before any trigger rule in Toy Control can be turned on.");
     }
 
     /// ImGui.Checkbox never wraps its label, so the label is drawn separately, wrapped.

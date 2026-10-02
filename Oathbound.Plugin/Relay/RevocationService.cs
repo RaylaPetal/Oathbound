@@ -12,6 +12,9 @@ public sealed class RevocationService
 {
     public event Action? PairingRevoked;
 
+    /// Raised on the framework thread for each pairing whose relay row was read and is still active.
+    public event Action<PairingState, PairEnvelope>? PairStatusFetched;
+
     /// Wired by Plugin to the verified unpair-notice teardown; not a constructor dependency because PairingService depends on this class.
     public Action<PairingState>? EndPairingLocally { get; set; }
     private readonly PluginConfig config;
@@ -197,8 +200,14 @@ public sealed class RevocationService
                 continue;
             }
 
-            if (pair.PairIdHash != pairing.PairIdHash || pair.PairEpoch != pairing.PairEpoch || pair.RevokedAt is null || !pairing.IsPaired)
+            if (pair.PairIdHash != pairing.PairIdHash || pair.PairEpoch != pairing.PairEpoch || !pairing.IsPaired)
                 continue;
+            if (pair.RevokedAt is null)
+            {
+                if (PairStatusFetched is { } fetched)
+                    await Plugin.Framework.RunOnFrameworkThread(() => fetched(pairing, pair)).ConfigureAwait(false);
+                continue;
+            }
 
             Plugin.Log.Information($"Pairing with {pairing.PeerName}@{pairing.PeerWorld} ended locally: the relay reports it was unpaired.");
             if (EndPairingLocally is { } end)

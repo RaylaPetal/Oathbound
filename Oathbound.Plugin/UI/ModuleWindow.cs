@@ -23,7 +23,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         this.plugin = plugin;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(465, 520), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.QuestionCircle,
+            Click = _ => plugin.Tutorial.Start(activeModule, lastViewIsOwner),
+            ShowTooltip = () => ImGui.SetTooltip("Tour of this module"),
+        });
     }
+
+    /// The view drawn last frame, so the title-bar ? starts the tour matching what's on screen.
+    private bool lastViewIsOwner;
 
     public void Dispose() { }
 
@@ -216,9 +225,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     public override void Draw()
     {
-        DrawTutorialCallout();
+        // Title-bar buttons aren't ImGui items, so the ? button's area is reported by position.
+        var windowPos = ImGui.GetWindowPos();
+        var titleBarHeight = ImGui.GetFrameHeight();
+        TutorialService.AnchorRect(TutorialAnchors.ModuleHelp, windowPos + new Vector2(ImGui.GetWindowWidth() - titleBarHeight * 3f, 0),
+            windowPos + new Vector2(ImGui.GetWindowWidth(), titleBarHeight));
+
         using var card = Card.Begin("moduleCard");
         var isOwner = ResolveOwnerModeView();
+        lastViewIsOwner = isOwner;
 
         if (DependencyGates.ModuleBlockedReason(plugin, activeModule) is { } blockedReason)
         {
@@ -288,33 +303,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "reactions":
                 DrawReactionsModule();
                 break;
-            case "permissions":
-                // Only reached from the guided tutorial's Permissions step.
-                IconGlyph.WrappedDisabled("Permissions now live in Settings, on the Permissions tab.");
-                if (ImGui.SmallButton("Open Settings > Permissions"))
-                    plugin.SettingsWindow.ShowPermissionsTab();
-                break;
         }
-    }
-
-    /// Reads the tutorial driver's current step each frame; owns no tutorial state.
-    private void DrawTutorialCallout()
-    {
-        var driver = plugin.TutorialDriver;
-        if (driver.CurrentStep is not { } step)
-            return;
-
-        var text = driver.ActiveDirection == PairingDirection.OwnerSide ? step.OwnerText : step.SubText;
-        // Fixed height + noScroll: the default size fills the window and leaves no room for the module card.
-        using var card = Card.Begin("tutorialCallout", new Vector2(0, 130), noScroll: true);
-        IconGlyph.Text(FontAwesomeIcon.GraduationCap, $"Tutorial ({driver.CurrentStepNumber}/{driver.TotalSteps}): {step.TabLabel}");
-        ImGui.Separator();
-        ImGui.TextWrapped(text ?? "");
-        if (ImGui.Button(driver.IsLastStep ? "Finish" : "Next"))
-            driver.Advance();
-        ImGui.SameLine();
-        if (ImGui.Button("Exit tutorial"))
-            driver.ExitEarly();
     }
 
     /// Returns whether Send should be enabled on that tab.
@@ -1503,12 +1492,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using (Section.Begin("gestureActive", "Active animation"))
         {
-            using (ImRaii.Disabled(!plugin.GestureCommand.HasActiveTemporary))
+            var held = plugin.GestureCommand.IsHeld;
+            using (ImRaii.Disabled(!plugin.GestureCommand.HasActiveTemporary || held))
             {
                 if (ImGui.Button("Reset active gesture"))
                     plugin.GestureCommand.ResetActiveTemporary();
             }
-            IconGlyph.HelpMarker("Reverts the currently active temporary mod activation back to its saved settings right now, instead of waiting for the automatic ~30s idle-timeout. Only enabled while a gesture's temporary activation is active.");
+            IconGlyph.HelpMarker(held
+                ? "Your Owner is holding you in this animation. It ends when they stop it or revert all, or when you use your safeword (/obpanic)."
+                : "Reverts the currently active temporary mod activation back to its saved settings right now, instead of waiting for the automatic ~30s idle-timeout. Only enabled while a gesture's temporary activation is active.");
         }
     }
 
@@ -2941,11 +2933,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawGestureQuickSection(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Gestures;
-        DrawSectionTitleRow(FontAwesomeIcon.TheaterMasks, "Animation", quick.Count > 0, "gestureQuick", () =>
-        {
-            quick.Clear();
-            plugin.Configuration.Save();
-        });
+        // No clear-all here: wiping the imported list was too easy to hit while trying to stop an animation.
+        DrawSectionTitleRow(FontAwesomeIcon.TheaterMasks, "Animation", false, "gestureQuick", () => { });
+
+        // Drawn even with nothing imported - the Sub may be held by an alias or a Custom Trigger.
+        DrawFixedQuickRow("Stop animation", $"gesture {ChatComposer.StopGestureWord}", canSend, FixedActionIds.StopAnimation);
+        IconGlyph.HelpMarker("An animation you send holds your Sub in place. This stops it and gives them their movement back.");
 
         if (quick.Count == 0)
         {
@@ -3832,11 +3825,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// A built-in action that can't be removed.
     private void DrawFixedQuickRow(string label, string command, bool canSend, string favoriteId)
     {
+        ImGui.BeginGroup();
         ImGui.TextUnformatted(label);
         ContinueRowOrWrap(ButtonWidth("Favorited"));
         DrawFavoriteFixedActionToggle(favoriteId);
         ContinueRowOrWrap(ButtonWidth("Send"));
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, command, null), canSend, $"fixed_{label}");
+        ImGui.EndGroup();
+        TutorialService.Anchor(TutorialAnchors.Fixed(favoriteId));
     }
 
     /// `displayLabel` changes display only; IDs and the command keep the raw label.
@@ -3846,7 +3842,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase))
             shownLabel += "  · not locked";
         if (cmd.MoodleOverride is { } rowMoodle && OwnerMoodleOverride.Accepts(cmd.Command))
-            shownLabel += $"  · moodle: {rowMoodle}";        ImGui.TextUnformatted(shownLabel);
+            shownLabel += $"  · moodle: {rowMoodle}";
+        ImGui.BeginGroup();
+        ImGui.TextUnformatted(shownLabel);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(shownLabel);
         ContinueRowOrWrap(ButtonWidth("Favorited"));
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
@@ -3854,6 +3852,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
         if (OwnerLockOption.Accepts(cmd.Command))
             OwnerLockOption.DrawInline($"{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
+        ImGui.EndGroup();
+        TutorialService.Anchor(TutorialAnchors.QuickRow);
         // A bundle loads into the bundle builder instead of expanding.
         var expanded = ReferenceEquals(editingQuickCommand, cmd);
         var editLabel = expanded ? "Close" : "Edit";
@@ -4105,6 +4105,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 plugin.Configuration.Save();
             }
         }
+        TutorialService.Anchor(TutorialAnchors.QuickStar);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(cmd.IsFavorite
                 ? "Remove from favorites"
@@ -4152,6 +4153,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton($"{sendLabel}##{idSuffix}"))
                 plugin.ChatSender.SendAll(messages);
         }
+        TutorialService.Anchor(TutorialAnchors.QuickSend);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
 

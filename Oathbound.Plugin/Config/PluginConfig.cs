@@ -304,6 +304,7 @@ public static class FixedActionIds
     public const string UnleashDefault = "unleashDefault";
     public const string Teleport = "teleport";
     public const string CustomTriggerRevert = "customTriggerRevert";
+    public const string StopAnimation = "stopAnimation";
 }
 
 /// Whether it's locked lives in SlotLockManager, not here.
@@ -631,7 +632,7 @@ public class PluginConfig : IPluginConfiguration
     /// NO_KEY = unbound. The hotkey always triggers panic, safeword or not.
     public VirtualKey PanicHotkey { get; set; } = VirtualKey.NO_KEY;
 
-    /// Case-insensitive. Unset means `/oathboundpanic` always triggers - a missing safeword must never block panic.
+    /// Case-insensitive. Unset means `/obpanic` always triggers - a missing safeword must never block panic.
     public string? PanicSafeword { get; set; }
 
     /// Legacy; only seeds the mod picker during migration.

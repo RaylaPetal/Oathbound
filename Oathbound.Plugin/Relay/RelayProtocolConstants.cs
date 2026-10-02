@@ -16,4 +16,7 @@ public static class RelayProtocolConstants
     public const int CodeInvitationExpirySeconds = 604800;
     public const int PairStatusPollIntervalSeconds = 1800;
     public const int BackupCiphertextMaxBytes = 32768;
+    public const int CollarCheckinIntervalSeconds = 7200;
+    public const int CollarBrokenGraceSeconds = 60;
+    public const int CollarStaleSeconds = 172800;
 }

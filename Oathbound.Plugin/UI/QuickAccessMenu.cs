@@ -112,6 +112,7 @@ public static class QuickAccessMenu
         (FixedActionIds.LeashDefault, "Leash", "Follow", ControlWords.Leash),
         (FixedActionIds.UnleashDefault, "Unleash", "Follow", ControlWords.Unleash),
         (FixedActionIds.CustomTriggerRevert, "Revert custom triggers", "Custom Triggers", "customtrigger revert"),
+        (FixedActionIds.StopAnimation, "Stop animation", "Animation", $"gesture {ChatComposer.StopGestureWord}"),
     ];
 
     internal static List<(string Label, List<QuickCommand> Favorites)> CategorizedFavorites(OwnerQuickCommands quick)

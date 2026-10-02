@@ -13,6 +13,7 @@ using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.IoC;
 using Dalamud.Interface.ImGuiFileDialog;
 using Dalamud.Interface.Windowing;
@@ -42,15 +43,13 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameConfig GameConfig { get; private set; } = null!;
     [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
 
-    private const string CommandName = "/oathbound";
-    private const string PanicCommandName = "/oathboundpanic";
-    private const string SettingsCommandName = "/oathboundsettings";
+    private const string CommandName = "/ob";
+    private const string PanicCommandName = "/obpanic";
+    private const string SettingsCommandName = "/obsettings";
 
-    /// Legacy command names kept so existing macros keep working.
-    private const string LegacyCommandName = "/collar";
-    private const string LegacyPanicCommandName = "/collarpanic";
-    private const string LegacySettingsCommandName = "/collarsettings";
-    private const string ShorthandCommandName = "/ob";
+    private const string LongCommandName = "/oathbound";
+    private const string LongPanicCommandName = "/oathboundpanic";
+    private const string LongSettingsCommandName = "/oathboundsettings";
 
     public PluginConfig Configuration { get; }
     public CatalogStore CatalogStore { get; } = new();
@@ -59,7 +58,7 @@ public sealed class Plugin : IDalamudPlugin
 
     /// Shared by Settings (export) and CollarWindow (import).
     public readonly FileDialogManager FileDialogManager = new();
-    private CollarWindow CollarWindow { get; }
+    internal CollarWindow CollarWindow { get; }
     public ModuleWindow ModuleWindow { get; }
     /// Must be registered right after CollarWindow: windows draw in registration order, and it docks to CollarWindow's current-frame position.
     public SubControlWindow SubControlWindow { get; }
@@ -79,7 +78,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IDtrBarEntry toyStatusDtrEntry;
     private long nextToyStatusDtrUpdateTicks;
 
-    public TutorialDriver TutorialDriver { get; }
+    public TutorialService Tutorial { get; }
 
     public SubRuntimeState RuntimeState { get; }
 
@@ -127,6 +126,8 @@ public sealed class Plugin : IDalamudPlugin
     public ChatSender ChatSender { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
+    public OwnerCollarStatusStore OwnerCollarStatus { get; }
+    private readonly CollarStatusReporter collarStatusReporter;
     public StatusIndicatorState StatusIndicators { get; }
     private readonly LeashRenderer leashRenderer;
     private readonly LeashTravelWatcher leashTravelWatcher;
@@ -187,7 +188,7 @@ public sealed class Plugin : IDalamudPlugin
         MoodlesCommand = new MoodlesCommand(Configuration, MoodlesIpc, CatalogStore, new AttachedMoodleLedger(Configuration, MoodlesIpc));
         OutfitCommand = new OutfitCommand(Configuration, GlamourerIpc, SlotLockManager, RuntimeState, MoodlesCommand);
         temporaryModSettings = new TemporaryModSettingsCoordinator(PenumbraIpc);
-        GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore);
+        GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore, MovementLockService);
         ReactionService = new ReactionService(Configuration, RuntimeState, EmoteWatcher, GlamourerIpc, SlotLockManager, PenumbraIpc, temporaryModSettings, MoodlesIpc, RestrictionRuleManager);
         // Before Follow: the leash rides Teleport's journey across areas.
         TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
@@ -202,6 +203,9 @@ public sealed class Plugin : IDalamudPlugin
         ChatSender = new ChatSender();
         OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
         OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
+        OwnerCollarStatus = new OwnerCollarStatusStore(Configuration);
+        RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
+        collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
@@ -210,6 +214,7 @@ public sealed class Plugin : IDalamudPlugin
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
+        PairingService.PairingEnded += GestureCommand.StopIfSourcePairingEnded;
         // A pairing the relay reports as unpaired gets the same teardown as a verified unpair notice.
         RevocationService.EndPairingLocally = PairingService.EndFromVerifiedPeerNotice;
         CodePairingService = new CodePairingService(Configuration, RelayClient, DeviceIdentityService, PairingService, CollarCommand);
@@ -217,6 +222,7 @@ public sealed class Plugin : IDalamudPlugin
         PairingService.BeforeIdentityReset = BackupService.DeleteForIdentityResetAsync;
         RevocationService.PairingRevoked += QueueRestraintCleanup;
         RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
+        RevocationService.PairingRevoked += GestureCommand.StopIfSourcePairingEnded;
         CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService);
         CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
@@ -230,7 +236,6 @@ public sealed class Plugin : IDalamudPlugin
         CollarWindow = new CollarWindow(this, ModuleWindow);
         SubControlWindow = new SubControlWindow(this, CollarWindow);
         SettingsWindow = new SettingsWindow(this);
-        TutorialDriver = new TutorialDriver(this, CollarWindow);
         WelcomeWindow = new WelcomeWindow(this);
         AnimationPickerWindow = new AnimationPickerWindow(this);
         CustomizePresetPickerWindow = new CustomizePresetPickerWindow(this);
@@ -244,6 +249,7 @@ public sealed class Plugin : IDalamudPlugin
         favoritesDtrEntry.Tooltip = "Favorited Collar commands";
         favoritesDtrEntry.OnClick = _ => QuickAccessMenu.Toggle();
         favoritesDtrEntry.Shown = true;
+        Tutorial = new TutorialService(this, on => quickAccessHighlight = on, () => favoritesDtrEntry.UserHidden);
 
         toyStatusDtrEntry = DtrBar.Get("Oathbound Toy Status");
         toyStatusDtrEntry.Shown = false;
@@ -269,34 +275,24 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "Open the Oathbound window.",
         });
-        CommandManager.AddHandler(ShorthandCommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Shorthand for /oathbound - opens the Oathbound window.",
-        });
-        CommandManager.AddHandler(LegacyCommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Alias for /oathbound - opens the Oathbound window.",
-        });
         CommandManager.AddHandler(PanicCommandName, new CommandInfo(OnPanicCommand)
         {
-            HelpMessage = "Your safeword: immediately remove everything applied to you except a locked collar (your pairings stay). Append your safeword if one is configured in Settings, e.g. /oathboundpanic red.",
-        });
-        CommandManager.AddHandler(LegacyPanicCommandName, new CommandInfo(OnPanicCommand)
-        {
-            HelpMessage = "Alias for /oathboundpanic.",
+            HelpMessage = "Your safeword: immediately remove everything applied to you except a locked collar (your pairings stay). Append your safeword if one is configured in Settings, e.g. /obpanic red.",
         });
         CommandManager.AddHandler(SettingsCommandName, new CommandInfo(OnSettingsCommand)
         {
-            HelpMessage = "Open Oathbound settings (role, pairing, aliases).",
+            HelpMessage = "Open Oathbound settings (role, pairing, safeword).",
         });
-        CommandManager.AddHandler(LegacySettingsCommandName, new CommandInfo(OnSettingsCommand)
-        {
-            HelpMessage = "Alias for /oathboundsettings.",
-        });
+        // The long names stay working for existing macros and keybinds, but aren't advertised.
+        CommandManager.AddHandler(LongCommandName, new CommandInfo(OnCommand) { ShowInHelp = false });
+        CommandManager.AddHandler(LongPanicCommandName, new CommandInfo(OnPanicCommand) { ShowInHelp = false });
+        CommandManager.AddHandler(LongSettingsCommandName, new CommandInfo(OnSettingsCommand) { ShowInHelp = false });
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw += FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
+        // After every window, so anchors reported this frame are current.
+        PluginInterface.UiBuilder.Draw += Tutorial.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
@@ -337,9 +333,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         PairingService.PairingEnded -= QueueRestraintCleanup;
         PairingService.PairingEnded -= TeleportCommand.StopIfSourcePairingEnded;
+        PairingService.PairingEnded -= GestureCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked -= QueueRestraintCleanup;
         RevocationService.PairingRevoked -= TeleportCommand.StopIfSourcePairingEnded;
+        RevocationService.PairingRevoked -= GestureCommand.StopIfSourcePairingEnded;
         TeleportCommand.Stop("plugin unloading");
+        GestureCommand.Stop();
         DependencyStatus.Dispose();
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
         Framework.Update -= OnFrameworkUpdate;
@@ -354,6 +353,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw -= FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
+        PluginInterface.UiBuilder.Draw -= Tutorial.Draw;
+        Tutorial.Dispose();
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
 
@@ -369,18 +370,18 @@ public sealed class Plugin : IDalamudPlugin
         favoritesDtrEntry.Remove();
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
+        RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
         OwnerStatusEstimates.Dispose();
         leashOffNotifier.Dispose();
         leashRenderer.Dispose();
         statusIconRenderer.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
-        CommandManager.RemoveHandler(ShorthandCommandName);
-        CommandManager.RemoveHandler(LegacyCommandName);
         CommandManager.RemoveHandler(PanicCommandName);
-        CommandManager.RemoveHandler(LegacyPanicCommandName);
         CommandManager.RemoveHandler(SettingsCommandName);
-        CommandManager.RemoveHandler(LegacySettingsCommandName);
+        CommandManager.RemoveHandler(LongCommandName);
+        CommandManager.RemoveHandler(LongPanicCommandName);
+        CommandManager.RemoveHandler(LongSettingsCommandName);
 
         ChatCommandListener.Dispose();
         MovementLockService.Dispose();
@@ -419,6 +420,23 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ToggleMainUi() => CollarWindow.Toggle();
 
+    private static readonly string QuickAccessText = ((char)SeIconChar.BoxedStar).ToString();
+    /// Set by the tutorial while it points at the Quick Access entry.
+    private bool quickAccessHighlight;
+    private bool? quickAccessShownHighlighted;
+
+    /// Blinks the entry while the tutorial points at it, and restores it after.
+    private void UpdateQuickAccessText()
+    {
+        var lit = quickAccessHighlight && Environment.TickCount64 / 500 % 2 == 0;
+        if (quickAccessShownHighlighted == lit)
+            return;
+        quickAccessShownHighlighted = lit;
+        favoritesDtrEntry.Text = lit
+            ? new SeStringBuilder().AddUiForeground(500).AddUiGlow(501).AddText($"{QuickAccessText} Oathbound <<").AddUiGlowOff().AddUiForegroundOff().Build()
+            : quickAccessHighlight ? $"{QuickAccessText} Oathbound <<" : QuickAccessText;
+    }
+
     public void OpenMainWindow() => CollarWindow.OpenMainWindow();
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -434,6 +452,8 @@ public sealed class Plugin : IDalamudPlugin
             panicHotkeyWasPressed = isPressed;
         }
 
+        UpdateQuickAccessText();
+        collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         GestureCommand.OnFrameworkUpdate();
         RestraintCommand.OnFrameworkUpdate();
         ToyControlCommand.OnFrameworkUpdate();

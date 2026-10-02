@@ -32,21 +32,31 @@ public sealed class GestureCommand
     private readonly GestureCatalogScanner scanner;
     private readonly TemporaryModSettingsCoordinator temporarySettings;
     private readonly CatalogStore catalogStore;
+    private readonly MovementLockService movementLock;
+
+    /// MovementLockService claim owner for an Owner-sent animation's hold.
+    private const string HoldOwner = "gesture";
 
     private (GestureTrigger Trigger, long ReadyAtTicks)? pendingPlay;
     private (Guid Collection, string ModDirectory, long IdleUntilTicks)? activeTemporary;
+    /// The trigger the Sub is held in, so Stop can stand them up from a seated pose.
+    private GestureTrigger? heldTrigger;
+    private Guid? heldBySourcePairingId;
 
     public int? LastScanTotalMods { get; private set; }
     public string? LastScanError { get; private set; }
 
     public bool HasActiveTemporary => activeTemporary is not null;
 
-    public GestureCommand(PluginConfig config, PenumbraIpc penumbra, TemporaryModSettingsCoordinator temporarySettings, CatalogStore catalogStore)
+    public bool IsHeld => heldTrigger is not null;
+
+    public GestureCommand(PluginConfig config, PenumbraIpc penumbra, TemporaryModSettingsCoordinator temporarySettings, CatalogStore catalogStore, MovementLockService movementLock)
     {
         this.config = config;
         this.penumbra = penumbra;
         this.temporarySettings = temporarySettings;
         this.catalogStore = catalogStore;
+        this.movementLock = movementLock;
         scanner = new GestureCatalogScanner(penumbra, config);
     }
 
@@ -62,7 +72,8 @@ public sealed class GestureCommand
                 Plugin.Log.Warning($"Gesture playback failed after redraw for '{pending.Trigger.DisplayName}'.");
         }
 
-        if (activeTemporary is { } active && now >= active.IdleUntilTicks)
+        // A held animation keeps its mod until Stop.
+        if (heldTrigger is null && activeTemporary is { } active && now >= active.IdleUntilTicks)
         {
             // Never pull the mod out from under a looping emote or pose; wait until the character stands normally.
             if (IsStanding())
@@ -74,8 +85,39 @@ public sealed class GestureCommand
 
     private const long StillPlayingRecheckMs = 2_000;
 
-    /// Also called whenever a different mod's activation replaces this one.
+    /// Revert all and panic go through here, so they also end the hold.
     public void ResetActiveTemporary()
+    {
+        Stop();
+        ReleaseTemporary();
+    }
+
+    /// Ends an Owner-sent animation: movement back, mod off, and up out of a seated pose. A looping slash emote has
+    /// no cancel call, so it ends with the Sub's first step. Returns whether anything was held.
+    public bool Stop()
+    {
+        pendingPlay = null;
+        if (heldTrigger is not { } trigger)
+            return false;
+
+        heldTrigger = null;
+        heldBySourcePairingId = null;
+        movementLock.ReleaseImmobilize(HoldOwner);
+        ReleaseTemporary();
+        if (trigger.Kind != GestureTriggerKind.SlashCommand && trigger.EmoteModeId is >= 1 and <= 3 && !IsStanding())
+            Chat.SendMessage(trigger.EmoteModeId switch { 1 => "/groundsit", 2 => "/sit", _ => "/doze" });
+        return true;
+    }
+
+    /// Pairing-ended events don't say which pairing, so check whether it was the one holding the Sub.
+    public void StopIfSourcePairingEnded()
+    {
+        if (heldBySourcePairingId is { } id && config.FindPairingById(id) is not { IsPaired: true })
+            Stop();
+    }
+
+    /// Also called whenever a different mod's activation replaces this one.
+    private void ReleaseTemporary()
     {
         if (activeTemporary is not { } active)
             return;
@@ -124,18 +166,19 @@ public sealed class GestureCommand
         catch { return false; }
     }
 
-    public bool Apply(GestureAliasDefinition alias)
+    /// `sourcePairingId` is the Owner pairing that sent it; null for a local test.
+    public bool Apply(GestureAliasDefinition alias, Guid? sourcePairingId)
     {
-        if (!string.IsNullOrEmpty(alias.GestureId) && config.GestureMapping.LocalCatalog.TryGetValue(alias.GestureId, out var exact)) return Execute(exact);
+        if (!string.IsNullOrEmpty(alias.GestureId) && config.GestureMapping.LocalCatalog.TryGetValue(alias.GestureId, out var exact)) return Execute(exact, sourcePairingId);
         var matches = config.GestureMapping.LocalCatalog.Values.Where(e => e.Trigger != null && e.ModDirectory == alias.ModDirectory &&
             string.Equals(e.Trigger.DisplayName.TrimStart('/'), alias.EmoteName.TrimStart('/'), StringComparison.OrdinalIgnoreCase)).ToList();
-        return matches.Count == 1 && Execute(matches[0]);
+        return matches.Count == 1 && Execute(matches[0], sourcePairingId);
     }
 
-    public bool ForceApply(string idOrName)
-        => ForceApplyDetailed(idOrName).Success;
+    public bool ForceApply(string idOrName, Guid? sourcePairingId)
+        => ForceApplyDetailed(idOrName, sourcePairingId).Success;
 
-    public ApplyResult ForceApplyDetailed(string input)
+    public ApplyResult ForceApplyDetailed(string input, Guid? sourcePairingId)
     {
         var resolution = CommandSelector.ResolveGestureDetailed(config.GestureMapping.LocalCatalog.Values, input);
         if (resolution.Entry is null)
@@ -145,13 +188,13 @@ public sealed class GestureCommand
                 CommandSelector.ResolutionStatus.Malformed => ApplyStatus.Malformed,
                 _ => ApplyStatus.Missing,
             });
-        return ExecuteDetailed(resolution.Entry);
+        return ExecuteDetailed(resolution.Entry, sourcePairingId);
     }
 
-    private bool Execute(GestureCatalogEntry entry)
-        => ExecuteDetailed(entry).Success;
+    private bool Execute(GestureCatalogEntry entry, Guid? sourcePairingId)
+        => ExecuteDetailed(entry, sourcePairingId).Success;
 
-    private ApplyResult ExecuteDetailed(GestureCatalogEntry entry)
+    private ApplyResult ExecuteDetailed(GestureCatalogEntry entry, Guid? sourcePairingId)
     {
         if (entry.Trigger is null) return new ApplyResult(ApplyStatus.Missing, entry.AnimationName);
         var collection = penumbra.TryGetLocalPlayerCollectionId();
@@ -159,7 +202,7 @@ public sealed class GestureCommand
 
         // Revert the previous mod's activation first so its settings never linger.
         if (activeTemporary is { } active && (active.Collection != collection.Value || active.ModDirectory != entry.ModDirectory))
-            ResetActiveTemporary();
+            ReleaseTemporary();
 
         var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
         if (!temporarySettings.Acquire("gesture", collection.Value, entry.ModDirectory, selections))
@@ -173,6 +216,10 @@ public sealed class GestureCommand
         var now = Environment.TickCount64;
         activeTemporary = (collection.Value, entry.ModDirectory, now + IdleTimeoutMs);
         pendingPlay = (entry.Trigger, now + PlayDelayMs);
+        // Every caller of Apply/ForceApply is an Owner command, so it holds the Sub like a Forced Pose.
+        heldTrigger = entry.Trigger;
+        heldBySourcePairingId = sourcePairingId;
+        movementLock.EngageImmobilize(HoldOwner);
         return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
     }
 

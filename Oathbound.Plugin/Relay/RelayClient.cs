@@ -49,6 +49,20 @@ public sealed class StoredBackup
     [JsonPropertyName("ciphertext")] public string Ciphertext { get; set; } = "";
     [JsonPropertyName("updatedAt")] public long UpdatedAt { get; set; }
 }
+internal sealed class CollarStatusBody
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "collar-status";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("state")] public string State { get; set; } = "";
+    [JsonPropertyName("stateAt")] public long StateAt { get; set; }
+}
+
+internal sealed class CollarStatusAck
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+}
+
 internal sealed class BackupStatusBody
 {
     [JsonPropertyName("updatedAt")] public long? UpdatedAt { get; set; }
@@ -179,6 +193,11 @@ public sealed class RelayClient : IDisposable
     public Task<PairEnvelope> FetchPairAtEpochAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}?epoch={pairEpoch}", null, ct);
     // ---- Backups ----
+    /// Sub only: the relay accepts it from this pair epoch's Sub device alone.
+    public Task PutCollarStatusAsync(string pairIdHash, int pairEpoch, string state, long stateAt, CancellationToken ct) =>
+        SendSignedAsync<CollarStatusAck>(HttpMethod.Post, $"/v1/pairs/{pairIdHash}/collar-status",
+            new CollarStatusBody { PairEpoch = pairEpoch, State = state, StateAt = stateAt }, ct);
+
     public Task PutBackupAsync(string backupId, string nonce, string ciphertext, CancellationToken ct) =>
         SendSignedAsync<BackupStatusBody>(HttpMethod.Put, $"/v1/backups/{backupId}", new BackupBody { Nonce = nonce, Ciphertext = ciphertext }, ct);
     public Task<StoredBackup> FetchBackupAsync(string backupId, CancellationToken ct) =>

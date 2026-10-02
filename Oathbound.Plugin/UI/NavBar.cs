@@ -21,7 +21,8 @@ public static class NavBar
     }
 
     /// Non-null for an id draws that tile dimmed and unclickable, with the reason as its tooltip.
-    public static string? Draw((string Id, FontAwesomeIcon Icon, string Tooltip)[] items, System.Func<string, string?>? disabledReason = null)
+    public static string? Draw((string Id, FontAwesomeIcon Icon, string Tooltip)[] items, System.Func<string, string?>? disabledReason = null,
+        System.Func<string, string?>? tutorialAnchor = null)
     {
         string? clicked = null;
         // The card's inner margin comes from WindowPadding; using ItemSpacing clipped the last row.
@@ -36,6 +37,8 @@ public static class NavBar
         for (var i = 0; i < items.Length; i++)
         {
             var itemClicked = DrawItem(items[i], buttonSize, disabledReason?.Invoke(items[i].Id));
+            if (tutorialAnchor?.Invoke(items[i].Id) is { } anchor)
+                TutorialService.Anchor(anchor);
             if (clicked is null && itemClicked is not null)
                 clicked = itemClicked;
 

@@ -37,12 +37,12 @@ everything instantly with their safeword.
 |:-:|---|---|
 | 🏷️ | **Title** | Give your Sub a title (with prefix/suffix and color) through Honorific. |
 | 👗 | **Outfit** | Dress your Sub in one of their Glamourer designs, locked in place or free to change. |
-| 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. |
+| 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. Your Sub is held in the pose until you press **Stop animation**. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
 | 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on until you unleash them: when you teleport or change area your Sub is brought along to you, and anywhere they can't follow (your house, an inn room, a duty) it just pauses until you're together again. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
-| 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. |
+| 🔒 | **Collar** | A collar piece that goes on and locks when you pair, as a visible sign of your bond. It can carry a Moodle too. If it ever comes off without you unlocking it, you see a red warning in your header - even if it happened while you were offline. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
@@ -57,7 +57,7 @@ everything instantly with their safeword.
 ## 🤝 How it works
 
 ### 1. Pair up
-Open **Settings** (`/oathboundsettings`) and press **Create pairing code**. Give the code to your partner
+Open **Settings** (`/obsettings`) and press **Create pairing code**. Give the code to your partner
 any way you like: Discord, `/say`, in person. They enter it in their own Settings, see who it's from, and
 press **Accept**. The next time you're online you'll be asked to **Confirm** that it's really them, and
 you're paired. You don't have to be online at the same time, and no tells are sent. A code works once and
@@ -72,7 +72,7 @@ your pairings come back. Your partners don't need to do anything. Without the co
 be restored and you'd pair again.
 
 ### 2. The Sub sets up what they'll allow
-In the main window (`/oathbound`), the Sub picks their designs, animations, moodles, restraints and collar,
+In the main window (`/ob`), the Sub picks their designs, animations, moodles, restraints and collar,
 and gives them short words (aliases). In **Settings > Permissions**, the Sub turns each kind of command on or off.
 A command in a category that's switched off is simply ignored.
 
@@ -92,19 +92,20 @@ Sync tab shows whether it's up to date.
 - **Extra steps for the heavier features.** Animations, leash, restraints and teleport need an extra
   acknowledgement before you can turn them on, and custom chat messages and toy control each need their
   own.
-- **Your safeword.** `/oathboundpanic` instantly removes everything that's been applied to you:
+- **Your safeword.** `/obpanic` instantly removes everything that's been applied to you:
   outfit, title, moodles, restraints, leash, animations and toys. Your collar is the one thing it leaves
   on: a locked collar (and its moodle) comes off only when the Owner who collared you sends **Collar
   unlock**, or when that pairing ends. If you were leashed, your plugin tells your Owner's that the leash
-  came off because you used your safeword. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/oathboundpanic red`); if you don't,
+  came off because you used your safeword. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
   partner even if they're offline: their pairing ends the next time they log in, however long that takes.
 - **Only the two of you see the icons and the leash line.** They're drawn by your own clients - nobody
   else sees them, and drawing them sends nothing. The Sub's own view is exact; the Owner's is an estimate
   built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
-  Sub's plugin tells the Owner's. For everything else the estimate can't see a panic or the Sub's own
+  Sub's plugin tells the Owner's. So is the collar: while one is locked, the Sub's plugin tells the relay whether
+  it's really on, and the Owner is warned if it comes off. For everything else the estimate can't see a panic or the Sub's own
   releases (Sub Control has a **Clear estimate** button for that). Either of you can turn them off in Settings -> In-world visuals.
-- **Test before you pair.** Settings has a **Test an Owner command** box that lets a Sub try any command
+- **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
   on themselves without sending anything.
 
 ---
@@ -145,7 +146,8 @@ Sync tab shows whether it's up to date.
 3. Tick the checkbox next to it, then press **Save**.
 4. Type `/xlplugins`, search for **Oathbound**, and install it.
 
-A short tutorial walks you through the rest the first time you open the plugin.
+A guided tour walks you through the rest the first time you open the plugin, highlighting each part as it goes.
+Every module also has its own tour behind the **?** in its title bar, and you can rerun the overview from Settings.
 
 ---
 
@@ -153,11 +155,12 @@ A short tutorial walks you through the rest the first time you open the plugin.
 
 | Command | What it does |
 |---|---|
-| `/oathbound` or `/ob` | Open the main window |
-| `/oathboundsettings` | Open Settings (pairing, role, safeword) |
-| `/oathboundpanic [safeword]` | Your safeword: remove everything applied to you, right now |
+| `/ob` | Open the main window |
+| `/obsettings` | Open Settings (pairing, role, safeword) |
+| `/obpanic [safeword]` | Your safeword: remove everything applied to you, right now |
 
-The older `/collar`, `/collarsettings` and `/collarpanic` still work, so existing macros keep working.
+The long names (`/oathbound`, `/oathboundsettings`, `/oathboundpanic`) still work, so existing macros and keybinds
+keep working. The old `/collar` commands are gone - update any macro that still uses them.
 
 ---
 
@@ -166,7 +169,9 @@ The older `/collar`, `/collarsettings` and `/collarpanic` still work, so existin
 Most of what Oathbound does only changes how your own character looks on your screen. A few features go
 further, and you should decide for yourself before turning them on:
 
-- **Animations** make your character perform emotes and poses.
+- **Animations** make your character perform emotes and poses, and hold you in place while they play: you
+  can't move until your Owner stops the animation or sends revert all, or you use your safeword. To try one on
+  yourself from Settings' Test Commands tab, type `gesture stop` there to release it again.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
   When your Owner walks farther away than the leash length, the leash steers your character after them
   (or uses the game's own follow if that gets stuck), with your own movement ignored until you're back in range.
@@ -207,8 +212,9 @@ you accepted.
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.
 
-Pairing and catalog sync go through a small Oathbound relay service. It only ever handles encrypted data
-and never sees your catalog contents or your character's name.
+Pairing, catalog sync and the collar warning go through a small Oathbound relay service. Your catalog is
+end-to-end encrypted, and the relay never sees your catalog contents or your character's name. It does keep,
+under an anonymous id per pairing, whether that pairing has ended and whether a locked collar is still on.
 
 **Using third-party plugins is against FINAL FANTASY XIV's Terms of Service. Use Oathbound at your own
 risk.**

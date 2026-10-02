@@ -23,6 +23,10 @@ public sealed class CollarCommand
 
     private long nextMoodleReassertTicks;
 
+    /// How often a locked collar whose lock isn't held (after a restart, or while Glamourer is down) is retried.
+    private const long RestoreRetryMs = 5_000;
+    private long nextRestoreTicks;
+
     public CollarCommand(PluginConfig config, SlotLockManager slotLocks, SubRuntimeState runtimeState, MoodlesCommand moodles)
     {
         this.config = config;
@@ -35,7 +39,11 @@ public sealed class CollarCommand
     public void OnFrameworkUpdate()
     {
         var owningPairing = config.CollarOwningPairingId is { } id ? config.FindPairingById(id) : null;
-        if (owningPairing is not { IsPaired: true } || !config.Permissions.Collar || !config.Collar.HasMoodleAssigned)
+        if (owningPairing is not { IsPaired: true } || !config.Permissions.Collar)
+            return;
+
+        RestoreLockIfNeeded(owningPairing.Id);
+        if (!config.Collar.HasMoodleAssigned)
             return;
 
         var now = Environment.TickCount64;
@@ -43,6 +51,19 @@ public sealed class CollarCommand
             return;
 
         ApplyAssignedMoodle();
+    }
+
+    /// The slot lock lives in memory only, so a restart or reload would otherwise leave a locked collar unenforced.
+    private void RestoreLockIfNeeded(Guid pairingId)
+    {
+        if (!runtimeState.CollarForceLocked || slotLocks.HasLock(Owner) || !Plugin.ClientState.IsLoggedIn)
+            return;
+        var now = Environment.TickCount64;
+        if (now < nextRestoreTicks)
+            return;
+        nextRestoreTicks = now + RestoreRetryMs;
+        if (ForceApply(pairingId))
+            Plugin.Log.Information("Collar lock restored.");
     }
 
     /// Released through the ledger's collar source, so only this one status is removed.

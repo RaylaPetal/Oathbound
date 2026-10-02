@@ -15,8 +15,8 @@ the original feasibility research.
 Worker relay (`worker/`) - see Architecture below. The default pairing flow is pairing by code
 (`Oathbound.Plugin/Relay/CodePairingService.cs`, no tells, asynchronous, both people confirm each other's
 character); the older tell-referenced handshake in `Relay/PairingService.cs` stays as the fallback for peers on
-an older version. `README.md`'s "How commands travel" section still describes the pre-relay code handshake -
-read the code/openspec specs (`collar/pairing`, `collar/pairing-recovery`) for the current behavior.
+an older version. README is user-facing and light on pairing internals - read the code (and the local openspec
+specs `collar/pairing`, `collar/pairing-recovery`, if present) for the current behavior.
 
 This is two independently built and independently deployed things sharing one repo:
 - `Oathbound.Plugin/` - the Dalamud plugin (C#/.NET), shipped as a GitHub Release + `repo.json` third-party
@@ -24,9 +24,9 @@ This is two independently built and independently deployed things sharing one re
 - `worker/` - the Cloudflare Worker relay (TypeScript), deployed directly via `wrangler deploy`, not tied to
   plugin releases at all.
 - `protocol/` - the wire-format source of truth both sides must agree with byte-for-byte (see below).
-- `openspec/` - this repo uses OpenSpec (`schema: spec-driven`) for planning; capability specs live under
-  `openspec/specs/collar/*`, in-flight work under `openspec/changes/`. Use the `opsx:*` skills/commands for
-  that workflow rather than hand-editing those directories.
+- `openspec/` - OpenSpec (`schema: spec-driven`) planning, **gitignored and kept local only** (never
+  committed). Capability specs live under `openspec/specs/collar/*`, in-flight work under `openspec/changes/`.
+  Use the `opsx:*` skills/commands for that workflow rather than hand-editing those directories.
 
 ## Commands
 
@@ -80,6 +80,9 @@ A version bump commit is not a release by itself - nothing ships until the match
 1. Bump `<Version>` in `Oathbound.Plugin/Oathbound.Plugin.csproj`, commit as `release: X.Y.Z <description>`.
 2. `git push origin master`
 3. `git tag vX.Y.Z && git push origin vX.Y.Z`
+
+Pull first: the release bot's `chore: point repo.json at ...` commit usually lands on `master` after every
+release, so local `master` is typically one commit behind. Never push or tag unless asked.
 
 The tag push triggers `.github/workflows/release.yml`, which builds the plugin, publishes a GitHub Release
 with `latest.zip`, then checks out `master` again and auto-commits `chore: point repo.json at vX.Y.Z`
@@ -164,7 +167,8 @@ on the Worker side, but the plugin side has no automated check and needs manual 
 ```
 worker/src/
   index.ts        routing
-  routes/         invitations.ts (create/fetch/accept/consume), pairs.ts, revocations.ts, catalog.ts, health.ts
+  routes/         invitations.ts (create/fetch/accept/consume), pairs.ts, revocations.ts, catalog.ts,
+                  mailbox.ts (automatic catalog push/pickup), backups.ts (recovery backups), health.ts
   lib/auth.ts     verifySignedRequest - the one place every signed request's headers+signature are checked
   lib/quotas.ts   per-device/per-pair/global rate limits and the free-tier circuit breaker (assertCircuitBreakerClosed)
   lib/pairs.ts, crypto.ts, capability.ts, deviceKeys.ts, log.ts, ...
@@ -188,5 +192,28 @@ match, ECDSA signature verification, and nonce-replay rejection - every failure 
 Everything gameplay-facing is designed so nothing can ever apply to a Sub's character without that Sub's own
 plugin, pairing, and per-category permission all being true at the moment a tell arrives - see README.md's
 "Consent model" and "Automation risk / ToS disclosure" sections for the full model (panic-as-safeword, scoped
-revocable permissions, the two narrow auto-send exceptions, Gagged/Chat-action being called out as materially
-riskier automation surfaces). That model is a constraint on any new feature here, not just documentation.
+revocable permissions, Gagged/Chat-action being called out as materially riskier automation surfaces). That
+model is a constraint on any new feature here, not just documentation.
+
+Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
+Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
+a leash ends on its side (`LeashOffNotifier`), a user-configured Reactions chat reply, and lifecycle tells tied
+to a user action (pairing ack, unpair, catalog request/denied). Only `ChatSender` transmits chat. Peer-notice
+tells are trigger-less keywords (`collarinvite`, `collarpairack`, `collarunpair`, `collarcatalogreq`,
+`collarcatalogdenied`, `collarleash`) composed in `ChatComposer` and matched in `ChatCommandListener`, always
+verified against the tell's sender and a paired `PairingState` of the right direction - fail closed otherwise.
+
+The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner
+sent. Two pieces of real state flow back: the leash-off notice, and the collar status the Sub's
+`CollarStatusReporter` posts to the relay (read by the Owner into `OwnerCollarStatusStore` during the pair status
+check). Panic (`PanicHandler`) reverts everything
+local except a locked collar - the collar only comes off via the owning Owner's `collar unlock` or unpairing.
+
+Guided tours live in `UI/TutorialCatalog.cs` and point at sections by their `Section.Begin` id. Renaming,
+removing or adding a module section needs the matching tour step updated there.
+
+## Code comments
+
+Keep comments minimal: only the non-obvious *why* (workarounds, threading, wire-format/security invariants).
+No spec/design references (`collar/...`, `design D4`), no change history, nothing that restates the code, and
+no mentions of non-dependency plugins (GagSpeak, Lightless, PoseKit, ReactToMe, ...).

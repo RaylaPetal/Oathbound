@@ -143,7 +143,12 @@ public sealed class SubControlWindow : Window, IDisposable
     /// Grouped per mod like the Animation module, in the Sub's manifest order. Searching opens every matching mod.
     private void DrawAnimationRows(List<QuickCommand> visible, bool searching, bool canSend)
     {
-        foreach (var mod in visible.GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        // Fixed actions (Stop animation) aren't animations, so they go above the per-mod groups.
+        var fixedCommands = QuickAccessMenu.FixedActions.Where(a => a.Category == "Animation").Select(a => a.Command).ToHashSet();
+        foreach (var cmd in visible.Where(c => fixedCommands.Contains(c.Command)))
+            DrawSendRow(cmd.Label, cmd.Command, canSend, 0f);
+
+        foreach (var mod in visible.Where(c => !fixedCommands.Contains(c.Command)).GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
         {
             if (searching)
                 ImGui.SetNextItemOpen(true);

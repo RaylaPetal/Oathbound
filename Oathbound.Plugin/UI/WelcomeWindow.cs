@@ -50,7 +50,7 @@ public sealed class WelcomeWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-        IconGlyph.WrappedDisabled("After you continue, a short guided tour will walk you through each tab.");
+        IconGlyph.WrappedDisabled("After you continue, a short guided tour shows you around. Every module also has its own tour behind the ? in its title bar.");
 
         if (ImGui.Button("Continue"))
         {
@@ -58,7 +58,7 @@ public sealed class WelcomeWindow : Window, IDisposable
             config.HasCompletedWelcome = true;
             config.Save();
             IsOpen = false;
-            plugin.TutorialDriver.StartIfUnseenForRole(config.Role);
+            plugin.Tutorial.StartOverviewIfUnseen(config.Role);
         }
     }
 }
