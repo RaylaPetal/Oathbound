@@ -59,21 +59,23 @@ public sealed class StatusIndicatorState
         return new CharacterStatus(estimate.Gagged, estimate.Restrained, estimate.Leashed, estimate.Leashed ? localId : 0);
     }
 
-    /// Pairs to draw, with both characters present. Sub side uses the live length; Owner side the length it sent.
-    public IEnumerable<(IPlayerCharacter Sub, IPlayerCharacter Owner, float Length)> LeashedPairs()
+    /// Every leash that is on, keyed by pairing so zoning and render range don't read as on/off. A character is
+    /// null while it can't be found. Sub side uses the live length; Owner side the length it sent.
+    public IEnumerable<(Guid PairingId, IPlayerCharacter? Sub, IPlayerCharacter? Owner, float Length)> ActiveLeashes()
     {
         if (Plugin.ObjectTable.LocalPlayer is not { } me) yield break;
 
-        if (runtimeState.MovementLockActive && follow.FollowedObjectId != 0 &&
-            Plugin.ObjectTable.SearchById(follow.FollowedObjectId) is IPlayerCharacter owner)
-            yield return (me, owner, follow.EffectiveLength);
+        if (runtimeState.MovementLockActive && follow.LeashedPairingId is { } leashedId)
+        {
+            var owner = follow.FollowedObjectId != 0 ? Plugin.ObjectTable.SearchById(follow.FollowedObjectId) as IPlayerCharacter : null;
+            yield return (leashedId, me, owner, follow.EffectiveLength);
+        }
 
         foreach (var pairing in config.Pairings)
         {
             if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
             if (estimates.For(pairing) is not { Leashed: true } estimate) continue;
-            if (FindPlayer(pairing.PeerName!, pairing.PeerWorld!) is { } sub)
-                yield return (sub, me, estimate.LeashLength);
+            yield return (pairing.Id, FindPlayer(pairing.PeerName!, pairing.PeerWorld!), me, estimate.LeashLength);
         }
     }
 
