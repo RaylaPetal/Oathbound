@@ -4,26 +4,16 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/catalog-sync "shared presets are copies": what a Sub's own preset (an alias, a rules-only
-/// restraint, a custom trigger) becomes when shared with their Owner - a self-contained Owner command that
-/// carries everything needed to run it, so the Owner's copy keeps working after the Sub deletes or changes
-/// the original, until the Owner removes it. Sharing again replaces the Owner's imported copies with the
-/// Sub's current set (CatalogSyncService's reconcile), never touching the Owner's own commands.
-///
-/// Copies are Owner commands, with the Owner's force semantics: a title copy locks the title, a restraint
-/// copy force-applies, an outfit copy locks unless the Sub's alias was unlocked (`outfit wear`). An
-/// attached moodle is not baked into the command - it's exported separately and becomes the Owner's
-/// per-command moodle pick (QuickCommand.MoodleOverride), so the Owner can still change it.
+/// What a Sub's preset becomes when shared: a self-contained Owner command, so the copy keeps working after the
+/// original changes. Copies carry Owner force semantics. Attached moodles travel separately as the Owner's moodle pick.
 public static class SharedPresetCommands
 {
-    /// A copy must fit in one chat message once the Owner's /tell target and trigger phrase are added in
-    /// front of it - this leaves room for those.
+    /// Room for the /tell target and trigger phrase.
     private const int ComposeMargin = 64;
 
     public static bool FitsInOneMessage(string command) => command.Length + ComposeMargin <= CommandSelector.MaxCommandLength;
 
-    /// The moodle name to carry with a copy (as the Owner's moodle pick), or null when there is none or it
-    /// can't travel inside the `moodle:"..."` option (a name with a double quote).
+    /// Null when there's none or it contains a double quote.
     public static string? MoodleName(AttachedMoodleRef? moodle)
     {
         if (moodle is null)
@@ -35,8 +25,7 @@ public static class SharedPresetCommands
     public static string Title(TitleAliasDefinition alias) =>
         TitleCommand.BuildStyleCommand(alias.Text, alias.IsPrefix, alias.Color, alias.Glow);
 
-    /// `outfit lock` for a locking alias, `outfit wear` for an unlocked one - both Owner commands; the
-    /// Sub's plugin finds the design by name in its own wardrobe.
+    /// The Sub's plugin finds the design by name.
     public static string? Outfit(OutfitAliasDefinition alias, PluginConfig config)
     {
         var name = config.WardrobeMapping.LocalDesigns.TryGetValue(alias.DesignId, out var design) ? design.Name : alias.DesignName;
@@ -65,14 +54,11 @@ public static class SharedPresetCommands
     public static string RulesOnlyRestraint(RestraintDeviceDefinition device) =>
         RestraintCommand.BuildWearCommand(device.Slot, device.ItemId, device.Name, device.Rules);
 
-    /// A `customtrigger cast` bundle is sent as one message per action when the whole thing doesn't fit
-    /// (ChatComposer.ComposeAll), so it only needs each action's own message to fit.
+    /// Oversized bundles go out one message per action, so only each action must fit.
     private static bool BundleFits(string command) =>
         FitsInOneMessage(command) || CustomTriggerCommand.SplitCastCommand(command) is { Count: > 1 } parts && parts.All(FitsInOneMessage);
 
-    /// The whole trigger as one `customtrigger cast` bundle, each restraint carrying its own rules. Null when
-    /// it can't be made self-contained (a restraint action whose restraint no longer exists) or one of its
-    /// actions alone won't fit in a chat message - such triggers aren't shared (see TooLongToShare).
+    /// Null when it can't be self-contained, or one action alone won't fit.
     public static string? CustomTrigger(CustomTriggerDefinition trigger, PluginConfig config)
     {
         var actions = new List<CustomTriggerAction>();
@@ -88,7 +74,6 @@ public static class SharedPresetCommands
         return BundleFits(command) ? command : null;
     }
 
-    /// True when a trigger can't be shared because one of its actions is too long for a chat message.
     public static bool IsTooLongToShare(CustomTriggerDefinition trigger, PluginConfig config)
     {
         var actions = trigger.Actions.Select(a => SelfContained(a, config)).ToList();

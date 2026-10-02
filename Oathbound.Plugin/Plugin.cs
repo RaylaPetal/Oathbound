@@ -46,12 +46,7 @@ public sealed class Plugin : IDalamudPlugin
     private const string PanicCommandName = "/oathboundpanic";
     private const string SettingsCommandName = "/oathboundsettings";
 
-    /// Backward-compatible aliases (collar/pairing, collar/ui-organization delta specs) - each points at
-    /// the exact same handler delegate as its primary command above, so existing macros/keybinds on the
-    /// old names keep working identically after the rename, with no behavior duplicated between them.
-    /// `ShorthandCommandName` only aliases the main window toggle, not panic/settings - those already have
-    /// full mnemonic names and are lower-frequency, so a shorthand adds more accidental-trigger risk than
-    /// convenience there.
+    /// Legacy command names kept so existing macros keep working.
     private const string LegacyCommandName = "/collar";
     private const string LegacyPanicCommandName = "/collarpanic";
     private const string LegacySettingsCommandName = "/collarsettings";
@@ -62,16 +57,11 @@ public sealed class Plugin : IDalamudPlugin
 
     public readonly WindowSystem WindowSystem = new("Oathbound");
 
-    /// collar/catalog-sync: the one native save/open dialog instance backing Export/"Import commands" -
-    /// owned here rather than per-window since both Settings (export) and CollarWindow (import) need it,
-    /// same "shared, drawn every frame from the UiBuilder.Draw hook" shape WindowSystem already has.
+    /// Shared by Settings (export) and CollarWindow (import).
     public readonly FileDialogManager FileDialogManager = new();
     private CollarWindow CollarWindow { get; }
     public ModuleWindow ModuleWindow { get; }
-    /// collar/ui-organization "Sub Control window stays docked to the main window": must stay registered
-    /// with `WindowSystem` immediately after `CollarWindow` (see the registration call below) so it always
-    /// reads `CollarWindow`'s current-frame position, not the previous frame's - Dear ImGui windows here are
-    /// drawn in registration order.
+    /// Must be registered right after CollarWindow: windows draw in registration order, and it docks to CollarWindow's current-frame position.
     public SubControlWindow SubControlWindow { get; }
     internal SettingsWindow SettingsWindow { get; }
     private WelcomeWindow WelcomeWindow { get; }
@@ -82,17 +72,13 @@ public sealed class Plugin : IDalamudPlugin
     private QuickAccessMenuHost QuickAccessMenuHost { get; }
     private RecoveryCodeWindow RecoveryCodeWindow { get; }
 
-    /// collar/ui-organization "A server info bar entry always opens the quick-access menu": the
-    /// only access point for QuickAccessMenu (the on-screen button was removed).
+    /// The only access point for QuickAccessMenu.
     private readonly IDtrBarEntry favoritesDtrEntry;
 
-    /// Shown only while a toy is running (Sub: actual state; Owner: estimate from what was sent), so both
-    /// sides can see at a glance that something is playing without opening the window.
+    /// Shown only while a toy is running.
     private readonly IDtrBarEntry toyStatusDtrEntry;
     private long nextToyStatusDtrUpdateTicks;
 
-    /// collar/onboarding: owns the guided-tutorial sequence and step index; CollarWindow only reads
-    /// `CurrentStep` each frame and exposes `SetActiveModuleForTutorial` for this to call.
     public TutorialDriver TutorialDriver { get; }
 
     public SubRuntimeState RuntimeState { get; }
@@ -155,12 +141,7 @@ public sealed class Plugin : IDalamudPlugin
     private DateTime nextRevocationCheckUtc = DateTime.MinValue;
     private DateTime nextPairStatusCheckUtc = DateTime.MinValue;
 
-    /// collar/relay-service "requests stop on logout/disposal": recurring background relay work (the
-    /// outbox retry and the missed-revocation check) is cancelled and restarted on every logout, and
-    /// cancelled for good in Dispose(). One-shot user-triggered relay actions (Send Invitation, Accept,
-    /// panic's revocation publish) are intentionally not tied to this - they're already bounded by
-    /// RelayClient's own HTTP timeout, and cancelling a button click the user just made because they
-    /// happened to log out mid-request would be a worse experience than just letting it time out normally.
+    /// Recurring relay work is cancelled on logout and disposal. One-shot user actions aren't tied to it; RelayClient's timeout bounds them.
     private CancellationTokenSource relayBackgroundWorkCts = new();
 
     public Plugin()
@@ -202,14 +183,13 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService = new RevocationService(Configuration, RelayClient, DeviceIdentityService);
 
         TitleCommand = new TitleCommand(HonorificIpc, RuntimeState);
-        // Built before Outfit/Follow/Restraint/Collar: each of them holds its attached moodle through it
-        // (collar/attached-moodles).
+        // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.
         MoodlesCommand = new MoodlesCommand(Configuration, MoodlesIpc, CatalogStore, new AttachedMoodleLedger(Configuration, MoodlesIpc));
         OutfitCommand = new OutfitCommand(Configuration, GlamourerIpc, SlotLockManager, RuntimeState, MoodlesCommand);
         temporaryModSettings = new TemporaryModSettingsCoordinator(PenumbraIpc);
         GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore);
         ReactionService = new ReactionService(Configuration, RuntimeState, EmoteWatcher, GlamourerIpc, SlotLockManager, PenumbraIpc, temporaryModSettings, MoodlesIpc, RestrictionRuleManager);
-        // Before Follow: the leash rides Teleport's journey across areas (collar/leash-travel).
+        // Before Follow: the leash rides Teleport's journey across areas.
         TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
         FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand, TeleportCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
@@ -230,8 +210,7 @@ public sealed class Plugin : IDalamudPlugin
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
-        // collar/pairing: a pairing the relay reports as unpaired gets exactly the teardown a verified unpair
-        // notice gets (PairingEnded above then queues the restraint cleanup and teleport stop).
+        // A pairing the relay reports as unpaired gets the same teardown as a verified unpair notice.
         RevocationService.EndPairingLocally = PairingService.EndFromVerifiedPeerNotice;
         CodePairingService = new CodePairingService(Configuration, RelayClient, DeviceIdentityService, PairingService, CollarCommand);
         BackupService = new BackupService(Configuration, RelayClient, DeviceIdentityService, RevocationService);
@@ -271,9 +250,7 @@ public sealed class Plugin : IDalamudPlugin
         toyStatusDtrEntry.OnClick = _ => ModuleWindow.IsOpen = true;
 
         WindowSystem.AddWindow(CollarWindow);
-        // collar/ui-organization "Sub Control window stays docked to the main window": registered
-        // immediately after CollarWindow so its PreDraw reads this frame's (not last frame's) position -
-        // see SubControlWindow's own field declaration above for the full reasoning.
+        // Right after CollarWindow - see SubControlWindow.
         WindowSystem.AddWindow(SubControlWindow);
         WindowSystem.AddWindow(ModuleWindow);
         WindowSystem.AddWindow(SettingsWindow);
@@ -285,8 +262,6 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(QuickAccessMenuHost);
         WindowSystem.AddWindow(RecoveryCodeWindow);
 
-        // collar/onboarding "Welcome window appears once on first plugin load": shown before CollarWindow
-        // is ever opened for the first time, and never again once completed/dismissed.
         if (!Configuration.HasCompletedWelcome)
             WelcomeWindow.IsOpen = true;
 
@@ -329,20 +304,17 @@ public sealed class Plugin : IDalamudPlugin
         ClientState.Login += OnLogin;
         ClientState.Logout += OnLogout;
 
-        // collar/pairing "check the relay at login...": one check at startup, independent of the
-        // low-frequency periodic schedule below (which is seeded past its own interval so it doesn't
-        // immediately double up on this one).
+        // One check at startup; the periodic schedule is seeded past its interval so it doesn't double up.
         nextRevocationCheckUtc = DateTime.UtcNow.AddHours(6);
         FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
 
         Log.Information("Oathbound loaded.");
     }
 
-    /// collar/pairing "check the relay at login": a fresh login is exactly the "at login" moment the spec
-    /// means, distinct from the plugin merely loading (which can happen mid-session on a reload).
+    /// A real login, not just a plugin reload mid-session.
     private void OnLogin()
     {
-        // collar/pairing: check every pairing against the relay right away, and pick up code invitations.
+        // Check every pairing against the relay right away, and pick up code invitations.
         nextPairStatusCheckUtc = DateTime.MinValue;
         CodePairingService.PollSoon();
         nextRevocationCheckUtc = DateTime.UtcNow.AddHours(6);
@@ -350,8 +322,7 @@ public sealed class Plugin : IDalamudPlugin
         CatalogAutoSync.OnLogin();
     }
 
-    /// collar/relay-service "requests stop on logout": cancels any in-flight recurring relay background
-    /// work and starts a fresh token source so work resumed after the next login isn't pre-cancelled.
+    /// Fresh token source so work resumed after the next login isn't pre-cancelled.
     private void OnLogout(int type, int code)
     {
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
@@ -420,8 +391,7 @@ public sealed class Plugin : IDalamudPlugin
         ReactionService.Dispose();
         SlotLockManager.Dispose();
         GlamourerIpc.Dispose();
-        // After every feature above has released what it could: drops any claim still held, since a locked
-        // temporary setting can only be removed with Oathbound's own key.
+        // After every feature has released what it could: a locked temporary setting can only be removed with Oathbound's own key.
         temporaryModSettings.Dispose();
         PenumbraIpc.Dispose();
 
@@ -430,10 +400,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args) => ToggleMainUi();
 
-    /// The safeword mechanic (collar/pairing): with no PanicSafeword configured, panic still triggers
-    /// unconditionally - an unconfigured safeword must never be the reason panic stops working. With one
-    /// configured, the typed word has to match (case-insensitive) - there's no visible button anymore, see
-    /// CollarWindow's header.
+    /// With no safeword configured panic always triggers; with one, the typed word must match (case-insensitive).
     private void OnPanicCommand(string command, string args)
     {
         var safeword = Configuration.PanicSafeword;
@@ -452,16 +419,13 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ToggleMainUi() => CollarWindow.Toggle();
 
-    /// collar/ui-organization "A movable on-screen button opens the quick-access favorites menu": the
-    /// menu's "Open main window" control.
     public void OpenMainWindow() => CollarWindow.OpenMainWindow();
 
     private void OnFrameworkUpdate(IFramework framework)
     {
         if (Interlocked.Exchange(ref pendingRestraintCleanup, 0) != 0)
             RestraintCommand.ForceUnlock();
-        // The panic hotkey is a plain edge-detected key check - deliberately simple so it keeps working
-        // even if everything else about the plugin (chat parsing, IPC) is broken.
+        // A plain edge-detected key check, so it keeps working even if chat parsing or IPC is broken.
         if (Configuration.PanicHotkey != VirtualKey.NO_KEY)
         {
             var isPressed = KeyState[Configuration.PanicHotkey];
@@ -492,16 +456,13 @@ public sealed class Plugin : IDalamudPlugin
             nextRevocationOutboxRetryUtc = utcNow.AddSeconds(30);
             FireAndForget(RevocationService.RetryOutboxAsync(relayBackgroundWorkCts.Token));
         }
-        // collar/pairing "check... on a low-frequency bounded schedule": no more often than every six
-        // hours, with jitter so many clients don't all poll on the same clock edge.
+        // At most every six hours, with jitter so clients don't all poll at once.
         if (utcNow >= nextRevocationCheckUtc)
         {
             nextRevocationCheckUtc = utcNow.AddHours(6).AddSeconds(Random.Shared.Next(0, 1800));
             FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
         }
-        // collar/pairing "Unpairing reaches the other person even when they are offline": at login (see OnLogin)
-        // and every pairStatusPollIntervalSeconds while logged in. Skipped while not logged in, so a
-        // title-screen session doesn't spend relay requests.
+        // Skipped while not logged in, so a title-screen session doesn't spend relay requests.
         if (utcNow >= nextPairStatusCheckUtc && ClientState.IsLoggedIn)
         {
             nextPairStatusCheckUtc = utcNow.AddSeconds(RelayProtocolConstants.PairStatusPollIntervalSeconds).AddSeconds(Random.Shared.Next(0, 120));
@@ -511,11 +472,9 @@ public sealed class Plugin : IDalamudPlugin
         {
             CodePairingService.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
             BackupService.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
-            // collar/pairing-recovery: show a newly issued recovery code once.
             if (BackupService.ShouldShowCodeDialog && !RecoveryCodeWindow.IsOpen)
                 RecoveryCodeWindow.IsOpen = true;
         }
-        // collar/catalog-sync automatic sync: hourly Sub rescans/publishes and Owner mailbox checks.
         CatalogAutoSync.OnFrameworkUpdate();
         UpdateToyStatusDtr();
     }
@@ -552,10 +511,7 @@ public sealed class Plugin : IDalamudPlugin
             Configuration.Version = 3;
             changed = true;
         }
-        // collar/onboarding: an install that predates the Welcome window/guided tutorial is treated as
-        // already welcomed - it must never pop Welcome or auto-launch a tutorial in front of a user who is
-        // already mid-session with a paired, configured setup (design.md's "Existing installs are treated
-        // as already welcomed").
+        // Installs that predate the Welcome window are treated as already welcomed.
         if (Configuration.Version < 4)
         {
             Configuration.HasCompletedWelcome = true;
@@ -564,10 +520,7 @@ public sealed class Plugin : IDalamudPlugin
             Configuration.Version = 4;
             changed = true;
         }
-        // collar/multi-pairing: move the old single `Pairing` field into the new `Pairings` list, active,
-        // so an already-paired install keeps working identically after upgrading. A never-paired install's
-        // default `Pairing` object carries no real state, so it's discarded rather than added as a dead
-        // entry.
+        // Move the old single Pairing into Pairings. A never-paired default carries no state and is discarded.
         if (Configuration.Version < 5)
         {
             if (Configuration.Pairing is { } legacy &&
@@ -596,8 +549,7 @@ public sealed class Plugin : IDalamudPlugin
         foreach (var cmd in Configuration.QuickCommands.Gestures)
         {
             if (cmd.Target is null || !Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(cmd.Target, out var entry)) continue;
-            // collar/animation-labels: entries imported before display labels existed saved the old +1 pose
-            // numbering as their Label - relabel them, but only while the Owner hasn't renamed them.
+            // Entries imported before display labels saved the old pose numbering as Label - relabel unless renamed.
             if (cmd.Label == entry.Label && entry.Label != entry.DisplayLabel)
             {
                 cmd.Label = entry.DisplayLabel;

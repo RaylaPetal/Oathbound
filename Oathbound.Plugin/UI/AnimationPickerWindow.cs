@@ -9,8 +9,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// Dedicated PoseKit-style browser used by the alias form. Keeping this hierarchy in its own roomy
-/// window lets mod/group/option names remain readable instead of compressing them into a combo.
+/// Its own roomy window so mod/group/option names stay readable instead of squeezed into a combo.
 public sealed class AnimationPickerWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -61,7 +60,6 @@ public sealed class AnimationPickerWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 

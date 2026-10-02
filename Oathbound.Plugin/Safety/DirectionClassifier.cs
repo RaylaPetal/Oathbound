@@ -3,8 +3,7 @@ using System.Numerics;
 
 namespace Oathbound.Plugin.Safety;
 
-/// collar/reactions "Emote trigger with direction filter": which side of the local player a reaction's
-/// emote must come from. `Any` is the zero value so a reaction saved without it matches from anywhere.
+/// `Any` is the zero value so a reaction saved without it matches from anywhere.
 public enum ReactionDirection
 {
     Any,
@@ -12,13 +11,8 @@ public enum ReactionDirection
     Behind,
 }
 
-/// Classifies where a source stands relative to an observer's position and facing - ported from ReactToMe's
-/// `DirectionClassifier`. Only the horizontal (X/Z) plane counts. In front and behind are each a 120-degree
-/// arc (60 degrees either side of straight ahead / straight back, matching FFXIV's own rear-positional
-/// convention); the two 60-degree arcs left over at the sides are neither.
-///
-/// Forward is (sin(rotation), cos(rotation)) in X/Z. ReactToMe never confirmed this sign convention in-game:
-/// if testing shows In front and Behind swapped, negate the rotation here.
+/// Horizontal plane only. In front and behind are each a 120-degree arc; the side arcs are neither.
+/// Forward is (sin(rotation), cos(rotation)) in X/Z - unconfirmed in game; if front/behind come out swapped, negate it.
 public static class DirectionClassifier
 {
     private const float ConeHalfWidthDegrees = 60f;

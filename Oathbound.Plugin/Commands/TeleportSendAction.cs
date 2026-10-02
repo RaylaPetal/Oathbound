@@ -1,16 +1,10 @@
 namespace Oathbound.Plugin.Commands;
 
-/// collar/teleport: the Owner-side "come here" resolve-compose-send action, shared by the always-visible
-/// header button, the Favorites window and the quick-access menu's favorited Teleport entry - two of those
-/// have no CollarWindow reference to call back into.
-///
-/// The Owner only reports where it is (design.md D2); choosing an aetheryte or housing route is the Sub's
-/// job, so this needs no Lifestream, no vnavmesh, and no nearby aetheryte.
+/// Shared by the header button, Favorites and the quick-access menu. The Owner only reports its location;
+/// the Sub picks the route, so this needs no Lifestream or vnavmesh.
 public static class TeleportSendAction
 {
-    /// Callers render the failure message however fits their own surface - the header persists it inline
-    /// (see CollarWindow.teleportResolveError), the quick-access menu shows a transient notification since
-    /// its popup closes on click and has no persistent surface of its own.
+    /// Callers show the error however suits their surface.
     public static (bool Success, string? Error) TryResolveAndSend(Plugin plugin)
     {
         if (!TryResolveTarget(out var target, out var error))
@@ -19,8 +13,7 @@ public static class TeleportSendAction
         return (true, null);
     }
 
-    /// Where the Owner is right now, as a Teleport destination - shared with LeashTravelWatcher
-    /// (collar/leash-travel), which sends the same location on its own after the Owner changes area.
+    /// Also used by LeashTravelWatcher.
     public static bool TryResolveTarget(out TeleportTarget target, out string? error)
     {
         target = null!;
@@ -33,7 +26,7 @@ public static class TeleportSendAction
             return false;
         }
 
-        // collar/teleport: a courtesy check only - the Sub refuses interiors itself regardless.
+        // A courtesy check only - the Sub refuses interiors itself.
         if (TeleportDestinations.IsInsideHousing())
         {
             error = "Teleport doesn't work from inside a house or apartment - step outside first.";

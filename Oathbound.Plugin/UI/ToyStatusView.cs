@@ -4,9 +4,7 @@ using Oathbound.Plugin.Commands;
 
 namespace Oathbound.Plugin.UI;
 
-/// Live toy status, shared by the Sub's Toy Control tab, the Owner's toy panels, and the server info bar
-/// entry: the Sub sees what the device is actually doing and what started it; the Owner sees an estimate
-/// built from what they last sent (see OwnerToyStatusTracker for why it can only be an estimate).
+/// The Sub sees what the device is actually doing; the Owner sees an estimate from what they sent.
 public static class ToyStatusView
 {
     public static void DrawSub(ToyControlCommand toy, bool connected)
@@ -33,8 +31,7 @@ public static class ToyStatusView
         IconGlyph.HelpMarker("An estimate from the commands you sent - your client can't see your Sub's device. Their own automatic triggers, a stop or panic on their side, or a shorter max duration they've set won't show here.");
     }
 
-    /// Info bar text: null hides the entry. The Sub's actual state wins over an Owner-side estimate when a
-    /// client is both.
+    /// Null hides the entry. The Sub's actual state wins when a client is both.
     public static (string Text, string Tooltip)? Dtr(ToyControlCommand toy, OwnerToyEstimate? estimate)
     {
         if (toy.CurrentStatus is { } s)

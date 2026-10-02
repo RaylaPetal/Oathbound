@@ -9,8 +9,6 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/pairing-recovery: Settings' recovery section - reveal/copy the code, backup status, regenerate, and
-/// restore on a fresh install.
 public sealed class RecoveryView
 {
     private readonly Plugin plugin;
@@ -157,8 +155,7 @@ public sealed class RecoveryView
     }
 }
 
-/// collar/pairing-recovery "A recovery code is issued and shown when the first pairing completes": opens
-/// by itself (see Plugin.OnFrameworkUpdate) until the player confirms they saved the code.
+/// Opens by itself until the player confirms they saved the code.
 public sealed class RecoveryCodeWindow : Window
 {
     private readonly Plugin plugin;
@@ -193,8 +190,7 @@ public sealed class RecoveryCodeWindow : Window
         }
     }
 
-    /// Closing the window counts as having seen it, so it doesn't reopen on every login - the code stays
-    /// available in Settings.
+    /// Closing counts as seen; the code stays available in Settings.
     public override void OnClose()
     {
         if (!plugin.Configuration.Recovery.CodeAcknowledged)

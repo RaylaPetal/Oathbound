@@ -10,9 +10,7 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// collar/catalog-sync: an actively paired Owner's request for a fresh encrypted catalog snapshot, end to
-/// end. Owner and Sub sides live in the same class (like PairingService) since both installs run the same
-/// binary and only Role decides which half ever actually runs.
+/// An Owner's request for a fresh encrypted catalog snapshot, end to end. Both sides live here; Role decides which runs.
 public sealed class CatalogSyncRelayService
 {
     private readonly PluginConfig config;
@@ -22,13 +20,10 @@ public sealed class CatalogSyncRelayService
     private readonly ChatSender sender;
     private readonly CatalogSyncService catalogSync;
 
-    /// Owner-side only: the ephemeral ECDH private key for a request awaiting its response, keyed by
-    /// requestId. Private material is deliberately memory-only; an interrupted request is detected and
-    /// cleared on startup rather than persisted insecurely or resumed without its decryption key.
+    /// Memory-only by design; an interrupted request is cleared on startup rather than persisted or resumed.
     private readonly Dictionary<string, RelayEcKeyPair> pendingOwnerRequests = new();
 
-    /// Owner-side: requestIds a `collarcatalogdenied` tell has already resolved, so the still-running poll
-    /// loop stops silently instead of later overwriting that explanation with a stale timeout error.
+    /// So the poll loop stops instead of overwriting the denial with a timeout error.
     private readonly HashSet<string> deniedRequestIds = new();
 
     public string? LastError { get; private set; }
@@ -38,8 +33,7 @@ public sealed class CatalogSyncRelayService
     public event Action? RequestInFlightChanged;
     public string Phase { get; private set; } = "Idle";
 
-    /// Owner-side: unix seconds of the last import (successful or not, for display purposes) so Settings
-    /// can show "last checked" distinctly from "last successful."
+    /// Successful or not, for display.
     public DateTimeOffset? LastAttemptAt { get; private set; }
     public CatalogSnapshotResult? LastImportResult { get; private set; }
 
@@ -77,10 +71,7 @@ public sealed class CatalogSyncRelayService
         RequestInFlightChanged?.Invoke();
     }
 
-    /// Owner-side, explicit UI action: creates a signed one-use catalog request and sends its reference in
-    /// one lifecycle tell (task 6.2), addressed to the given pairing (the active pairing, in practice - see
-    /// CollarWindow). The manual fallback to the automatic mailbox sync - no cooldown (collar/catalog-sync
-    /// "blocked only by an active request"); the Worker's one-active-request slot is the only gate.
+    /// The manual fallback to automatic mailbox sync. The Worker's one-active-request slot is the only gate.
     public async Task<bool> RequestRefreshAsync(PairingState pairing, CancellationToken ct)
     {
         if (!pairing.IsPaired)
@@ -118,8 +109,7 @@ public sealed class CatalogSyncRelayService
 
             await relay.CreateCatalogRequestAsync(envelope, ct).ConfigureAwait(false);
 
-            // Ownership of `ownerEphemeral` transfers into the pending map (not disposed here); it is
-            // disposed wherever it is later removed from the map (success, failure, or expiry).
+            // Ownership moves into the map; disposed wherever it's later removed.
             pendingOwnerRequests[requestId] = ownerEphemeral;
             unownedEphemeral = null;
             config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request");
@@ -151,17 +141,12 @@ public sealed class CatalogSyncRelayService
         }
     }
 
-    /// Owner-side: bounded poll for the Sub's upload, then retrieve/decrypt/decompress/validate/commit.
-    /// Never re-enables anything on failure; the prior imported snapshot is always left untouched unless
-    /// every check here passes (task 6.4).
+    /// The prior imported snapshot is untouched unless every check passes.
     private async Task PollAndImportAsync(string requestId, long requestExpiresAt, PairingState pairing, CancellationToken ct)
     {
         try
         {
-            // Bounded by the same expiresAt already sent to the Sub in the request envelope (collar/
-            // catalog-sync "requesting client waits for the full request validity window") - a shorter,
-            // independently-hardcoded poll duration would give up on (and destroy the decryption key for)
-            // a request the Sub could still legitimately answer.
+            // Bounded by the request's own expiresAt; giving up sooner would destroy the key for a request the Sub could still answer.
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -179,8 +164,7 @@ public sealed class CatalogSyncRelayService
                 }
                 catch (RelayException ex) when (ex.Code is "network" or "service_unavailable")
                 {
-                    // Transient - a single failed status check shouldn't end a wait the Sub could still
-                    // answer within (collar/catalog-sync "single transient error does not end the wait").
+                    // A single transient failure doesn't end the wait.
                     await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
                     continue;
                 }
@@ -225,7 +209,6 @@ public sealed class CatalogSyncRelayService
         }
         catch (OperationCanceledException)
         {
-            // Plugin shutting down - not an error to surface.
         }
         finally
         {
@@ -237,8 +220,7 @@ public sealed class CatalogSyncRelayService
         }
     }
 
-    /// All of the Owner-side authentication/decryption/validation task 6.4 requires, isolated so a failure
-    /// anywhere here guarantees no partial state - `result`/`error` are mutually exclusive on return.
+    /// Isolated so a failure anywhere leaves no partial state.
     private bool ImportSnapshot(CatalogResponseEnvelope envelope, byte[] ciphertext, RelayEcKeyPair ownerEphemeral, PairingState pairing, out CatalogSnapshotResult result, out string? error)
     {
         result = default;
@@ -318,17 +300,10 @@ public sealed class CatalogSyncRelayService
 
     // ---- Sub side ----
 
-    /// Sub-side: a `collarcatalogreq <requestId>` tell arrived from `senderName`@`senderWorld` (already
-    /// verified by Dalamud's chat sender field). Everything here fails closed silently except the one
-    /// explicit case the spec calls out (permission not enabled), which gets its own notice tell so the
-    /// Owner isn't left guessing (task 6.1/6.3).
+    /// Fails closed silently, except for "permission not enabled", which gets its own notice tell.
     public async Task HandleCatalogRequestTellAsync(string requestId, string senderName, string senderWorld, CancellationToken ct)
     {
-        // collar/multi-pairing: resolved against every pairing where this device is the Sub-side, not a
-        // single configured peer - honored using that pairing's own state, independent of which pairing is
-        // active. Direction-specific on purpose: a mutual pair has two pairings with this same sender, and
-        // only the Sub-side one is a valid source for a catalog *request* (the Owner-side one is this
-        // device requesting catalog *from* them, a different flow entirely).
+        // Only the Sub-side pairing with this sender is a valid source for a catalog request.
         var pairing = config.FindPairing(senderName, senderWorld, PairingDirection.SubSide);
         if (pairing is null)
         {
@@ -435,9 +410,7 @@ public sealed class CatalogSyncRelayService
 
             await relay.UploadCatalogResponseAsync(requestId, envelope, ciphertext, ct).ConfigureAwait(false);
 
-            // The Sub side otherwise has no way to know this ever happened - everything up to here is
-            // silent by design (fails closed with no feedback on any rejection), but a successful upload
-            // is worth a transient, self-dismissing notice rather than nothing at all.
+            // Everything else here is silent by design; a successful upload gets a brief notice.
             Plugin.NotificationManager.AddNotification(new Notification
             {
                 Title = "Oathbound",
@@ -446,9 +419,7 @@ public sealed class CatalogSyncRelayService
                 InitialDuration = TimeSpan.FromSeconds(5),
             });
 
-            // Clearing the sensitive buffers as soon as they've served their purpose - task 6.3 "clearing
-            // sensitive buffers". These are managed byte[]s (no unmanaged memory to free), so this is a
-            // best-effort scrub, not a hard guarantee against a GC copy lingering.
+            // Best-effort scrub; managed arrays can still leave GC copies.
             Array.Clear(compressed);
             Array.Clear(ciphertext);
         }
@@ -458,7 +429,6 @@ public sealed class CatalogSyncRelayService
         }
     }
 
-    /// Sub-side: a `collarcatalogdenied <requestId>` tell (permission not enabled on the Sub's side).
     public void HandlePermissionDeniedTell(string requestId)
     {
         if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();

@@ -4,10 +4,7 @@ using Newtonsoft.Json;
 
 namespace Oathbound.Plugin.Ipc;
 
-/// Honorific title payload, matching Honorific's own `TitleData` shape (Caraxi/Honorific, CustomTitle.cs)
-/// field-for-field so `JsonConvert.DeserializeObject&lt;TitleData&gt;` on Honorific's side round-trips it.
-/// Honorific ships no NuGet API package, so this is a hand-rolled mirror of its documented IPC contract
-/// rather than a shared type - see design.md's "Honorific IPC" (not "Honorific.Api") framing.
+/// Matches Honorific's TitleData field-for-field so it round-trips; Honorific ships no API package.
 public sealed class HonorificTitleData
 {
     public string Title { get; set; } = "";
@@ -16,8 +13,7 @@ public sealed class HonorificTitleData
     public Vector3? Glow { get; set; }
 }
 
-/// Thin wrapper around Honorific's IPC surface (`Honorific.SetCharacterTitle` / `ClearCharacterTitle`),
-/// always targeting the local player (objectIndex 0) - same "own client only" constraint as GlamourerIpc.
+/// Always targets the local player (objectIndex 0).
 public sealed class HonorificIpc
 {
     private const int LocalPlayerObjectIndex = 0;
@@ -26,7 +22,7 @@ public sealed class HonorificIpc
     private readonly ICallGateSubscriber<int, object> clearCharacterTitle;
     private readonly ICallGateSubscriber<(uint, uint)> apiVersion = Plugin.PluginInterface.GetIpcSubscriber<(uint, uint)>("Honorific.ApiVersion");
 
-    /// collar/ui-organization dependency status: cheapest read-only gate; any exception means unavailable.
+    /// Any exception means unavailable.
     public bool IsAvailable { get { try { apiVersion.InvokeFunc(); return true; } catch { return false; } } }
 
     public HonorificIpc()

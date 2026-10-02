@@ -21,11 +21,8 @@ public enum RestoreOutcome
     Failed,
 }
 
-/// collar/pairing-recovery: the recovery code and the encrypted relay backup of this install's identity and
-/// pairings. The backup is encrypted with a key derived from the recovery code before it leaves memory; the
-/// relay stores only ciphertext under SHA-256 of an id also derived from the code (see PairingCodes and
-/// worker/src/routes/backups.ts). Restoring puts back the device identity itself, so every relay pairing -
-/// and every partner's own record of this install - keeps working with no re-pairing.
+/// Encrypted relay backup of the identity and pairings under the recovery code; the relay stores only ciphertext
+/// under a hashed id derived from the code. Restoring brings back the identity itself, so no re-pairing is needed.
 public sealed class BackupService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
@@ -53,10 +50,8 @@ public sealed class BackupService
 
     public bool HasCode => config.Recovery.HasCode;
 
-    /// True while a freshly issued code hasn't been acknowledged yet - drives the "save your recovery code" dialog.
     public bool ShouldShowCodeDialog => config.Recovery.HasCode && !config.Recovery.CodeAcknowledged;
 
-    /// True once the current backup contents are on the relay.
     public bool IsUpToDate => config.Recovery.UploadedFingerprint is not null && config.Recovery.UploadedFingerprint == Fingerprint();
     public DateTimeOffset? LastUploadAt => config.Recovery.LastUploadAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(config.Recovery.LastUploadAt) : null;
 
@@ -68,7 +63,7 @@ public sealed class BackupService
         config.Save();
     }
 
-    /// The current code, formatted for display (groups of four).
+    /// Groups of four.
     public string? GetFormattedCode() => ReadCode() is { } code ? PairingCodes.Format(code) : null;
 
     private string? ReadCode()
@@ -96,14 +91,13 @@ public sealed class BackupService
         config.Save();
     }
 
-    /// Every framework tick: issues a code once the first pairing exists, and keeps the relay copy current.
+    /// Issues a code once the first pairing exists, and keeps the relay copy current.
     public void OnFrameworkUpdate(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         if (now < nextCheckUtc) return;
         nextCheckUtc = now + CheckInterval;
 
-        // Spec: "A recovery code is issued and shown when the first pairing completes".
         if (!config.Recovery.HasCode && config.Pairings.Any(p => p.IsPaired) && identity.HasIdentity)
             StoreCode(PairingCodes.NewRecoveryCode(), acknowledged: false);
 
@@ -139,8 +133,7 @@ public sealed class BackupService
         }
         catch (RelayException ex) when (ex.Code == "not_found")
         {
-            // The relay predates backups (no /v1/backups route yet) - not a failure the player caused or can
-            // fix, so say so plainly and check back rarely instead of retrying every few minutes.
+            // The relay predates backups - not the player's fault, so say so and check back rarely.
             LastError = "Backups aren't available on the relay yet - your recovery code will be used once they are.";
             retryNotBeforeUtc = DateTime.UtcNow + UnsupportedRetryDelay;
         }
@@ -161,7 +154,7 @@ public sealed class BackupService
         }
     }
 
-    /// New code: the backup is re-uploaded under it, and the old copy is deleted from the relay.
+    /// The old copy is deleted from the relay.
     public void Regenerate()
     {
         if (ReadCode() is { } old)
@@ -171,8 +164,7 @@ public sealed class BackupService
         retryNotBeforeUtc = DateTime.MinValue;
     }
 
-    /// Called just before the device identity is reset (still signed by the old key, which owns the backup):
-    /// the backup of the old identity is deleted and the code forgotten. Best effort.
+    /// Runs while the old key can still sign. Best effort.
     public async Task DeleteForIdentityResetAsync(CancellationToken ct)
     {
         if (ReadCode() is { } code)
@@ -184,8 +176,7 @@ public sealed class BackupService
         config.Save();
     }
 
-    /// Restores identity and pairings from a recovery code. Returns NeedsConfirmation (and changes nothing)
-    /// when this install already holds pairings under a different identity and `replaceConfirmed` is false.
+    /// NeedsConfirmation, changing nothing, when this install holds pairings under a different identity.
     public async Task<(RestoreOutcome Outcome, int Restored, int Dropped)> RestoreAsync(string typedCode, bool replaceConfirmed, CancellationToken ct)
     {
         var code = PairingCodes.Normalize(typedCode, PairingCodes.RecoveryCodeChars);
@@ -254,8 +245,7 @@ public sealed class BackupService
         config.RevocationOutbox.Clear();
         StoreCode(code, acknowledged: true);
 
-        // Drop anything a partner ended while this install was gone (spec: "A pairing ended while the player
-        // was away").
+        // Drop anything a partner ended while this install was gone.
         var before = config.Pairings.Count(p => p.IsPaired);
         await revocation.CheckPairStatusAsync(ct).ConfigureAwait(false);
         var after = config.Pairings.Count(p => p.IsPaired);
@@ -288,7 +278,7 @@ public sealed class BackupService
         }
     }
 
-    /// What the backup would contain, minus the timestamp - a change means the relay copy is stale.
+    /// Minus the timestamp - a change means the relay copy is stale.
     private string Fingerprint()
     {
         var sb = new StringBuilder(identity.DeviceKeyId ?? "");
@@ -314,8 +304,7 @@ public sealed class BackupService
         [JsonPropertyName("d")] public string PrivateD { get; set; } = "";
     }
 
-    /// The part of a PairingState needed to resume a pairing. Catalog/sync bookkeeping is left out: it
-    /// rebuilds itself on the next sync.
+    /// Catalog/sync bookkeeping is left out; it rebuilds on the next sync.
     private sealed class BackupPairing
     {
         [JsonPropertyName("id")] public Guid Id { get; set; }

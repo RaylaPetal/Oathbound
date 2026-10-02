@@ -13,11 +13,7 @@ using Glamourer.Api.Enums;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/ui-organization "Module content opens in its own window, not inline": one reusable window whose
-/// content switches on the active module id, matching NavBar's own "a new module is one more array entry,
-/// not a wider surface" scaling approach - see redesign-nav-and-modules's design.md. Everything that used to
-/// render inline below CollarWindow's nav bar lives here now: every category's Owner/Sub content, the
-/// guided-tutorial callout, and the shared quick-command editor.
+/// One reusable window whose content switches on the active module id.
 public sealed partial class ModuleWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -31,8 +27,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    /// The one entry point CollarWindow's nav-click routing and TutorialDriver (via
-    /// CollarWindow.SetActiveModuleForTutorial) use to pick which module this window shows.
     public void Show(string moduleId)
     {
         activeModule = moduleId;
@@ -51,14 +45,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private int newOutfitDesignIndex;
     private AttachedMoodleRef? newOutfitMoodle;
 
-    /// collar/attached-moodles: the Owner's moodle pick for the direct slot/item restraint being built (null =
-    /// no moodle - an ad-hoc device has no Sub-side default). Saved per-command picks live on QuickCommand.
+    /// Null = no moodle; an ad-hoc device has no Sub-side default.
     private string? adHocMoodleOverride;
-    /// collar/restraint-lock-timer: the ad-hoc restraint / ad-hoc Custom Trigger drafts' lock picks (null =
-    /// Permanent). Saved per-command picks live on QuickCommand.LockSeconds.
+    /// Null = Permanent.
     private int? adHocLockSeconds;
     private int? ctqLockSeconds;
-    /// The saved-command editor's moodle pick while editing an outfit command.
     private string? editingQuickMoodle;
     private bool newOutfitLocked = true;
     private int? selectedOutfitIndex;
@@ -88,12 +79,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private int? editingCustomTriggerActionIndex;
     private int? selectedCustomTriggerIndex;
 
-    /// Owner-side ad-hoc Custom Trigger draft (collar/custom-triggers "custom commands should also be
-    /// creatable via the Owner commands menu") - separate field set from the Sub-side draft above (ct*),
-    /// since these live on a different tab and build actions by NAME only rather than by picking from this
-    /// client's own local catalogs (the Owner's install has no access to the Sub's WardrobeMapping/
-    /// GestureMapping/MoodlesMapping/RestraintMapping - only the Sub does), mirroring the freeform
-    /// "type the exact name your Sub told you" pattern the other Owner quick-command sections already use.
+    /// Owner-side ad-hoc Custom Trigger draft. Actions are typed by name, since the Owner can't see the Sub's catalogs.
     private string ctqLabel = "";
     private readonly List<CustomTriggerAction> ctqDraftActions = new();
     private int ctqKindIndex;
@@ -121,16 +107,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private string ownerRestraintSearch = "";
     private string subRestraintSearch = "";
 
-    /// Owner-side ad-hoc device draft (collar/restraints "Owner-authored ad-hoc restraint device") - an
-    /// optional mod-filtered slot+item picked directly, with no Sub-side captured device to reference by
-    /// name. Gear is optional - a rules-only ad-hoc device leaves the mod/slot/item unset.
+    /// Gear is optional; a rules-only ad-hoc device leaves mod/slot/item unset.
     private string newAdHocLabel = "";
     private readonly RestraintRuleEditState newAdHocRuleEdit = new();
 
     private static readonly string[] PoseNames = ["Ground Sit", "Sit", "Doze"];
 
-    /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel" - order matches
-    /// the ChatChannel enum exactly, since the header combo indexes into this by (int)config.OutgoingChannel.
+    /// Order matches the ChatChannel enum; the header combo indexes into it.
 
     private string commandInput = "";
     private string newTitleQuickText = "";
@@ -151,8 +134,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private int toyVibrateDurationSeconds = 10;
     private string toyIntifaceAddress = "";
 
-    /// collar/toy-control: Sub-only custom pattern editor working state - a new pattern under construction
-    /// (or, while non-null, the id of an existing one being edited in place).
+    /// Non-null while editing an existing pattern in place.
     private string toyPatternNameInput = "";
     private bool toyPatternLoopInput;
     private readonly List<PatternStep> toyPatternStepsInput = new();
@@ -160,7 +142,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private string? toyPatternError;
     private int? selectedToyPatternIndex;
 
-    /// collar/toy-control: Sub-only trigger editor working state for a new/edited ToyTriggerRule.
     private ToyTriggerKind toyTriggerKindInput = ToyTriggerKind.HealthPercent;
     private int toyTriggerHealthThresholdInput = 50;
     private RestraintRuleKind toyTriggerRestrictionKindInput = RestraintRuleKind.Gagged;
@@ -180,10 +161,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private readonly List<string> toyTriggerSourcePlayersInput = new();
     private string toyTriggerSourcePlayerInput = "";
 
-    /// ImGui frame the Owner Sync tab was last drawn on - a gap means it was just (re)opened.
+    /// A gap means the tab was just (re)opened.
     private int lastSyncTabFrame = -10;
 
-    /// collar/ui-organization: search text filtering the Owner's Gesture quick-command list.
     private string gestureQuickSearch = "";
     private QuickCommand? editingQuickCommand;
     private List<QuickCommand>? editingQuickList;
@@ -193,7 +173,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private string editingQuickOriginalTarget = "";
     private bool editingQuickTitleIsPrefix;
     private bool editingQuickOriginalTitleIsPrefix;
-    /// Saved-outfit editor: lock the outfit (`outfit lock`) or just apply it (`outfit wear`).
     private bool editingQuickOutfitLocked = true;
     private bool editingQuickOriginalOutfitLocked = true;
     private static readonly string[] OutfitLockModeNames = ["Locked", "Not locked"];
@@ -207,11 +186,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private enum QuickEditCategory { Raw, Title, Outfit, Gesture, Follow, Moodle }
     private QuickEditCategory editingQuickCategory;
 
-    /// Owner-side per-quick-command rule editor state (collar/restraints "Owner assigns rules to a quick
-    /// command"), keyed by the quick command's Label - transient UI-only state, not persisted itself (the
-    /// chosen rules are saved onto the QuickCommand on "Save rules").
+    /// Keyed by the quick command's Label; transient.
     private readonly HashSet<string> expandedRestraintRuleEditors = new();
-    /// The Sub's one open configured-mod-restraint editor ("submod:<id>"), if any - see OpenSubModEditor.
     private string? expandedSubModKey;
     private readonly Dictionary<string, RestraintRuleEditState> restraintRuleEdits = new();
 
@@ -235,7 +211,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         public string? FullBodyCuffedAnimationId;
     }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 
@@ -245,8 +220,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using var card = Card.Begin("moduleCard");
         var isOwner = ResolveOwnerModeView();
 
-        // collar/ui-organization: a module window already open when its dependency disappears shows why in
-        // place of its content, until the dependency is detected again (same rule as the nav tile).
         if (DependencyGates.ModuleBlockedReason(plugin, activeModule) is { } blockedReason)
         {
             IconGlyph.WrappedColored(Theme.StatusMissing, blockedReason);
@@ -286,8 +259,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     var canSend = DrawOwnerCanSendBanner();
                     IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
                     ImGui.Separator();
-                    // collar/custom-triggers "Revert custom triggers": undo what Custom Triggers applied, without
-                    // "revert all" or unlocking each category by hand.
                     using (Section.Begin("ctqRevert", "Revert"))
                     {
                         DrawFixedQuickRow("Revert custom triggers", "customtrigger revert", canSend, FixedActionIds.CustomTriggerRevert);
@@ -318,7 +289,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 DrawReactionsModule();
                 break;
             case "permissions":
-                // Only reached from the guided tutorial's Permissions step - the real controls live in Settings.
+                // Only reached from the guided tutorial's Permissions step.
                 IconGlyph.WrappedDisabled("Permissions now live in Settings, on the Permissions tab.");
                 if (ImGui.SmallButton("Open Settings > Permissions"))
                     plugin.SettingsWindow.ShowPermissionsTab();
@@ -326,10 +297,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/onboarding: renders the current guided-tutorial step's explanation and Next/Exit controls
-    /// above the module card, driven entirely by `plugin.TutorialDriver` (see design.md's "Tutorial driver
-    /// lives outside CollarWindow" decision) - this window only reads the driver's current step each frame,
-    /// it never owns tutorial state itself.
+    /// Reads the tutorial driver's current step each frame; owns no tutorial state.
     private void DrawTutorialCallout()
     {
         var driver = plugin.TutorialDriver;
@@ -337,9 +305,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
 
         var text = driver.ActiveDirection == PairingDirection.OwnerSide ? step.OwnerText : step.SubText;
-        // Fixed, compact height + noScroll: Card.Begin's default (0,0) size fills all remaining window
-        // space in ImGui, which left no room for the module card below and forced the whole window to
-        // scroll - matching the nav bar's own fixed-height, noScroll card for the same reason.
+        // Fixed height + noScroll: the default size fills the window and leaves no room for the module card.
         using var card = Card.Begin("tutorialCallout", new Vector2(0, 130), noScroll: true);
         IconGlyph.Text(FontAwesomeIcon.GraduationCap, $"Tutorial ({driver.CurrentStepNumber}/{driver.TotalSteps}): {step.TabLabel}");
         ImGui.Separator();
@@ -351,9 +317,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             driver.ExitEarly();
     }
 
-    /// collar/ui-organization "Category tabs present role-aware content": the "no /tell target yet"
-    /// warning DrawOwnerModule used to show once for the whole accordion, now shown at the top of every
-    /// shared category tab's Owner-role view instead. Returns whether Send should be enabled on that tab.
+    /// Returns whether Send should be enabled on that tab.
     private bool DrawOwnerCanSendBanner()
     {
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
@@ -362,38 +326,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return canSend;
     }
 
-    /// collar/multi-pairing "Active pairing selection drives outgoing commands and role-aware views": which
-    /// direction's view a shared category tab renders. The active pairing's own direction wins when one is
-    /// selected; otherwise it falls back to the device's Role (Owner/Sub), and for a Switch with nothing
-    /// active, the last direction it was showing.
     private bool ResolveOwnerModeView()
     {
         var config = plugin.Configuration;
         var isOwner = config.ResolveActiveDirection() == PairingDirection.OwnerSide;
 
-        // Deliberately no config.Save() here: this only ever matters as a fallback default when no
-        // pairing is active (see ResolveActiveDirection), so forcing an immediate synchronous write every
-        // time it merely tracks the current pairing's own direction - e.g. once per pairing switch - would
-        // double the cost of that switch for no reason. It rides along on whatever save happens next.
+        // No Save here: it's only a fallback default, so it rides along on the next save.
         if (config.Role == PluginRole.Switch && config.SwitchLastUsedOwnerView != isOwner)
             config.SwitchLastUsedOwnerView = isOwner;
         return isOwner;
     }
 
-    /// collar/ui-organization: replaces the stale "use \"Import commands\" above" message these
-    /// quick-command sections used to show back when Import commands lived in the same accordion just
-    /// above them - it's on its own Sync tab now, so this jumps there directly instead of naming a
-    /// location that's no longer nearby.
     private void DrawGoToSyncTabPrompt(string message)
     {
         IconGlyph.WrappedDisabled(message);
         if (ImGui.SmallButton("Go to Sync tab"))
             Show("sync");
     }
-    /// collar/ui-organization "Sync tab holds catalog relay sync and import/reset": Owner gets the
-    /// existing catalog relay sync + offline file fallback controls; Sub gets the offline/manual export
-    /// action (see DrawSubExportSection) plus a note about the Permissions "Catalog sync (relay)" toggle -
-    /// scanning itself stays in Settings, since that's about this client's own local mod setup.
     private void DrawSyncTab(bool ownerMode)
     {
         if (!ownerMode)
@@ -402,8 +351,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        // collar/catalog-sync "Owner opens the Sync tab": a check the moment the tab becomes visible (not every
-        // frame it stays visible), skipped if the last successful check was under a minute ago.
+        // Checks once when the tab becomes visible, skipped if the last success was under a minute ago.
         var frame = ImGui.GetFrameCount();
         if (frame - lastSyncTabFrame > 1 && plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide } openedPairing)
             plugin.CatalogAutoSync.RequestOwnerCheck(openedPairing, force: false);
@@ -422,15 +370,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/ui-organization: the Sub-role view of the Sync tab. Relay sync itself is entirely the
-    /// Owner's action (request refresh) with nothing for the Sub to click - what the Sub actually does is
-    /// export a file for the offline/manual fallback, previously Settings' "Scan & Export" card, moved
-    /// here so a Sub has one real action on their own Sync tab instead of a purely informational message.
-    /// Scanning itself (rescanning designs/animations/moodles/restraint mods) stays in Settings, since
-    /// that's about this client's own local Penumbra/Glamourer/Moodles setup, not catalog sync.
-    /// collar/ui-organization: the Sub-role Sync tab now owns everything catalog-related end to end -
-    /// relay sync explanation, scanning (moved here from Settings' former "Scanning" tab), and the
-    /// offline/manual export action - rather than splitting scanning into Settings and sync/export here.
     private void DrawSubExportSection()
     {
         var config = plugin.Configuration;
@@ -462,9 +401,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("scanMoodles"))
             DrawGatedScan(DependencyId.Moodles, () => DrawMoodlesScanBody(config));
 
-        // collar/catalog-sync "shared presets are copies": a custom trigger is shared as one self-contained
-        // command, sent one message per action if it doesn't fit in one - a trigger with an action too long
-        // for a single message is left out, and said so here.
+        // A trigger with an action too long for a single message can't be shared.
         var tooLong = config.Aliases.CustomTriggers.Where(t => SharedPresetCommands.IsTooLongToShare(t, config)).Select(t => t.Alias).ToList();
         if (tooLong.Count > 0)
         {
@@ -503,8 +440,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(subExportResult.StartsWith("Export failed", StringComparison.Ordinal) ? Theme.Danger : Theme.Success, subExportResult);
     }
 
-    /// collar/catalog-sync automatic sync, Sub view: what's shared, when it last went out to each Owner, and
-    /// the one control the Sub has over the schedule (periodic rescans). Publishing itself needs no click.
     private void DrawSubAutoSyncInfo(PluginConfig config)
     {
         IconGlyph.WrappedDisabled("Whenever your catalog changes, it's shared with your paired Owner automatically through the Oathbound Cloudflare relay, end-to-end encrypted. No chat messages are sent. Your Owner's plugin picks it up within about an hour.");
@@ -532,8 +467,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/ui-organization "Partly dependent features are disabled inline": each catalog source is scanned from
-    /// its own plugin, so one missing plugin disables only that source's section.
+    /// One missing plugin disables only its own source's section.
     private void DrawGatedScan(DependencyId required, Action draw)
     {
         var blocked = DependencyGates.FeatureBlockedReason(plugin, required);
@@ -726,9 +660,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/moodles: no folder allowlist, unlike Wardrobe/Gesture - Moodles statuses have no folder-
-    /// organization concept, every registered status is eligible (design.md's decision). Reads individual
-    /// statuses (buffs/debuffs) rather than bundled presets, so the Owner can command a single status.
+    /// Reads individual statuses rather than presets, so the Owner can command a single status.
     private void DrawMoodlesScanBody(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Moodles status scan");
@@ -779,7 +711,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Wardrobe folder scopes use "empty = all" semantics and prefix matching when narrowed.
+    /// "Empty = all"; prefix matching when narrowed.
     private void DrawAllowlistBody(List<string> allowlist, ref string newFolderInput, string idSuffix)
     {
         for (var i = 0; i < allowlist.Count; i++)
@@ -806,9 +738,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             newFolderInput = "";
         }
     }
-    /// Drawn by SettingsWindow's Permissions tab (collar/ui-organization "Permissions live in a Settings tab").
-    /// collar/ui-organization "Permissions flag categories whose dependency is missing": a red note only - the
-    /// toggle stays usable so a permission can be set ahead of installing the plugin.
+    /// A note only - the toggle stays usable so a permission can be set before installing the plugin.
     private void DrawPermissionDependencyNote(params DependencyId[] required)
     {
         if (DependencyGates.PermissionNote(plugin, required) is { } note)
@@ -1042,10 +972,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/restraints: captures a single equipped gear piece (Wrists, Body, etc. - any of the 10
-    /// lockable slots) directly from what's currently equipped, the same capture mechanism CollarState uses
-    /// for the collar item, as a named restraint device carrying restriction rules - no scan/design library
-    /// involved. Then create Sub-alias entries that toggle them (RestraintCommand.Toggle).
     private void DrawRestraintsModule()
     {
         var config = plugin.Configuration;
@@ -1054,8 +980,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Choose scanned Penumbra mods and configure the restraints you want to share. Your Owner receives both these ready-made restraints and the complete scanned mod library for creating their own.");
         IconGlyph.WrappedDisabled("Owner force-release is always `restraint unlock`. Each restraint's alias toggles it on and off when your Owner sends it on its own, and force-applies it after `restraint lock`.");
 
-        // collar/restraint-lock-timer "Sub sees the current lock state" - recomputed every frame, so a
-        // Timed lock's countdown stays live while the window is open.
+        // Recomputed every frame so a Timed lock's countdown stays live.
         if (config.RestraintsForceLocked)
         {
             IconGlyph.WrappedColored(Theme.Warning, config.RestraintsLockExpiresAtUtc is { } expiresAt
@@ -1065,11 +990,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         DrawSubModRestraints(config);
 
-        // Rules-only restraints: a named set of restriction rules (forced pose, walk-only, gagged, action block - cuffs
-        // are device restrictions, so they live on the mod restraints above) with no
-        // gear of its own - gear-carrying restraints come from the shared Penumbra mods above. Devices captured
-        // with gear by older versions still work and keep their gear when edited here (the draft carries the
-        // device's existing slot/item through untouched); there's just no way to pick new gear.
+        // Rules-only restraints. Older devices captured with gear keep it when edited here.
         var devices = config.RestraintMapping.Devices.Values.ToList();
         if (devices.Count > 0)
         {
@@ -1123,8 +1044,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var duplicateDeviceName = devices.Any(d => d.Id != editingDeviceId &&
             string.Equals(d.Name, newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase))
             || config.RestraintMapping.ConfiguredMods.Any(m => string.Equals(m.Alias.Trim(), newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase));
-        // Only measured once the draft is complete - an unfinished rule (e.g. a mod forced pose with no
-        // animation picked yet) has nothing meaningful to measure, and Save is disabled for it anyway.
+        // Only measured once the draft is complete; Save is disabled for an unfinished rule anyway.
         var safeDeviceCommand = !hasAnyRule || !boundAnimationsConfigured
             || CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), ToRules(newDeviceRuleEdit)));
         if (duplicateDeviceName)
@@ -1139,7 +1059,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             {
                 var rules = ToRules(newDeviceRuleEdit);
 
-                // New ones never carry gear; an edited older device keeps whatever gear it already had.
+                // New ones never carry gear; an edited older device keeps its gear.
                 var saved = editingDeviceId is null
                     ? plugin.RestraintCommand.CaptureDeviceFromItem(null, null, newDeviceName, rules, newDeviceMoodle)
                     : SaveDeviceDraft(newDeviceSlot, newDeviceItemId, rules);
@@ -1175,9 +1095,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     var alreadyConfiguredCount = configured.Count(x => x.CatalogId == entry.Id);
                     if (ImGui.SmallButton($"{(alreadyConfiguredCount > 0 ? "Choose again" : "Choose")}##subRestraint_{entry.Id}"))
                     {
-                        // A mod can be configured more than once with different restriction rules (collar/
-                        // restraints "create a mod restraint for the same mod") - each gets its own name so the
-                        // Sub can tell entries for the same mod apart in the list below.
+                        // The same mod can be configured more than once, so each gets a distinct name.
                         var name = alreadyConfiguredCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyConfiguredCount + 1})";
                         var created = new ConfiguredModRestraint { CatalogId = entry.Id, Name = name };
                         configured.Add(created);
@@ -1194,9 +1112,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedDisabled("Choose a detected mod above, then assign its restriction rules.");
             return;
         }
-        // collar/ui-organization "Sub's configured mod restraints list scrolls within a bounded height": the
-        // one-line rows scroll inside a capped list, and the (tall) editor for the one open row is drawn
-        // below it rather than inline, so it's never clipped by the list's viewport.
+        // The editor is drawn below the list rather than inline, so the list's viewport never clips it.
         var style = ImGui.GetStyle();
         var listMaxHeight = 6 * ImGui.GetFrameHeightWithSpacing() + 2 * style.WindowPadding.Y;
         using (Section.List("configuredRestraintModsList", listMaxHeight))
@@ -1292,8 +1208,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Only one configured mod restraint's editor is open at a time - opening another discards the current
-    /// one's unsaved draft, exactly as its Close button would.
+    /// Opening another discards the current one's unsaved draft.
     private void OpenSubModEditor(string key, RestraintRuleEditState draft)
     {
         CloseSubModEditor();
@@ -1313,9 +1228,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static bool HasAnyRule(RestraintRuleEditState edit) =>
         edit.ForcedPose || edit.WalkOnly || edit.ActionBlock || edit.Gagged || edit.ArmsCuffed || edit.LegsCuffed || edit.FullBodyCuffed;
 
-    /// Gagged's animation is deliberately excluded here - unlike Arms/Legs/Full Body Cuffed (which are
-    /// pure animation-hold rules with no effect at all if unconfigured), Gagged's chat-garble restriction
-    /// always applies on its own, so its animation stays optional even while the rule is checked.
+    /// Gagged's animation stays optional: its chat garble applies on its own.
     private bool BoundAnimationsConfigured(RestraintRuleEditState edit)
     {
         bool Contains(string id) => ResolveOwnerModeView()
@@ -1328,25 +1241,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
             && Valid(edit.ForcedPose && edit.ForcedPoseIsMod, edit.ForcedPoseAnimationId);
     }
 
-    /// collar/ui-organization "Restraint rule checkboxes are laid out two per row": shared by the Sub's
-    /// device-capture editor, the Owner's per-quick-command editor, and the Owner's ad-hoc device editor -
-    /// one `ImGui.Columns(2)` block per row keeps each checkbox's own dependent controls (pose combo,
-    /// bound-animation picker) attached underneath it within its own column, regardless of how tall the
-    /// other column's content is.
     private static readonly string[] ForcedPoseSourceNames = ["Vanilla pose", "Animation mod"];
 
-    /// collar/restraints "Unified restriction toggle list": a single flat list of the seven restriction
-    /// toggles - Forced Pose, Arms Cuffed, Legs Cuffed, Walk-only, Gagged, Fully Restrain, Action Block -
-    /// replacing the old "Restraints" vs "Restrictions" header split (there was never a real behavioral
-    /// distinction between them). Every rule still lands in the same single `RestraintRuleEditState`/
-    /// `List<RestraintRuleAssignment>` this method's callers already share; only the layout changed.
-    /// `allowCustomizePreset` is true only for the Sub's own editors (device capture, mod configuration) -
-    /// an Owner-side editor (ad-hoc device, per-quick-command rules) never shows the Customize+ picker,
-    /// since only the Sub's own client can enumerate the Sub's local Customize+ profiles.
-    /// `rulesOnly` is for a restraint with no gear or mod of its own (the Sub's rules-only restraint form, the
-    /// Owner's ad-hoc rules-only restraint): Arms Cuffed, Legs Cuffed and Fully Restrain are device
-    /// restrictions, so they're left out - unless one is already checked on an older saved restraint, which
-    /// still shows it so it can be unchecked (collar/restraint-restrictions "Unified restriction toggle list").
+    /// `allowCustomizePreset` is only for the Sub's own editors - only the Sub's client can list their profiles.
+    /// `rulesOnly` hides the device-only rules unless one is already checked on an older restraint.
     private void DrawRestraintRuleCheckboxes(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset = false, bool rulesOnly = false)
     {
         var cells = new List<Action>
@@ -1399,9 +1297,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.HelpMarker("Blocks hotbar action/skill usage until released, without affecting movement.");
         });
 
-        // Two per row, one ImGui.Columns block per row, so each toggle's own dependent controls stay under it
-        // regardless of how tall the other column is. The full list keeps its original order/layout; the
-        // rules-only list re-flows without empty cells.
+        // One Columns block per row keeps each toggle's dependent controls under it.
         for (var i = 0; i < cells.Count; i += 2)
         {
             ImGui.Columns(2, $"restraintRules_{idSuffix}_row{i / 2 + 1}", false);
@@ -1413,10 +1309,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/restraints "Gagged toggle chat restriction"/"Optional Customize+ preset on Gagged": the
-    /// chat-garble restriction always applies once checked; the animation and (Sub-side only) Customize+
-    /// preset are both independently optional cosmetic layers on top of it, each individually clearable
-    /// without unchecking the whole rule.
     private void DrawGaggedPicker(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset)
     {
         ImGui.Checkbox($"Gagged##{idSuffix}", ref edit.Gagged);
@@ -1437,12 +1329,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// collar/restraints "Arms Cuffed and Legs Cuffed rules...": a checkbox plus the same searchable
-    /// animation picker `collar/gesture`'s "Add animation..." button already opens (AnimationPickerWindow),
-    /// reused here for the Sub's device-capture UI and the Owner's per-quick-command rule editor alike.
-    /// `onChosen` writes back to whatever field/property backs `currentAnimationId` - a plain delegate
-    /// rather than `ref string?`, since the picker's selection callback fires on a later frame and a ref
-    /// parameter can't be captured by that closure.
+    /// A delegate rather than `ref`, since the picker's callback fires on a later frame.
     private void DrawBoundAnimationPicker(string label, ref bool enabled, string? currentAnimationId, Action<string> onChosen, string idSuffix)
     {
         ImGui.Checkbox($"{label}##{idSuffix}", ref enabled);
@@ -1454,9 +1341,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// The animation-choosing half of `DrawBoundAnimationPicker`, without its own enabling checkbox - used
-    /// where a rule already has its own checkbox with a separate vanilla/mod source toggle (mod-sourced
-    /// Forced Pose), so this only ever gets called once that toggle has already picked "mod".
     private void DrawAnimationChooser(string? currentAnimationId, Action<string> onChosen, string idSuffix, Action? onCleared = null)
     {
         var ownerMode = ResolveOwnerModeView();
@@ -1483,8 +1367,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
         }
 
-        // The button itself shows what's chosen (compact name, full name + trigger on hover) and clicking it
-        // opens the picker to change it - no separate "Change..." button with the choice as loose text below.
         var buttonText = stale ? "Missing - choose again..."
             : chosenLabel ?? "Choose animation...";
         if (DrawChoiceButton(buttonText, idSuffix, stale))
@@ -1500,9 +1382,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawChoiceClearButton(idSuffix, onCleared);
     }
 
-    /// A button whose label is the current choice (or a "Choose..." prompt when there's none) - clicking it
-    /// opens that choice's picker. Stretches to the available width (minus room for a clear button) and
-    /// shows a stale choice in the warning color.
     private static bool DrawChoiceButton(string text, string idSuffix, bool warn = false)
     {
         var clearWidth = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemSpacing.X;
@@ -1527,14 +1406,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.PopID();
     }
 
-    /// collar/restraints "Optional Customize+ preset on Gagged": the Customize+ counterpart to
-    /// DrawAnimationChooser, but against a flat list of the Sub's own Customize+ profiles (CustomizePresetPickerWindow)
-    /// instead of the mod/group/option/trigger tree AnimationPickerWindow shows - Customize+ profiles have
-    /// no such hierarchy and are never shared via catalog sync (design.md's Non-Goals), so there is no
-    /// Owner/imported-mode branch here at all.
+    /// Customize+ profiles are flat and never shared via catalog sync, so there's no Owner mode here.
     private void DrawCustomizePresetChooser(string? currentPresetId, string? currentPresetLabel, Action<string?, string?> onChosen, string idSuffix)
     {
-        // collar/ui-organization "Partly dependent features are disabled inline": only this option needs Customize+.
         var blocked = DependencyGates.FeatureBlockedReason(plugin, DependencyId.CustomizePlus);
         var buttonText = currentPresetId is null ? "Choose Customize+ preset..." : $"C+: {currentPresetLabel ?? currentPresetId}";
         using (ImRaii.Disabled(blocked is not null))
@@ -1638,10 +1512,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/moodles "Sub can self-apply or self-clear a Moodle via alias": mirrors DrawGestureModule's
-    /// exact shape (a list of defined aliases with Remove, a dedicated clear alias, an "add" form picking
-    /// from the Sub's own scanned catalog) - the picking control here is a plain combo rather than a
-    /// dedicated picker window since Moodles has no equivalent of AnimationPickerWindow/ItemPickerWindow.
     private void DrawMoodlesModule()
     {
         var config = plugin.Configuration;
@@ -1707,14 +1577,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/custom-triggers "Sub can define a multi-action Custom Trigger": builds one CustomTriggerAction
-    /// at a time into a draft list (reusing each category's own existing picker - AnimationPickerWindow for
-    /// Gesture, WardrobeMapping/RestraintMapping-backed combos for Outfit/Restraint matching
-    /// DrawWardrobeModule/DrawRestraintsModule, a plain combo for Moodle matching DrawMoodlesModule, and a
-    /// raw text box for Chat since design.md rules out any content/channel validation beyond the permission
-    /// gate itself), then commits alias+actions together on "Save trigger". Each bundled action still checks
-    /// its own category's permission at apply time (CustomTriggerCommand.Apply) - this UI doesn't duplicate
-    /// those checks, it only builds the definition.
+    /// Each bundled action checks its own permission at apply time; this UI only builds the definition.
     private void DrawCustomTriggersModule()
     {
         var config = plugin.Configuration;
@@ -1777,8 +1640,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 using (ImRaii.Disabled(i == ctDraftActions.Count - 1))
                     if (ImGui.SmallButton("↓"))
                         MoveDraftAction(ctDraftActions, i, i + 1, ref editingCustomTriggerActionIndex);
-                // A restraint action only references a restraint - its rules/moodle are edited in the
-                // Restraints tab, so there's nothing to edit here (remove and re-add to pick another one).
+                // A restraint action only references a restraint; its rules/moodle are edited in the Restraints tab.
                 if (ctDraftActions[i].Kind != CustomTriggerActionKind.Restraint)
                 {
                     ImGui.SameLine();
@@ -1807,8 +1669,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (editingCustomTriggerActionIndex is not null)
             IconGlyph.WrappedColored(Theme.Accent, "Editing this action. Change its values below, then choose Save action.");
 
-        // collar/ui-organization "Partly dependent features are disabled inline": a part whose category needs a
-        // missing plugin can't be added or saved; the rest of the bundle editor keeps working.
         var kindBlocked = plugin.DependencyStatus.MissingReason(DependencyGates.CustomTriggerPart(kind));
         if (kindBlocked is not null)
             IconGlyph.WrappedColored(Theme.StatusMissing, kindBlocked);
@@ -2104,10 +1964,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         target.FullBodyCuffedAnimationId = source.FullBodyCuffedAnimationId;
     }
 
-    /// collar/collaring: the Sub's own configured Neck-slot collar. Capture-only (see design.md's "Collar
-    /// capture, not manual entry") - equip what you want first, then click Capture. Locked once applied at
-    /// pairing acceptance (AcceptPending), not from this tab - editing/clearing is disabled while locked,
-    /// matching "Sub configures their own collar item" and "resists casual removal" together.
+    /// Capture-only, and editing is disabled while the collar is locked.
     private void DrawCollarModule()
     {
         var config = plugin.Configuration;
@@ -2149,8 +2006,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.HelpMarker("Optional. Applied alongside your collar item when it locks, and periodically re-asserted for as long as the collar stays locked - removing it through Moodles' own UI won't make it stick. Your safeword leaves it on; it's cleared only when the pairing that collared you ends.");
 
             var collarMoodleStatuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-            // collar/ui-organization "Partly dependent features are disabled inline": assigning needs Moodles;
-            // clearing an existing assignment (below) stays available.
+            // Clearing an existing assignment stays available without Moodles.
             if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } collarMoodleBlocked)
             {
                 IconGlyph.WrappedColored(Theme.StatusMissing, collarMoodleBlocked);
@@ -2188,9 +2044,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/ui-organization: split out of DrawCollarModule so Collar and Follow / Leash can be
-    /// independent tabs, matching the Owner side's existing separate Collar/Leash sections and the
-    /// separate Follow permission toggle - no change to either section's own controls.
     private void DrawFollowLeashModule()
     {
         var config = plugin.Configuration;
@@ -2230,9 +2083,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Best-effort display name for a raw Glamourer item id via Lumina's own Item sheet - falls back to
-    /// the numeric id for sentinel/special values (e.g. "nothing equipped") that don't resolve to a real
-    /// row, so a lookup miss never crashes the picker's chosen-item label.
+    /// Falls back to the numeric id for sentinel values that don't resolve to a row.
     private static string GetItemName(ulong itemId)
     {
         var row = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().GetRowOrDefault((uint)itemId);
@@ -2240,9 +2091,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return string.IsNullOrWhiteSpace(name) ? $"Item #{itemId}" : name;
     }
 
-    /// collar/catalog-sync: the single Owner-side entry point that replaces the three former per-category
-    /// "Add from clipboard" buttons - opens a native file picker for a Sub-exported catalog file and fills
-    /// every category's quick-command list from it in one action (CatalogSyncService.ParseImport).
     private void DrawImportCommandsButton()
     {
         const string importLabel = "Import commands";
@@ -2263,8 +2111,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 try
                 {
                     var text = System.IO.File.ReadAllText(path);
-                    // Paired as this Sub's Owner: importing their file again replaces what they shared
-                    // before (like a relay refresh). Otherwise, the old add-only import.
+                    // Paired with this Sub: re-importing their file replaces what they shared before, like a relay refresh.
                     if (plugin.CatalogSyncService.TryApplyFileAsPairSnapshot(text, plugin.Configuration.ActivePairing) is { } shared)
                     {
                         importResult = shared.Error ?? $"Updated from your Sub's file: {shared.Added} added, {shared.Updated} updated, {shared.Removed} removed. Your own commands were left as they were.";
@@ -2287,14 +2134,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         ImGui.SameLine();
 
-        /// collar/catalog-sync "Owner can reset every import to a blank slate": removes only the
-        /// `Imported`-sourced entries from Title/Outfit/Gesture/Moodles/Restraints - those lists now mix
-        /// import-sourced entries with the Owner's own manually-added/scanned ones (single-action aliases
-        /// route into these same category lists now - see collar/catalog-sync), so a coarse `.Clear()`
-        /// would also wipe out entries reset-imports was never meant to touch. The Custom Trigger Bundle
-        /// list still shares one list between imported bundles and anything the Owner typed manually into
-        /// the freeform composer, so it keeps the old coarse whole-list clear - the same reset already
-        /// accepted for Restraints' manually-added entries (see collar/catalog-sync's spec).
+        /// Removes only Imported-sourced entries. The Custom Trigger list mixes imported and manual bundles, so it's cleared whole.
         if (ImGui.Button(resetLabel))
         {
             var quick = plugin.Configuration.QuickCommands;
@@ -2327,11 +2167,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static void RemoveImportedEntries(List<QuickCommand> list) =>
         list.RemoveAll(cmd => cmd.Source == ImportSource.Imported);
 
-    /// collar/catalog-sync "Owner's Sync tab shows whether the catalog is up to date": one sync state for the
-    /// active Owner-side pairing (warning style for everything but Up to date), when the Sub last published
-    /// and when this device last imported, a no-cooldown "Check now", and the manual "Request refresh"
-    /// fallback (disabled only while a request is already in flight). Only ever called from the Sync tab's
-    /// Owner-role view (DrawSyncTab) - the Sub-role view is a separate, dedicated explanation instead.
     private void DrawCatalogRelaySection()
     {
         var relayService = plugin.CatalogSyncRelayService;
@@ -2380,8 +2215,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Success, $"Last sync: {result.Added} added, {result.Updated} updated, {result.Removed} removed.");
     }
 
-    /// The single state line, in the spec's priority order: Syncing > Last sync failed > Out of date (no
-    /// successful check in ~2h) > No automatic updates from Sub > Up to date.
+    /// Priority order: Syncing > Last sync failed > Out of date (no successful check in ~2h) > No automatic updates > Up to date.
     private static (Vector4 Color, string Text) DescribeCatalogSyncState(PairingState pairing, Relay.CatalogMailboxService mailbox)
     {
         if (mailbox.IsSyncing(pairing.Id))
@@ -2400,12 +2234,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return (Theme.Success, "Up to date.");
     }
 
-    /// collar/ui-organization: draws a section's icon+title, then (if `showClearAll`) a "Clear all" button
-    /// right-aligned on that same row - no prior "title ... [button]" row existed anywhere in this UI, so
-    /// this is the one shared right-alignment routine every quick-command section now uses (design.md
-    /// decision #3), based on the same GetContentRegionAvail math DrawImportCommandsButton already used to
-    /// center its own button. Wraps to its own line instead of being clipped when the window is too narrow
-    /// for the button to fit next to the title.
+    /// Wraps the button to its own line when the window is too narrow.
     private static void DrawSectionTitleRow(FontAwesomeIcon icon, string title, bool showClearAll, string idSuffix, Action onClearAll)
     {
         IconGlyph.Text(icon, title);
@@ -2422,18 +2251,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton($"{label}##{idSuffix}"))
                 onClearAll();
         }
-        // Same rule under the title as every Sub module, so Owner and Sub tabs open the same way.
         ImGui.Separator();
     }
 
-    /// The rendered width of a button carrying this visible text, ignoring any "##id" suffix - used to
-    /// decide whether the next control in a row still fits before wrapping (see ContinueRowOrWrap).
+    /// Ignores any "##id" suffix.
     private static float ButtonWidth(string visibleLabel) =>
         ImGui.CalcTextSize(visibleLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
 
-    /// collar/ui-organization: keeps a horizontal row of buttons from being clipped off-window when it's
-    /// too narrow to fit them all - continues the row with SameLine() when the next control still fits,
-    /// otherwise wraps it onto a fresh line (ImGui.NewLine() undoes the SameLine positioning it just did).
+    /// Continues the row with SameLine() if the next control fits, otherwise wraps.
     private static void ContinueRowOrWrap(float nextControlWidth)
     {
         ImGui.SameLine();
@@ -2441,9 +2266,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.NewLine();
     }
 
-    /// Collar only ever has one override verb - `collar unlock` - since the collar itself only ever
-    /// applies as a side effect of pairing acceptance, never through a chat command (see
-    /// ChatCommandListener.HandleForceCollar). No "Add Command" builder needed, just the fixed release row.
+    /// The collar applies at pairing acceptance or via `collar lock`; only the fixed rows are needed.
     private void DrawCollarQuickSection(bool canSend)
     {
         IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
@@ -2474,15 +2297,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        // Sized to its rows, up to the room left in the tab - not a fixed box, and not stretched when short.
+        // Sized to its rows, up to the room left in the tab.
         using var _ = Section.List("moodlesQuickList");
         foreach (var cmd in quick.ToArray())
             DrawSavedQuickRow(cmd, quick, canSend, MoodlesTextFormat.StripMarkup);
     }
 
-    /// Owner restraint authoring: browse the Sub's shared Penumbra mods first, explicitly choose only the
-    /// ones that should become commands, configure their rules, then optionally build a direct slot/item
-    /// restraint at the bottom. The former free-text legacy device-name creator is intentionally absent.
     private void DrawRestraintQuickSection(bool canSend)
     {
         DrawRestraintQuickSectionBody(canSend);
@@ -2497,9 +2317,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             plugin.Configuration.Save();
         });
 
-        // Only ever called from the Owner-role dispatch now (collar/ui-organization's shared category
-        // tabs), so this always reads the imported peer catalog - the Sub-role branch this used to need
-        // when both lived in one shared method is gone.
         var catalog = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.Values.ToList();
 
         using (Section.Begin("restraintQuickCommands", "Commands"))
@@ -2520,9 +2337,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var alreadyChosenCount = quick.Count(x => x.RestraintCatalogId == entry.Id);
                 if (ImGui.SmallButton($"{(alreadyChosenCount > 0 ? "Choose again" : "Choose")}##restraintMod_{entry.Id}"))
                 {
-                    // A mod can be chosen more than once with different restriction rules (collar/restraints
-                    // "create a mod restraint for the same mod") - the row below is keyed by Label, so each
-                    // repeat gets a distinct one rather than colliding with the first.
+                    // The row is keyed by Label, so a repeated mod gets a distinct one.
                     var label = alreadyChosenCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyChosenCount + 1})";
                     quick.Add(new QuickCommand
                     {
@@ -2555,8 +2370,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
         }
 
-        // collar/catalog-sync "shared presets are copies": the Sub's rules-only restraints arrive as
-        // self-contained `restraint wear` commands - they keep working after the Sub deletes them.
+        // The Sub's rules-only restraints arrive as self-contained `restraint wear` commands.
         var sharedRulesOnly = quick.Where(x => x.RestraintCatalogId is null).ToArray();
         if (sharedRulesOnly.Length > 0)
         {
@@ -2571,10 +2385,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawAdHocRestraintSection(canSend);
     }
 
-    /// collar/restraints "Owner-authored ad-hoc restraint device", now rules-only: a one-off set of
-    /// restriction rules sent with no gear (`restraint wear - - "<label>" rules:...`, RestraintCommand.
-    /// BuildWearCommand) rather than being added to the name-based `quick` list, since its full definition
-    /// travels in the command text. Gear-carrying restraints come from the Sub's shared mods above.
+    /// Rules-only and sent with its full definition in the command, so it isn't added to the quick list.
     private void DrawAdHocRestraintSection(bool canSend)
     {
         IconGlyph.WrappedDisabled("Send restriction rules on their own - forced pose, walk-only, gagged or action block - with no gear. Cuffs belong to a device, so they come with your Sub's shared restraint mods above.");
@@ -2608,14 +2419,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/custom-triggers "custom commands should also be creatable via the Owner commands menu":
-    /// builds an ad-hoc, unnamed bundle one action at a time (mirroring DrawAdHocRestraintSection's
-    /// draft-then-send shape) and sends it via `CustomTriggerCommand.BuildCastCommand`'s `customtrigger
-    /// cast` wire grammar. Unlike the Sub-side DrawCustomTriggersModule, every non-Title/Chat action here
-    /// is typed by name only, never picked from a local catalog - the Owner's own install has no access to
-    /// the Sub's WardrobeMapping/GestureMapping/MoodlesMapping/RestraintMapping, only the Sub does, so this
-    /// matches the existing "type the exact name your Sub told you" freeform pattern (e.g.
-    /// DrawRestraintQuickSection's manual add) rather than the Sub-tab's picker-based one.
+    /// Actions are typed by name only: the Owner's install can't see the Sub's catalogs.
     private void DrawCustomTriggerQuickSection(bool canSend)
     {
         IconGlyph.WrappedDisabled("Bundle actions together by name - no dedicated alias needed on your Sub's side. Type each name exactly as your Sub told you; Title and Chat need no name at all.");
@@ -2639,7 +2443,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 using (ImRaii.Disabled(i == ctqDraftActions.Count - 1))
                     if (ImGui.SmallButton("↓"))
                         MoveDraftAction(ctqDraftActions, i, i + 1, ref editingOwnerActionIndex);
-                // Same as the Sub's editor: a restraint is edited in the Restraints tab, not from a bundle.
+                // A restraint is edited in the Restraints tab, not from a bundle.
                 if (ctqDraftActions[i].Kind != CustomTriggerActionKind.Restraint)
                 {
                     ImGui.SameLine();
@@ -2762,7 +2566,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
         }
 
-        // collar/restraint-lock-timer: only a bundle with a restraint in it has anything to lock.
+        // Only a bundle with a restraint in it has anything to lock.
         var bundleHasRestraint = ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint);
         if (bundleHasRestraint)
         {
@@ -2841,9 +2645,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private readonly Dictionary<object, string> textInputDrafts = new();
 
-    /// A text field that edits a local draft and returns true only once, when editing ends (focus leaves or
-    /// Enter) with a changed value - so callers save once per edit instead of on every keystroke, which wrote
-    /// the whole config (and woke catalog sync) per character. `draftKey` identifies the edited value.
+    /// Returns true once, when editing ends with a changed value, so callers save once per edit, not per keystroke.
     private bool DrawDeferredTextInput(string label, object draftKey, string current, int maxLength, out string committed, string? hint = null)
     {
         var draft = textInputDrafts.TryGetValue(draftKey, out var pending) ? pending : current;
@@ -2877,7 +2679,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Indent();
         using (ImRaii.Disabled(!hasRules || !hasEquipment || !catalogAvailable))
             DrawSendOnly(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"enable_{cmd.Label}", "Enable & lock");
-        // collar/restraint-lock-timer: this restraint's own lock duration, right beside the button that sends it.
         OwnerLockOption.DrawInline($"restraintQuick_{cmd.Label}", cmd, plugin.Configuration);
         var configureLabel = hasRules && hasEquipment ? "Edit setup" : "Configure setup";
         ContinueRowOrWrap(ButtonWidth(configureLabel));
@@ -2921,8 +2722,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (expanded && restraintRuleEdits.TryGetValue(cmd.Label, out var edit))
         {
             using var editorBox = Section.Begin("restraintQuickEditor", "Name & item");
-            // Committed only when editing ends: the row's ImGui ID and the editor bookkeeping are keyed by the label,
-            // so renaming per keystroke dropped focus after every character (and trimmed away typed spaces).
+            // Committed only when editing ends: the row's ImGui ID is keyed by the label.
             if (DrawDeferredTextInput("Name##restraintQuickLabel", cmd, cmd.Label, 80, out var labelBuffer))
             {
                 var trimmedLabel = labelBuffer.Trim();
@@ -2952,7 +2752,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             Section.SubHeading("Restrictions");
             DrawRestraintRuleCheckboxes(edit, $"restraintQuickRule_{cmd.Label}");
 
-            // collar/attached-moodles: this restraint's own moodle pick - saved immediately, like the name.
             Section.SubHeading("Attached moodle");
             var restraintMoodle = cmd.MoodleOverride;
             OwnerMoodleOverride.Draw($"restraintQuick_{cmd.Label}", plugin.Configuration, ref restraintMoodle);
@@ -3133,16 +2932,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        // Same as Moodles' list above: sized to its rows, up to the room left in the tab.
         using var _ = Section.List("outfitQuickList");
         foreach (var cmd in quick.ToArray())
             DrawSavedQuickRow(cmd, quick, canSend);
     }
 
-    /// collar/ui-organization: reworked to match the Sub's animation picker (AnimationPickerWindow) instead
-    /// of one flat scrolling list - a Sub with 1000+ gestures made the old fixed-height flat child
-    /// unusable. Grouped by GestureModName/GestureGroupName (carried through import - see
-    /// CatalogSyncService.ImportGestureLines) with a search box filtering by mod/group/label.
+    /// Grouped by mod/group with a search box; a flat list was unusable with 1000+ gestures.
     private void DrawGestureQuickSection(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Gestures;
@@ -3186,9 +2981,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 continue;
 
             ImGui.Indent();
-            // Ordered by GestureGroupOrder/GestureOptionOrder (the Sub's own Penumbra manifest order,
-            // carried through import - see CatalogSyncService.ImportGestureLines), not alphabetically -
-            // an alphabetic sort of option names like "1".."400" would put "10" before "2".
+            // Manifest order, not alphabetical - "10" would sort before "2".
             foreach (var subGroup in modGroup.GroupBy(c => c.GestureGroupName ?? "").OrderBy(g => g.Min(c => c.GestureGroupOrder)))
             {
                 var hasGroupLabel = subGroup.Key.Length > 0;
@@ -3201,11 +2994,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
                 if (groupOpen)
                 {
-                    // One heading per animation with a short row per pose/emote variant under it (a mod's
-                    // "Laying Makeout" exported for Sit Pose 4 and Sit Pose 5 reads as one animation, not
-                    // two). Each variant keeps its own Favorite/Send/Copy/Edit/Remove since each is its own
-                    // command. Only entries still carrying their imported label are grouped/shortened - an
-                    // Owner-renamed entry keeps its own text as a standalone row.
+                    // One heading per animation with a row per pose variant. Renamed entries stay standalone rows.
                     var variantsByAnimation = subGroup.OrderBy(c => c.GestureOptionOrder)
                         .Select(c => (Cmd: c, Entry: AutoLabeledGesture(plugin.Configuration, c)))
                         .GroupBy(v => v.Entry?.AnimationName ?? $"\u0001{v.Cmd.Label}\u0001{v.Cmd.Command}");
@@ -3234,9 +3023,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// The imported catalog entry behind a gesture quick command, when the command still shows its imported
-    /// label (so it's safe to present as mod-less "animation — pose"); null for manual or renamed entries.
-    /// Also used by SubControlWindow's per-mod Animation grouping.
+    /// Null for manual or renamed entries. Also used by SubControlWindow.
     internal static GestureExportEntry? AutoLabeledGesture(PluginConfig config, QuickCommand cmd) =>
         cmd.Target is { } target &&
         config.GestureMapping.ImportedPeerCatalog.TryGetValue(target, out var entry) &&
@@ -3244,11 +3031,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ? entry
             : null;
 
-    /// Follow has no reserved-keyword override the way Title/Outfit/Gesture do (ChatCommandListener never
-    /// added a "force follow" - it's always a plain alias), so there's nothing to auto-populate from a
-    /// scan. "leash"/"unleash" are AliasBook's own defaults, shown as ready-to-use fixed rows so
-    /// there's a working Send/Copy immediately even before the Owner adds anything - if the Sub renamed
-    /// their engage/release words, the Owner adds the real ones the same way as any other Quick Command.
     private void DrawFollowQuickSection(bool canSend)
     {
         IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
@@ -3261,17 +3043,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var quick = plugin.Configuration.QuickCommands.Follow;
         OwnerStatusView.Draw(plugin);
 
-        // collar/control-vocabulary: leash/unleash are fixed words every Sub understands, so there's nothing
-        // to customize any more - only these two, plus any custom follow words saved by an older version
-        // (listed so they can be removed; a current Sub ignores them).
+        // Custom follow words saved by an older version are listed so they can be removed.
         using (Section.Begin("followQuickCommands", "Commands"))
         {
             DrawFixedQuickRow("Leash", ControlWords.Leash, canSend, FixedActionIds.LeashDefault);
-            // The leash's own moodle pick, saved - used wherever the Leash command is sent (here, Sub Control,
-            // Favorites, the quick-access menu).
+            // Used wherever the Leash command is sent.
             var leashMoodle = plugin.Configuration.QuickCommands.LeashMoodleOverride;
             ImGui.Indent();
-            // collar/leash: the length sent with every Leash, saved like the moodle pick.
             var leashLength = plugin.Configuration.QuickCommands.LeashLengthYalms;
             ImGui.SetNextItemWidth(200);
             if (ImGui.SliderInt("Length (yalms)##ownerLeashLength", ref leashLength, LengthOption.MinYalms, LengthOption.MaxYalms))
@@ -3299,10 +3077,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawSavedQuickRow(cmd, quick, canSend);
     }
 
-    /// collar/toy-control: the Sub's own Intiface connection setup - address, connect/disconnect,
-    /// connected-device count, and a local "stop now" button independent of any Owner command, for the
-    /// Sub's own peace of mind. Direct-override-only category (no alias list) like Restraints/Teleport,
-    /// so there is no "Aliases" sub-section here.
     private void DrawToyControlModule()
     {
         IconGlyph.Text(FontAwesomeIcon.Plug, "Toy Control (Intiface)");
@@ -3382,13 +3156,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawToyTriggerEditor();
     }
 
-    /// collar/toy-control "Sub-authored custom vibration patterns": add/edit/delete named step-sequence
-    /// patterns. On the Sub's own client these are usable anywhere a built-in pattern name is (an Owner
-    /// command, or a local trigger). An Owner has the identical editor for their own library of patterns
-    /// to send, but since the Sub's client hasn't necessarily saved any of them, an Owner's saved pattern
-    /// is sent by value (its full step sequence inline in the command, see `ToyControlCommand.
-    /// BuildCustomSequenceCommand`) rather than by name - `ownerCanSend` non-null switches on that "Send"
-    /// button per saved pattern instead of the Sub-only trigger-reference bookkeeping.
+    /// The Owner's saved patterns are sent by value, since the Sub may not have them; `ownerCanSend` enables that.
     private void DrawToyPatternEditor(bool? ownerCanSend = null)
     {
         if (!ImGui.CollapsingHeader("Custom Patterns##toyPatternHeader"))
@@ -3417,10 +3185,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton($"Delete##toyPattern{pattern.Id}"))
             {
                 config.ToyPatterns.Remove(pattern);
-                // collar/toy-control "Sub deletes a custom pattern currently referenced by a trigger":
-                // disable (not silently orphan) any trigger rule that named this pattern. A no-op for
-                // an Owner's own library - triggers are a Sub-local concept, so an Owner's
-                // ToyTriggerRules is always empty.
+                // Disable, rather than orphan, triggers that named this pattern.
                 foreach (var rule in config.ToyTriggerRules.Where(r => string.Equals(r.PatternName, pattern.Name, StringComparison.OrdinalIgnoreCase)))
                     rule.Enabled = false;
                 config.Save();
@@ -3549,10 +3314,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         toyPatternError = null;
     }
 
-    /// collar/toy-control "Local automatic toy triggers": entirely gated on `ToyTriggersAcknowledged` -
-    /// deliberately not on `PermissionSet.ToyControl` (that permission governs Owner-initiated commands
-    /// only) and not on `ToyControlAcknowledged` (that acknowledgement's disclosure is about an Owner
-    /// directly actuating a device, not the Sub's own device self-triggering off local game state).
+    /// Gated on ToyTriggersAcknowledged only; ToyControl and its acknowledgement cover Owner commands.
     private void DrawToyTriggerEditor()
     {
         if (!ImGui.CollapsingHeader("Automatic Triggers##toyTriggerHeader"))
@@ -3588,7 +3350,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     config.Save();
                 }
                 ImGui.SameLine();
-                // Long job/action filters are summarized as a count here, with the full list on hover.
                 ImGui.PushTextWrapPos(0);
                 ImGui.TextUnformatted(DescribeTrigger(rule));
                 ImGui.PopTextWrapPos();
@@ -3717,8 +3478,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Writes the editor's working state onto a rule - a fresh one for Add, or the existing rule in place for
-    /// Save (keeping its Id and Enabled state, so the evaluator's per-rule cooldown tracking carries over).
+    /// Keeps the rule's Id and Enabled state so the evaluator's cooldown tracking carries over.
     private void ApplyToyTriggerDraft(ToyTriggerRule rule)
     {
         rule.Kind = toyTriggerKindInput;
@@ -3782,8 +3542,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         toyTriggerCooldownInput = 5;
     }
 
-    /// collar/toy-control "Emote used on you": a filterable multi-select of emotes (a few hundred rows, so
-    /// the list is always shown and narrowed by the search box) - checking none means "any emote".
+    /// Checking none means "any emote".
     private void DrawToyEmoteFilter()
     {
         ImGui.SetNextItemWidth(200);
@@ -3815,9 +3574,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/toy-control: the optional "only these players" filter shared by the hit, spell-cast and emote
-    /// triggers - typed as "Name Surname" (any world) or "Name Surname@World", or added in one click from
-    /// the current target or a paired peer.
     private void DrawToyTriggerSourcePlayers()
     {
         Section.SubHeading("Only from these players");
@@ -3867,9 +3623,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/toy-control "Spell cast on you": a compact multi-select of playable combat jobs (Lumina's
-    /// `ClassJob` sheet has ~40 rows, small enough to render inline without a search-gated list like the
-    /// action picker below needs) - checking none means "any job".
+    /// Checking none means "any job".
     private void DrawToySpellJobFilter()
     {
         ImGui.SetNextItemWidth(200);
@@ -3892,10 +3646,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// collar/toy-control "Spell cast on you": the `Action` sheet has thousands of rows, so this requires
-    /// search text before listing anything (capped at 100 matches) rather than rendering every player
-    /// action inline - checking none means "any action". Restricted to `IsPlayerAction` rows so the list
-    /// is actual castable player skills/spells, not every internal action-table entry.
+    /// Thousands of rows, so it needs search text first (capped at 100). Checking none means "any action".
     private void DrawToySpellActionFilter()
     {
         ImGui.SetNextItemWidth(200);
@@ -3960,8 +3711,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return $"Emote on you ({string.Join(", ", rule.EmoteIds.Select(id => Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>().GetRowOrDefault(id)?.Name.ExtractText() ?? id.ToString()))})";
     }
 
-    /// Compact by default: more than a few jobs/actions collapse to a count ("12 jobs") so the trigger row
-    /// stays readable; `full` lists every one (used for the row's hover tooltip).
+    /// `full` lists every one, for the hover tooltip.
     private static string DescribeSpellFilter(ToyTriggerRule rule, bool full = false)
     {
         const int maxListed = 3;
@@ -3977,10 +3727,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return $"Spell cast on you ({jobs}, {actions})";
     }
 
-    /// collar/toy-control: the Owner's direct-override controls - an intensity slider with an optional
-    /// duration, the fixed named patterns, and an explicit stop, each built via ToyControlCommand's static
-    /// wire-grammar builders and sent through the same single-click DrawSendOnly path every other
-    /// category's Owner quick-section already uses.
     private void DrawToyControlQuickSection(bool canSend)
     {
         IconGlyph.Text(FontAwesomeIcon.Plug, "Toy Control");
@@ -4069,8 +3815,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Send fires this one /tell immediately - the same one-click, one-message shape as pressing an FFXIV macro, and the only thing in this plugin that ever sends chat for you. Copy never sends anything. Add Command saves the text above as a one-click button in Saved at the top.");
     }
 
-    /// Saved bundles and commands (imported from the Sub, or saved by the builder/one-off composer) - drawn
-    /// first in the Custom Triggers tab, since they're what the Owner reaches for most.
     private void DrawSavedAliasCommands(bool canSend)
     {
         var aliasQuick = plugin.Configuration.QuickCommands.Aliases;
@@ -4085,10 +3829,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawSavedQuickRow(cmd, aliasQuick, canSend);
     }
 
-    /// A built-in action (not user-saved, can't be removed) - "Clear title" and "Unlock outfit" always
-    /// exist since every force-locked category needs a release valve regardless of what's been saved.
-    /// `favoriteId` is one of the stable `FixedActionIds` constants - collar/ui-organization "Owner can
-    /// favorite ... built-in fixed-action row[s]".
+    /// A built-in action that can't be removed.
     private void DrawFixedQuickRow(string label, string command, bool canSend, string favoriteId)
     {
         ImGui.TextUnformatted(label);
@@ -4098,15 +3839,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, command, null), canSend, $"fixed_{label}");
     }
 
-    /// `displayLabel` lets a category-specific caller (e.g. Moodles, see collar/moodles' markup-stripping
-    /// requirement) transform `cmd.Label` for display only - `cmd.Label` itself, the id-suffix strings
-    /// below, and `cmd.Command` all keep using the raw stored value, since only display should ever change.
+    /// `displayLabel` changes display only; IDs and the command keep the raw label.
     private void DrawSavedQuickRow(QuickCommand cmd, List<QuickCommand> list, bool canSend, Func<string, string>? displayLabel = null)
     {
         var shownLabel = displayLabel?.Invoke(cmd.Label) ?? cmd.Label;
         if (cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase))
             shownLabel += "  · not locked";
-        // collar/attached-moodles: a command's own moodle pick shows right on its row.
         if (cmd.MoodleOverride is { } rowMoodle && OwnerMoodleOverride.Accepts(cmd.Command))
             shownLabel += $"  · moodle: {rowMoodle}";        ImGui.TextUnformatted(shownLabel);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(shownLabel);
@@ -4114,11 +3852,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
         ContinueRowOrWrap(ButtonWidth("Send"));
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
-        // collar/restraint-lock-timer: restraint commands and bundles containing one pick their lock right here.
         if (OwnerLockOption.Accepts(cmd.Command))
             OwnerLockOption.DrawInline($"{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
-        // Edit expands this row's own editor right beneath it (and collapses it again) - a bundle is the
-        // one exception, loaded into the bundle builder instead.
+        // A bundle loads into the bundle builder instead of expanding.
         var expanded = ReferenceEquals(editingQuickCommand, cmd);
         var editLabel = expanded ? "Close" : "Edit";
         ContinueRowOrWrap(ButtonWidth(editLabel));
@@ -4210,10 +3946,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return category == QuickEditCategory.Follow ? command.Command : command.Label;
     }
 
-    /// A shared focused draft editor for Owner entries, drawn inline under the row being edited
-    /// (DrawSavedQuickRow). Nothing touches the stored object until Save;
-    /// Cancel and validation failures therefore remain lossless, and reference identity detects a row
-    /// removed while the editor was open.
+    /// Nothing touches the stored object until Save, so Cancel is lossless.
     private void DrawQuickCommandEditor()
     {
         if (editingQuickCommand is not { } source || editingQuickList is not { } list)
@@ -4360,10 +4093,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         editingQuickCategory = QuickEditCategory.Raw;
     }
 
-    /// collar/ui-organization "Owner can favorite quick commands for quick access": a plain toggle shared
-    /// by every quick-command row (DrawSavedQuickRow covers Title/Outfit/Gesture/Follow/Moodles/Aliases;
-    /// DrawRestraintQuickRow calls this too, since its row layout is its own bespoke one) - never affects
-    /// Send/Copy/Remove or any other per-row state.
     private void DrawFavoriteToggle(QuickCommand cmd, string idSuffix)
     {
         using (ImRaii.PushColor(ImGuiCol.Text, Theme.Warning, cmd.IsFavorite))
@@ -4371,7 +4100,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.SmallButton($"{(cmd.IsFavorite ? "Favorited" : "Favorite")}##fav_{idSuffix}"))
             {
                 cmd.IsFavorite = !cmd.IsFavorite;
-                // collar/restraint-lock-timer: a favorite keeps the timer this command had when it was starred.
+                // A favorite keeps the timer this command had when it was starred.
                 cmd.FavoriteLockSeconds = cmd.IsFavorite ? cmd.LockSeconds : null;
                 plugin.Configuration.Save();
             }
@@ -4384,8 +4113,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     : "Add to favorites");
     }
 
-    /// Same shape as `DrawFavoriteToggle`, for a built-in fixed action (no backing `QuickCommand` to attach
-    /// a bool to) - reads/writes `OwnerQuickCommands.FavoriteFixedActions` by the action's stable id instead.
     private void DrawFavoriteFixedActionToggle(string favoriteId)
     {
         var favorites = plugin.Configuration.QuickCommands.FavoriteFixedActions;
@@ -4403,11 +4130,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.SetTooltip(isFavorite ? "Remove from favorites" : "Add to favorites");
     }
 
-    /// collar/title: shared "optional glow" control for every title-styling form (Sub alias creation, both
-    /// Custom Trigger action editors, Owner quick-command create/edit) - a checkbox that reveals a
-    /// `ColorEdit3` when enabled. `hasGlow`/`glow` are plain local editor state (matching every other
-    /// title-styling field's shape, see design.md), converted to a `Vector3?` only when the caller builds
-    /// its `TitleAliasDefinition`/`CustomTriggerAction`/`QuickCommand`.
     private static void DrawGlowPicker(string idSuffix, ref bool hasGlow, ref Vector3 glow)
     {
         ImGui.Checkbox($"Glow##{idSuffix}", ref hasGlow);
@@ -4434,7 +4156,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
 
         ContinueRowOrWrap(ButtonWidth("Copy"));
-        // A command that goes out as several messages can't be pasted as one - only Send spaces them out.
+        // A command that goes out as several messages can't be pasted as one.
         using (ImRaii.Disabled(!fits || messages.Count > 1))
         if (ImGui.SmallButton($"Copy##{idSuffix}"))
             ImGui.SetClipboardText(messages[0]);
@@ -4455,15 +4177,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
     }
 
-    /// collar/ui-organization "configured-item lists use a compact selector once they can grow past a
-    /// handful": shared by every module that lets the Sub build up a list of named things (title/outfit/
-    /// gesture/moodle/restraint aliases, restraint devices, custom triggers, toy patterns) - one combo box
-    /// to pick which item to inspect, instead of always rendering every item's full detail inline (which
-    /// gets unreadable fast once there are more than a handful). Not used for the Owner's saved
-    /// quick-command rows (DrawSavedQuickRow) - those are a one-click-Send toolbar, not a browse-then-edit
-    /// list, and hiding all-but-one behind a dropdown would work against that - nor for the Sub's configured
-    /// mod restraints (DrawSubModRestraints), which already collapse to one line each via their own
-    /// per-item Configure/Close toggle.
     private static int DrawItemSelector(string comboId, string[] labels, ref int? selectedIndex)
     {
         var index = Math.Clamp(selectedIndex ?? 0, 0, labels.Length - 1);
@@ -4474,11 +4187,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return index;
     }
 
-    /// "title"/"outfit"/"gesture" are reserved for the Owner's direct override grammar (see
-    /// ChatCommandListener.ReservedCategoryWords) - an alias with one of these exact names would be
-    /// permanently unreachable, since the listener always routes to the override handler first.
-    /// Category words (the Owner's direct overrides) and the fixed control words (collar/control-vocabulary)
-    /// are both matched before any Sub alias, so an alias with either name could never fire.
+    /// Category and control words are matched before any Sub alias, so an alias with either name could never fire.
     private static bool IsReserved(string alias) =>
         ChatCommandListener.ReservedCategoryWords.Contains(alias.Trim(), StringComparer.OrdinalIgnoreCase)
         || ControlWords.All.Contains(alias.Trim(), StringComparer.OrdinalIgnoreCase);
@@ -4489,7 +4198,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Warning, $"\"{alias.Trim()}\" is reserved for a fixed Owner command - pick a different alias.");
     }
 
-    /// collar/control-vocabulary "Control words are fixed": shown as read-only information, not an edit field.
     private static void DrawFixedWord(string label, string word)
     {
         ImGui.TextUnformatted($"{label}:");
@@ -4499,10 +4207,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.PopStyleColor();
     }
 
-    /// collar/attached-moodles "Sub can attach a default moodle": "None" plus the Sub's own scanned Moodles
-    /// statuses. Returns true when the pick changed; the caller stores `picked` and saves.
-    /// `width` null keeps the surrounding form's default item width, so the picker lines up with the other
-    /// dropdowns in a form instead of being narrower.
+    /// `width` null keeps the form's default item width.
     private bool DrawAttachedMoodlePicker(string id, AttachedMoodleRef? current, PluginConfig config, out AttachedMoodleRef? picked, float? width = 220)
     {
         picked = current;
@@ -4510,8 +4215,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (width is { } w)
             ImGui.SetNextItemWidth(w);
 
-        // collar/ui-organization "Partly dependent features are disabled inline": the attached moodle is the
-        // only part of Outfit/Restraints/Follow that needs Moodles.
         if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } blocked)
         {
             using (ImRaii.Disabled())

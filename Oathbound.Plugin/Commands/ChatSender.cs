@@ -5,26 +5,13 @@ using System.Text.RegularExpressions;
 
 namespace Oathbound.Plugin.Commands;
 
-/// The one place in this plugin that can actually transmit a chat message - deliberately separate from
-/// ChatComposer (which only ever builds text) so every call site capable of sending is grep-able in one
-/// file. Every call here originates from a direct, single UI button click: one press, one command (one message, or for a custom trigger bundle too long for
-/// one message, a fixed series of one message per action - see SendAll) - the
-/// same shape as an FFXIV hotbar macro sending a /tell on a keypress, not the reactive/unattended
-/// automation (auto-replying to observed chat with no human in the loop per message) that's the actual
-/// pattern Dalamud plugin authors flag as ToS risk. Never wire this to anything that fires without that
-/// per-message human click - no auto-reply, no reacting to received chat, no retry/resend loops.
-///
-/// The one deliberate exception lives outside this class on purpose: a Reaction's chat action
-/// (ReactionService) does reply automatically to an emote or chat phrase, by the user's own choice, guarded
-/// only by its per-reaction cooldown (never under 10s) and disclosed in the README's automation section.
+/// The one place that can transmit chat. Every call comes from a single button click: one press, one command.
+/// Never wire it to anything that fires without that click. A Reaction's chat reply is the one deliberate exception,
+/// and it lives outside this class.
 public sealed class ChatSender
 {
-    /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel": the exact set of
-    /// prefixes ChatComposer.Wrap can produce - `/tell `/`/p `/`/a ` plus a numbered linkshell (`/l1`-`/l8`)
-    /// or cross-world linkshell (`/cwl1`-`/cwl8`). Anything else refused, same as the tell-only check this
-    /// replaces - a composed message with no captured peer identity yet is just the bare trigger+command
-    /// text with no leading slash, which would otherwise get typed into whatever channel is currently
-    /// active and leak the command into public chat instead of failing safely.
+    /// Exactly the prefixes ChatComposer can produce. A message without one would land in the active channel and leak
+    /// the command into public chat.
     private static readonly Regex ValidPrefix = new(@"^/(tell|p|a|l[1-8]|cwl[1-8]) ", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public bool Send(string text)
@@ -40,17 +27,13 @@ public sealed class ChatSender
         return true;
     }
 
-    /// Raised after each message is handed to the game - observers only (the Owner's toy status estimate),
-    /// never a path that sends anything itself.
+    /// Observers only; never a path that sends.
     public event Action<string>? Sent;
 
-    /// Delay between the messages of one multi-message send, so the game registers each one rather than
-    /// dropping them as sent too fast.
+    /// The game drops messages sent too fast.
     private static readonly TimeSpan MessageSpacing = TimeSpan.FromSeconds(1);
 
-    /// Sends the messages of one click (ChatComposer.ComposeAll) - still one press, one command: a custom
-    /// trigger bundle too long for one message goes out as one message per action, spaced MessageSpacing
-    /// apart. All are checked up front, so either every message is sent or none is.
+    /// All messages are checked up front, so either every one is sent or none is.
     public bool SendAll(IReadOnlyList<string> messages)
     {
         if (messages.Count == 0)

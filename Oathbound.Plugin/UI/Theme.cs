@@ -3,9 +3,7 @@ using Dalamud.Bindings.ImGui;
 
 namespace Oathbound.Plugin.UI;
 
-/// One place to tune the plugin's look - every window/widget reads colors and rounding from here instead
-/// of hardcoding its own, so the dark/card-based style (loosely inspired by GagSpeak's layout: a status
-/// bar, a status card, a grid of module tiles) stays consistent as more UI gets added later.
+/// Every window and widget reads colors and rounding from here.
 public static class Theme
 {
     public static readonly Vector4 Accent = new(0.62f, 0.38f, 0.85f, 1f);
@@ -19,19 +17,16 @@ public static class Theme
     public static readonly Vector4 Success = new(0.35f, 0.85f, 0.35f, 1f);
     public static readonly Vector4 Warning = new(0.9f, 0.72f, 0.25f, 1f);
     public static readonly Vector4 Danger = new(0.65f, 0.42f, 0.42f, 1f);
-    /// Settings dependency header: a clearly-red "not detected" status dot (Danger is too muted to read as red).
+    /// Danger is too muted to read as red.
     public static readonly Vector4 StatusMissing = new(0.92f, 0.32f, 0.32f, 1f);
 
     public const float CardRounding = 8f;
     public const float TileRounding = 6f;
 
-    /// Tint for a Section block - a step lighter than CardBg so sections read as raised inside a card.
+    /// A step lighter than CardBg so sections read as raised inside a card.
     public static readonly Vector4 SectionBg = new(0.16f, 0.15f, 0.20f, 1f);
 
-    /// Purple chrome shared by every Oathbound window: window/child/card borders, table borders, separators
-    /// and the title bar, so every border in the plugin reads as the same accent instead of Dalamud's default
-    /// grey/red. Pushed in each window's PreDraw and popped in PostDraw - windows opened while it's pushed
-    /// (combos, popups) inherit it too.
+    /// Pushed in each window's PreDraw and popped in PostDraw; combos and popups opened meanwhile inherit it.
     private static readonly (ImGuiCol Col, Vector4 Color)[] WindowColors =
     [
         (ImGuiCol.Border, Accent with { W = 0.55f }),

@@ -6,10 +6,8 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Owner-side toy status: an estimate built only from the toy commands this client itself sent. The Sub's
-/// device state never travels back over the wire, so this can't see the Sub's own automatic triggers, a
-/// Sub-side stop, panic, or the Sub's own shorter default max duration - the UI says so. Keyed by the
-/// pairing the command went to, so switching the active pairing shows that Sub's own last command.
+/// Owner-side estimate built only from the toy commands this client sent, keyed by pairing. The Sub's device
+/// state never comes back, so the UI says it's an estimate.
 public sealed class OwnerToyStatusTracker : IDisposable
 {
     private static readonly Regex ToyCommand = new(@"(?:^|\s)toy\s+(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -25,7 +23,7 @@ public sealed class OwnerToyStatusTracker : IDisposable
         sender.Sent += OnSent;
     }
 
-    /// The last toy command sent to the active pairing, or null if none was sent this session.
+    /// Null if none was sent this session.
     public OwnerToyEstimate? ForActivePairing =>
         config.GetActivePairing() is { Direction: PairingDirection.OwnerSide } pairing && estimates.TryGetValue(pairing.Id, out var estimate) ? estimate : null;
 
@@ -69,7 +67,7 @@ public sealed class OwnerToyStatusTracker : IDisposable
         if (rest.StartsWith("sequence ", StringComparison.OrdinalIgnoreCase) &&
             ToyControlCommand.TryParseCustomSequenceCommand(rest["sequence ".Length..], out var steps, out var loop))
         {
-            // A non-looping sequence whose every step is timed ends on its own; anything else runs to the ceiling.
+            // A non-looping sequence with every step timed ends on its own; anything else runs to the ceiling.
             var natural = !loop && steps.All(s => s.DurationMs > 0);
             var endMs = natural ? Math.Min(steps.Sum(s => (long)s.DurationMs), defaultCeilingMs) : defaultCeilingMs;
             return new OwnerToyEstimate($"Custom sequence ({steps.Count} steps)", steps.Max(s => s.IntensityPercent), now, now + endMs, natural);
@@ -81,9 +79,8 @@ public sealed class OwnerToyStatusTracker : IDisposable
     public void Dispose() => sender.Sent -= OnSent;
 }
 
-/// What the Owner last sent: `EndTicks` null means permanent (runs until stopped or the Sub's backstop);
-/// `EndIsExact` false means the end is only an upper bound (the Sub's own default max may be shorter).
-/// `IntensityPercent` is the peak intensity when known (null for a Sub-side custom pattern by name).
+/// EndTicks null = permanent. EndIsExact false = an upper bound (the Sub's default may be shorter).
+/// IntensityPercent is null when unknown (a Sub-side pattern by name).
 public sealed record OwnerToyEstimate(string Description, int? IntensityPercent, long SentTicks, long? EndTicks, bool EndIsExact)
 {
     public bool IsStop => Description == "Stop";

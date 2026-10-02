@@ -13,15 +13,9 @@ namespace Oathbound.Plugin.Commands;
 
 #pragma warning disable CS0649 // assigned via reflection by Svc.Hook.InitializeFromAttributes, not by the compiler
 
-/// The actual leash mechanism for collar/follow: suppresses movement input at the same low-level input-
-/// polling functions the game itself reads, for both direct movement keys and whatever internal logic
-/// decides to cancel an active follow/auto-move. Isolated into its own module per design.md's risk-tier
-/// decision - a broken signature after a game patch degrades only this module, and IsAvailable lets the
-/// rest of the plugin fail closed (task 7.5) rather than leaving a lock silently unenforced.
-///
-/// Hook target signatures are the same, actively-maintained ones GagSpeak uses for this exact purpose
-/// (Project-GagSpeak/client, ProjectGagSpeak/GameInternals/Signatures.cs) - per design.md's explicit
-/// recommendation to build on GagSpeak's proven approach rather than re-deriving new signatures.
+/// Suppresses movement input at the game's own input-polling functions, including the logic that cancels
+/// follow/auto-move. Isolated so a broken signature after a patch only degrades this module; IsAvailable lets the
+/// rest of the plugin fail closed.
 public sealed unsafe class MovementLockService : IDisposable
 {
     private static readonly InputId[] MovementInputs =
@@ -39,12 +33,11 @@ public sealed unsafe class MovementLockService : IDisposable
     private const string SigMouseMoveBlock = "48 8b c4 4c 89 48 ?? 53 55 57 41 54 48 81 ec ?? 00 00 00";
     private const string SigUnfollowTarget = "48 89 5c 24 ?? 48 89 74 24 ?? 57 48 83 ec ?? 48 8b d9 48 8b fa 0f b6 89 ?? ?? 00 00 be 00 00 00 e0";
     private const string SigAutoMoveUpdate = "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 41 56 41 57 48 83 EC 20 44 0F B6 7A ?? 48 8B D9";
-    // collar/leash steering: the walk-input sum vnavmesh rewrites to drive the character (awgil/ffxiv_navmesh,
-    // Movement/OverrideMovement.cs) - keyboard, controller and mouse movement are all summed into it.
+    // The walk-input sum vnavmesh also rewrites; keyboard, controller and mouse all feed into it.
     private const string SigRmiWalk = "E8 ?? ?? ?? ?? 80 7B 3E 00 48 8D 3D";
     private const string SigRmiWalkIsInputEnabled1 = "E8 ?? ?? ?? ?? 84 C0 75 10 38 43 3C";
     private const string SigRmiWalkIsInputEnabled2 = "E8 ?? ?? ?? ?? 84 C0 75 03 88 47 3F";
-    // collar/leash-mounts: the flying counterpart vnavmesh rewrites (OverrideMovement.RMIFlyDetour).
+    // The flying counterpart.
     private const string SigRmiFly = "E8 ?? ?? ?? ?? 0F B6 0D ?? ?? ?? ?? B8";
 
     public unsafe delegate byte IsInputIdDelegate(void* unk, InputId inputId);
@@ -84,36 +77,24 @@ public sealed unsafe class MovementLockService : IDisposable
     private readonly RmiWalkIsInputEnabledDelegate? rmiWalkIsInputEnabled1;
     private readonly RmiWalkIsInputEnabledDelegate? rmiWalkIsInputEnabled2;
 
-    /// collar/leash: rewrites this frame's walk direction. Given the player's own wish as a world-space
-    /// ground vector (X, Z), returns the one to actually walk.
+    /// Given the player's wish as a world-space ground vector (X, Z), returns the one to walk.
     public delegate Vector2 SteerFunction(Vector2 worldWish);
 
     public unsafe delegate void RmiFlyDelegate(void* self, OathboundFlyInput* result);
     [Signature(SigRmiFly, DetourName = nameof(RmiFlyDetour), Fallibility = Fallibility.Auto)]
     private readonly Hook<RmiFlyDelegate>? rmiFlyHook;
 
-    /// collar/leash-mounts (design D3): the flying version - the player's horizontal wish as a world-space ground
-    /// vector plus their pitch (radians, positive up, as vnavmesh writes it), returning the ones to fly.
+    /// The player's horizontal wish plus pitch (radians, positive up), returning the ones to fly.
     public delegate (Vector2 Horizontal, float Pitch) FlySteerFunction(Vector2 worldWish, float pitch);
 
-    /// Which independent callers currently want movement suppressed - a Set rather than a bare bool so two
-    /// unrelated callers (Follow's leash, a forced-pose restraint device - collar/restraints) can each
-    /// Engage/Release their own claim without one caller's Release prematurely lifting the other's.
-    /// Add/Remove are naturally idempotent for repeat same-token calls, unlike a naive increment/decrement
-    /// counter would be.
+    /// A set so independent callers can each release their own claim without lifting another's.
     private readonly HashSet<string> immobilizedBy = new();
     private readonly HashSet<string> followPreservedBy = new();
-    /// collar/teleport's navigation leg (design.md D5): same input suppression as the other two sets, but
-    /// never the game's force-disable flag - vnavmesh and Lifestream drive the character by rewriting the
-    /// walk vector, and force-disable would freeze that too - and never the Follow-only unfollow block.
+    /// Input suppression without the force-disable flag, which would also freeze vnavmesh/Lifestream's driving.
     private readonly HashSet<string> inputSuppressedBy = new();
-    /// teleport-lifestream-autorun D1: SuppressInput owners that currently let autorun through, so Lifestream's
-    /// `/automove on` aetheryte approach works. Only honored while every claim is one of these - an
-    /// immobilize or follow-preserve claim (Leash, a restraint) always keeps autorun blocked.
+    /// Owners that let autorun through for Lifestream; only honored while every claim is one of these.
     private readonly HashSet<string> autorunAllowedBy = new();
-    /// collar/leash (design D1): at most one caller rewrites the walk vector at a time (only the leash does).
-    /// Never counts as a lock, and never applies while an immobilize or input-suppress claim exists - a
-    /// restraint (nothing moves) or teleport navigation (vnavmesh owns the vector) always wins over it.
+    /// At most one steer owner. Never applies while an immobilize or input-suppress claim exists.
     private string? steerOwner;
     private SteerFunction? steer;
     private FlySteerFunction? flySteer;
@@ -128,8 +109,7 @@ public sealed unsafe class MovementLockService : IDisposable
         if (Svc.SigScanner.TryScanText(SigRmiWalkIsInputEnabled2, out var inputEnabled2))
             rmiWalkIsInputEnabled2 = Marshal.GetDelegateForFunctionPointer<RmiWalkIsInputEnabledDelegate>(inputEnabled2);
 
-        // task 7.5: fail closed. If any signature didn't resolve on this game version, never claim the
-        // lock works - IsAvailable stays false and FollowCommand must refuse to engage it.
+        // Fail closed: if any signature didn't resolve, never claim the lock works.
         IsAvailable = isInputIdPressedHook is not null && isInputIdDownHook is not null && isInputIdHeldHook is not null && isInputIdUnknownHook is not null
             && mouseMoveHook is not null && unfollowHook is not null && autoMoveHook is not null;
         IsImmobilizeAvailable = IsAvailable && forceDisableMovementPtr != 0;
@@ -175,16 +155,13 @@ public sealed unsafe class MovementLockService : IDisposable
     public bool IsSteerAvailable { get; }
     public bool IsFlySteerAvailable { get; }
 
-    /// Whether a steer function would run this frame - false while a stronger claim holds movement.
     public bool IsSteerSuspended => immobilizedBy.Count > 0 || inputSuppressedBy.Count > 0;
 
     public bool IsLocked => IsAvailable && AnyInputClaim;
 
     private bool AnyInputClaim => immobilizedBy.Count > 0 || followPreservedBy.Count > 0 || inputSuppressedBy.Count > 0;
 
-    /// collar/follow: "Movement lock releases on panic, unpair, or Owner release" - all three paths call
-    /// Release(owner) for their own token, and it is safe to call Engage even if IsAvailable is false
-    /// (engagedBy just never gains an entry that would suppress anything).
+    /// Safe to call even when unavailable.
     public void EngageImmobilize(string owner) { if (IsImmobilizeAvailable) immobilizedBy.Add(owner); }
     public void ReleaseImmobilize(string owner) => immobilizedBy.Remove(owner);
     public void EngagePreserveFollow(string owner) { if (IsAvailable) followPreservedBy.Add(owner); }
@@ -209,7 +186,7 @@ public sealed unsafe class MovementLockService : IDisposable
         flySteer = null;
     }
 
-    /// Same owner as SetSteering (the leash): adds the flying counterpart. Cleared with ClearSteering.
+    /// Same owner as SetSteering; cleared with ClearSteering.
     public void SetFlySteering(string owner, FlySteerFunction function)
     {
         if (IsFlySteerAvailable && steerOwner == owner)
@@ -218,8 +195,7 @@ public sealed unsafe class MovementLockService : IDisposable
     public void AllowAutorun(string owner) => autorunAllowedBy.Add(owner);
     public void DisallowAutorun(string owner) => autorunAllowedBy.Remove(owner);
 
-    /// Panic's own release: drops every caller's claim unconditionally, regardless of who engaged it -
-    /// same "full teardown, nothing needs preserving" shape as SlotLockManager.ReleaseAllForPanic.
+    /// Drops every claim unconditionally.
     public void ReleaseAll()
     {
         immobilizedBy.Clear();
@@ -277,12 +253,11 @@ public sealed unsafe class MovementLockService : IDisposable
         rmiWalkHook!.Original(self, sumLeft, sumForward, sumTurnLeft, haveBackwardOrStrafe, a6, bAdditiveUnk);
         var function = steer;
         if (function is null || IsSteerSuspended) return;
-        // Same guard vnavmesh uses: writing a non-zero vector on a frame the game skipped reading input breaks movement.
+        // Writing a non-zero vector on a frame the game skipped reading input breaks movement.
         if (bAdditiveUnk != 0 || rmiWalkIsInputEnabled1!(self) == 0 || rmiWalkIsInputEnabled2!(self) == 0) return;
         if (Plugin.ObjectTable.LocalPlayer is not { } player) return;
 
-        // The walk sums are relative to a reference yaw: the character's facing in Standard movement, the
-        // camera's (plus 180 degrees) in Legacy - vnavmesh's DirectionToDestination.
+        // Relative to the character's facing in Standard movement, or the camera's (+180 degrees) in Legacy.
         if (!TryReferenceYaw(player.Rotation, out var referenceYaw)) return;
 
         var world = Rotate(new Vector2(*sumLeft, *sumForward), referenceYaw);
@@ -317,8 +292,7 @@ public sealed unsafe class MovementLockService : IDisposable
         return true;
     }
 
-    /// (left, forward) at reference yaw `yaw` to world (X, Z), where a world direction's yaw is atan2(X, Z).
-    /// The same rotation with -yaw goes back.
+    /// (left, forward) at yaw `yaw` to world (X, Z). The same rotation with -yaw goes back.
     private static Vector2 Rotate(Vector2 v, float yaw)
     {
         var (sin, cos) = MathF.SinCos(yaw);

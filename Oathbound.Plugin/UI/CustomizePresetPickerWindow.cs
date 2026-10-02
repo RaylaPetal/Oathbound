@@ -8,10 +8,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/restraints "Optional Customize+ preset on Gagged": a minimal sibling to AnimationPickerWindow -
-/// a flat list of the Sub's own Customize+ profiles rather than a mod/group/option/trigger tree, since
-/// Customize+ profiles have no such hierarchy and (per design.md's Non-Goals) are never shared via catalog
-/// sync, so there is no Owner/imported-mode branch here at all.
+/// A flat list of the Sub's own Customize+ profiles; they aren't shared, so there's no Owner mode.
 public sealed class CustomizePresetPickerWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -35,7 +32,6 @@ public sealed class CustomizePresetPickerWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 

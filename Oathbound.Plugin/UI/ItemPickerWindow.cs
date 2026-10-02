@@ -10,11 +10,7 @@ using Glamourer.Api.Enums;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/restraints: lets the Sub or Owner pick any equippable game item for a chosen slot, without it
-/// needing to be currently equipped or owned - GlamourerIpc.SetItemOnce applies any valid item id
-/// unconditionally, which is what makes this picker-first flow possible. Modeled on AnimationPickerWindow's
-/// "search a large data set in a roomy dedicated window" shape, backed by Lumina's own Item sheet instead
-/// of the mod/animation catalog.
+/// Pick any equippable item for a slot, owned or not - SetItemOnce applies any valid item id.
 public sealed class ItemPickerWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -33,9 +29,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(420, 360), MaximumSize = new Vector2(900, 1000) };
     }
 
-    /// Recomputes the slot-filtered item list once per Open rather than every frame - the full Item sheet
-    /// has tens of thousands of rows, but only a few hundred are valid for any one slot, so caching this
-    /// list keeps the per-frame search-filter cheap.
+    /// Filtered once per Open: the Item sheet has tens of thousands of rows, only a few hundred per slot.
     public void Open(ApiEquipSlot slot, Action<uint, string> chosen)
     {
         this.slot = slot;
@@ -107,8 +101,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
             .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// The 10 lockable slots each map to one non-zero `EquipSlotCategory` field - confirmed field names via
-    /// other installed Dalamud plugins' compiled Lumina structs (design.md's "Item enumeration source").
+    /// Each lockable slot maps to one non-zero EquipSlotCategory field.
     private static bool MatchesSlot(Lumina.Excel.Sheets.Item item, ApiEquipSlot slot)
     {
         var category = item.EquipSlotCategory.ValueNullable;
@@ -131,7 +124,6 @@ public sealed class ItemPickerWindow : Window, IDisposable
         };
     }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 

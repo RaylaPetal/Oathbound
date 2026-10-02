@@ -7,15 +7,8 @@ using Buttplug.Core.Messages;
 
 namespace Oathbound.Plugin.Ipc;
 
-/// collar/toy-control: wraps the official `Buttplug` NuGet client library for talking to a locally-running
-/// Intiface Central instance over its WebSocket server - structurally different from every other `Ipc/`
-/// wrapper in this plugin, since Intiface Central is a standalone companion application, not a Dalamud
-/// plugin reachable through Dalamud's IPC call-gate bus. Every public method is fail-closed: a missing
-/// Intiface install, an unreachable WebSocket, or any Buttplug-side exception is caught and reported as
-/// unavailable/failed rather than thrown, matching every other `Ipc/` wrapper's posture. Connect/vibrate/
-/// stop are all fire-and-forget from the caller's perspective (never blocks the calling thread on network
-/// I/O) - callers read `IsConnected`/`IsConnecting` each frame instead of awaiting a result, the same
-/// "poll a flag every ImGui frame" shape the rest of this plugin's connection-status UI already uses.
+/// Talks to Intiface Central over WebSocket via the Buttplug client - a standalone app, not a Dalamud plugin.
+/// Fail-closed and fire-and-forget: callers poll IsConnected/IsConnecting instead of awaiting.
 public sealed class IntifaceIpc : IDisposable
 {
     private readonly ButtplugClient client = new("Oathbound");
@@ -72,10 +65,7 @@ public sealed class IntifaceIpc : IDisposable
         catch (Exception ex) { Plugin.Log.Warning(ex, "IntifaceIpc: error while disconnecting from Intiface Central."); }
     }
 
-    /// Runs a vibration output at `intensityFraction` (0.0-1.0) against every vibrate-capable feature on
-    /// every currently connected device - collar/toy-control "Commands apply uniformly to all connected
-    /// devices". Fire-and-forget; a per-device/per-feature failure is logged and does not affect any
-    /// other device.
+    /// `intensityFraction` 0.0-1.0 on every vibrate feature of every device. A per-device failure doesn't affect the others.
     public void VibrateAll(double intensityFraction)
     {
         if (!IsConnected) return;
@@ -95,8 +85,7 @@ public sealed class IntifaceIpc : IDisposable
         }
     }
 
-    /// Stops every currently connected device via Buttplug's own StopAllDevices message - the protocol-
-    /// level "stop everything" call, used for both the ordinary explicit stop command and panic.
+    /// Protocol-level stop for everything; used by stop and panic.
     public void StopAll()
     {
         if (!IsConnected) return;

@@ -10,20 +10,11 @@ using Dalamud.Game.Text.SeStringHandling.Payloads;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/pairing "Receiving an unpair notification updates the header": the peer's declared role in the
-/// pairing that just ended (their own deliberate unpair, not panic - panic no longer ends any pairing), so
-/// the header can say "your Sub" or "your Owner" - transient, in-memory. Keyed by which specific pairing
-/// ended (collar/multi-pairing: ending one pairing never affects another).
+/// The peer's role in the pairing that just ended, so the header can say "your Sub" or "your Owner".
 public readonly record struct PeerUnpairedNotice(PluginRole PeerRole);
 
-/// collar/chat-transport's listener, watching every incoming tell for three things:
-///  - a relay invitation reference (`collarinvite`) and its acknowledgement (`collarpairack`) - both roles
-///    listen, both only ever hand off to PairingService, which owns the actual relay verification and
-///    Pending state (collar/pairing);
-///  - a panic/unpair notification (`collarunpair`);
-///  - a Sub's leash-off notice (`collarleash off <reason>`, Owner side - collar/leash); and
-///  - ongoing alias-trigger tells (Sub role only), matched by the sender name+world an accepted relay
-///    pairing captured.
+/// Watches incoming chat for pairing lifecycle tells (`collarinvite`, `collarpairack`, `collarunpair`), the leash-off notice
+/// (`collarleash`), and Sub-side trigger commands from a paired peer's verified sender.
 public sealed class ChatCommandListener : IDisposable
 {
     private const string PairingAckKeyword = "collarpairack";
@@ -33,10 +24,7 @@ public sealed class ChatCommandListener : IDisposable
     private const string CatalogPermissionDeniedKeyword = "collarcatalogdenied";
     private const string LeashOffNoticeKeyword = ChatComposer.LeashOffNoticeKeyword;
 
-    /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel": every channel
-    /// type an ongoing alias-trigger message can arrive on. Pairing lifecycle messages (invite/ack/unpair/
-    /// catalog) deliberately stay tell-only below - this broadening is scoped to ongoing command delivery
-    /// only, per design.md.
+    /// Channels a trigger command may arrive on. Pairing lifecycle messages stay tell-only.
     private static readonly XivChatType[] AllowedTriggerChatTypes =
     [
         XivChatType.TellIncoming, XivChatType.Party, XivChatType.Alliance,
@@ -47,9 +35,7 @@ public sealed class ChatCommandListener : IDisposable
         XivChatType.CrossLinkShell7, XivChatType.CrossLinkShell8,
     ];
 
-    /// Reserved first-tokens that route to the Owner's direct "joker" override grammar instead of alias
-    /// lookup (see Resolve/HandleForce*). A Sub alias can never be named one of these - CollarWindow's
-    /// alias-creation forms validate against this list so the two paths can never collide.
+    /// First tokens that route to the Owner's override grammar; Sub aliases can't use them.
     public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport"];
 
     private readonly PluginConfig config;
@@ -68,16 +54,13 @@ public sealed class ChatCommandListener : IDisposable
     private readonly LeashOffNotifier leashOffNotifier;
     private readonly OwnerStatusEstimateTracker estimates;
 
-    /// True while TestIncomingCommand runs: a local test stands the active pairing in as sender, but must never
-    /// send a leash-off notice to it.
+    /// A local test uses the active pairing as sender, but must never send it a notice.
     private bool isLocalTest;
 
     private readonly Dictionary<Guid, PeerUnpairedNotice> peerUnpairedNotices = new();
     public IReadOnlyDictionary<Guid, PeerUnpairedNotice> PeerUnpairedNotices => peerUnpairedNotices;
     public event Action? PeerUnpairedNoticeChanged;
 
-    /// Called from the header once one pairing's notice has been shown and acted on (Owner clicks Release;
-    /// Sub dismisses the informational note) - clears only that pairing's notice.
     public void DismissPeerUnpairedNotice(Guid pairingId)
     {
         if (peerUnpairedNotices.Remove(pairingId))
@@ -114,7 +97,6 @@ public sealed class ChatCommandListener : IDisposable
 
         var text = message.Message.TextValue.Trim();
 
-        // Pairing lifecycle messages stay tell-only - see AllowedTriggerChatTypes' doc comment.
         if (message.LogKind == XivChatType.TellIncoming)
         {
             if (TryHandleRelayAckMessage(text, message.Sender))
@@ -131,11 +113,7 @@ public sealed class ChatCommandListener : IDisposable
                 return;
         }
 
-        // Only a role that can hold a Sub-side pairing (Sub or Switch) ever reacts to ongoing alias
-        // triggers - the Owner-side of any pairing only composes (see ChatComposer), it never applies
-        // anything from a tell. collar/multi-pairing "Incoming commands resolve against the full peer
-        // list": resolved against every currently-paired peer, independent of which pairing (if any) is
-        // selected as active in the UI.
+        // Only Sub-side pairings apply anything from chat, matched against every paired peer.
         if (config.Role == PluginRole.Owner)
             return;
 
@@ -143,10 +121,7 @@ public sealed class ChatCommandListener : IDisposable
         if (senderName is null)
             return;
 
-        // World is unavailable on some chat types' sender payload - fall back to a name-only match, but
-        // only when it's unambiguous (some chat types embed PlayerPayload reliably; this mirrors the
-        // pre-multi-pairing leniency for those that don't, without silently guessing between two Owners
-        // sharing a first+last name on different worlds).
+        // Some chat types lack the sender's world - fall back to a name-only match, but only when unambiguous.
         var matchedPairing = senderWorld is not null
             ? config.FindPairing(senderName, senderWorld, PairingDirection.SubSide)
             : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.SubSide &&
@@ -182,11 +157,7 @@ public sealed class ChatCommandListener : IDisposable
         }
     }
 
-    /// collar/chat-transport "An Owner-style command can be tested entirely locally": exercises the exact
-    /// same trigger-phrase check and `Resolve` dispatch a real incoming tell goes through, so this can never
-    /// drift from what a real tell would actually do - the only differences are the checks a local test
-    /// can't meaningfully perform (there is no real sender to verify, and no tell channel to require).
-    /// Never sends or receives any chat message, and never requires pairing.
+    /// Runs the same dispatch as a real tell. Never sends chat and never requires pairing.
     public LocalTestResult TestIncomingCommand(string rawText)
     {
         var trigger = config.TriggerPhrase.Trim();
@@ -200,8 +171,6 @@ public sealed class ChatCommandListener : IDisposable
 
         try
         {
-            // No real sender to resolve in a local test - the active pairing (if any) stands in, matching
-            // what a real tell from that peer would use.
             isLocalTest = true;
             return Resolve(alias, config.GetActivePairing());
         }
@@ -216,13 +185,7 @@ public sealed class ChatCommandListener : IDisposable
         }
     }
 
-    /// collar/pairing's relay handshake, inviter side: a "collarpairack <invitationId> <proofDigest>" tell
-    /// sent automatically by PairingService.AcceptPendingAsync. Consumes the message (returns true)
-    /// whenever it starts with the keyword and parses, matching every other handshake message's "fail
-    /// closed, never fall through" shape - the actual verification (does the fetched invitation's signed
-    /// acceptance carry this exact proof digest, from an invitation this side created) happens in
-    /// PairingService, not here; this method's only job is recognizing the tell and capturing its
-    /// server-verified sender.
+    /// Verification happens in PairingService; this only recognizes the tell and captures its verified sender.
     private bool TryHandleRelayAckMessage(string text, SeString sender)
     {
         if (!text.StartsWith(PairingAckKeyword, StringComparison.OrdinalIgnoreCase))
@@ -241,12 +204,7 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// collar/pairing's relay handshake, receiver side: a "collarinvite <invitationId>" tell from either
-    /// role. `senderName`/`senderWorld` (FFXIV's own server-verified sender) is the character identity
-    /// PairingService binds the fetched invitation to - never a free-text field. Consumes the message
-    /// (returns true) whenever it starts with the keyword and parses, whether or not the invitation turns
-    /// out to be valid once fetched - a wrong/expired/forged reference is silently ignored by
-    /// PairingService, never falls through to alias parsing.
+    /// The verified sender is the identity PairingService binds the invitation to. Always consumed, even when invalid.
     private bool TryHandleRelayInviteMessage(string text, SeString sender)
     {
         if (!text.StartsWith(InviteKeyword, StringComparison.OrdinalIgnoreCase))
@@ -264,12 +222,7 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// collar/pairing "Receiving a panic notification updates the header": a "collarunpair <role>" tell
-    /// sent automatically by PanicHandler. Verified by comparing the sender against this side's own
-    /// currently-configured peer name/world - no code involved, since ending an already-trusted
-    /// relationship doesn't need the same shared-secret gate establishing one does (see design.md). A
-    /// notice from anyone else is silently ignored, the same "fail closed" shape every other handshake
-    /// message here already uses.
+    /// Verified by matching the sender against our paired peers; anyone else is ignored.
     private bool TryHandleUnpairNoticeMessage(string text, SeString sender)
     {
         if (!text.StartsWith(UnpairNoticeKeyword, StringComparison.OrdinalIgnoreCase))
@@ -282,9 +235,7 @@ public sealed class ChatCommandListener : IDisposable
         var (name, world) = ExtractNameAndWorld(sender);
         if (name is null)
             return true;
-        // collar/multi-pairing: a mutual pair has two pairings with the same peer name+world - the
-        // notice's own role token (the sender's role in the pairing that ended) says which one: if the
-        // sender was the Owner there, it's this device's Sub-side pairing with them, and vice versa.
+        // The role token picks which pairing of a mutual pair ended.
         var endedDirection = peerRole == PluginRole.Owner ? PairingDirection.SubSide : PairingDirection.OwnerSide;
         var matchedPairing = world is not null
             ? config.FindPairing(name, world, endedDirection)
@@ -293,9 +244,7 @@ public sealed class ChatCommandListener : IDisposable
             return true;
 
         peerUnpairedNotices[matchedPairing.Id] = new PeerUnpairedNotice(peerRole);
-        // collar/restraints: only force-unlock this device's own restraints when the ending pairing was
-        // this side's Sub-side relationship - an Owner-side pairing ending (one of this device's Subs
-        // panicked) has no bearing on this device's own restraints.
+        // Only our own restraints, and only when the Sub-side pairing ended.
         if (matchedPairing.Direction == PairingDirection.SubSide)
             restraints.ForceUnlock();
         pairing.EndFromVerifiedPeerNotice(matchedPairing);
@@ -303,9 +252,7 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// collar/catalog-sync: a "collarcatalogreq <requestId>" tell from either role - CatalogSyncRelayService
-    /// itself re-verifies sender identity and the request's own signature before doing anything, so this
-    /// method's only job is recognizing the keyword and capturing the verified sender.
+    /// CatalogSyncRelayService re-verifies the sender and the request signature.
     private bool TryHandleCatalogRequestMessage(string text, SeString sender)
     {
         if (!text.StartsWith(CatalogRequestKeyword, StringComparison.OrdinalIgnoreCase))
@@ -323,8 +270,6 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// collar/catalog-sync "Sub has not opted in": a "collarcatalogdenied <requestId>" tell telling the
-    /// Owner their paired Sub hasn't enabled catalog sync.
     private bool TryHandleCatalogPermissionDeniedMessage(string text, SeString sender)
     {
         if (!text.StartsWith(CatalogPermissionDeniedKeyword, StringComparison.OrdinalIgnoreCase))
@@ -341,10 +286,7 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// collar/leash "Owner's client stops treating a released Sub as leashed": a "collarleash off <reason>"
-    /// tell from a Sub whose leash ended on their side. Only a verified sender this device holds an active
-    /// Owner-side pairing with counts; anyone else is silently ignored, the same fail-closed shape as the
-    /// catalog-denied notice. The Owner is only told when their estimate actually showed the Sub leashed.
+    /// Only a paired Sub counts. The Owner is told only if their estimate still showed the Sub leashed.
     private bool TryHandleLeashOffNoticeMessage(string text, SeString sender)
     {
         if (!text.StartsWith(LeashOffNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
@@ -385,13 +327,7 @@ public sealed class ChatCommandListener : IDisposable
         }
     }
 
-    /// Dispatches to the Owner's direct "joker" override grammar when the command starts with a reserved
-    /// category word, otherwise falls back to collar/chat-transport's normal "alias resolution against a
-    /// locally-defined dictionary." Returns a `LocalTestResult` describing what happened - reused both for
-    /// this dispatch's own diagnostic log line (OnChatMessage) and for the local test tool
-    /// (TestIncomingCommand), so neither can drift from what a real tell actually does. An alias that
-    /// doesn't match anything the Sub has defined is still never an error visible to the Owner - the result
-    /// here is purely local (logged or shown to the Sub only).
+    /// Reserved category words go to the override grammar, anything else to the Sub's aliases.
     private LocalTestResult Resolve(string commandText, PairingState? sourcePairing)
     {
         var (firstToken, rest) = SplitFirstToken(commandText);
@@ -410,49 +346,34 @@ public sealed class ChatCommandListener : IDisposable
             case "moodle":
                 return permissions.Moodles ? HandleForceMoodle(rest) : LocalTestResult.Fail("Moodles permission is not enabled.");
             case "restraint":
-                // collar/restraint-lock-timer: the leading `lockfor:` option comes off first, then the trailing
-                // `moodle:` one, leaving the unchanged sub-verb grammar for HandleForceRestraint.
+                // `lockfor:` comes off first, then the trailing `moodle:`.
                 return permissions.Restraints && config.TosAcknowledged
                     ? HandleForceRestraint(MoodleOption.Strip(LockTimerOption.Strip(rest, out var restraintLock), out var restraintMoodle), restraintMoodle, restraintLock)
                     : LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.");
             case "toy":
                 return permissions.ToyControl && config.ToyControlAcknowledged ? HandleForceToy(rest) : LocalTestResult.Fail("Toy control permission or its dedicated acknowledgement is not enabled.");
             case "customtrigger":
-                // Deliberately no outer permission gate here, unlike every other case above - a
-                // Custom Trigger bundle mixes categories with independent permissions, so
-                // CustomTriggerCommand.Apply checks each bundled action's own permission (and Chat's
-                // dedicated acknowledgement) individually as it dispatches (design.md's "orchestrator,
-                // not a reimplementation" decision - see also the ResolveAlias CustomTriggers branch).
+                // No outer gate: each bundled action checks its own permission.
                 return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock);
             case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
-                // collar/leash-travel (design D4): `leash travel <teleport payload>`. Bare `leash [options]` falls
-                // through to ResolveAlias's fixed-word handling as before.
+                // Bare `leash [options]` falls through to ResolveAlias.
                 if (permissions.Follow)
                     return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
                 if (follow.LeashedPairingId != sourcePairing?.Id)
                     NotifyNotLeashed(sourcePairing);
                 return LocalTestResult.Fail("Follow permission is not enabled.");
             case "teleport":
-                // Deliberately no outer permission gate here either, unlike the categories above - unlike
-                // them, every one of Teleport's guards (permission, ToS acknowledgement, duty, combat,
-                // Lifestream/vnavmesh availability, housing, aetheryte) needs a distinct, reportable reason, so TeleportCommand.Apply
-                // owns all of it (collar/teleport's "Refuses when travel cannot safely happen").
+                // No outer gate: TeleportCommand owns every guard, each with its own reportable reason.
                 return HandleForceTeleport(rest, sourcePairing);
             case "revert":
-                // No outer gate: like customtrigger, each category below checks its own permission.
+                // No outer gate: each category below checks its own permission.
                 return HandleForceRevert(rest);
         }
 
         return ResolveAlias(commandText, sourcePairing);
     }
 
-    /// The Owner's `revert all` (header "Revert all"): puts everything the Owner can command back to nothing
-    /// in one tell - restraints (gear, rules, bound animations, their moodles), outfit (unlocked, then the
-    /// whole character reverted to Glamourer automation), title, leash, playing animation, toy, an in-progress
-    /// teleport journey, and every moodle. Each category only if the Sub's own permission for it is on, same as each individual command.
-    /// Never touches the collar (its slot lock, piece and moodle all stay) or any pairing - the same as
-    /// panic, the Sub's own safeword (collar/collaring). Each step is isolated, so one failing (an
-    /// IPC plugin not loaded) never stops the rest.
+    /// Reverts everything the Owner can command, per the Sub's permissions. Never touches the collar or any pairing.
     private LocalTestResult HandleForceRevert(string rest)
     {
         if (!rest.Equals("all", StringComparison.OrdinalIgnoreCase))
@@ -476,8 +397,7 @@ public sealed class ChatCommandListener : IDisposable
             }
         }
 
-        // Restraints first: releasing their slot locks can hand a slot back to the outfit underneath, which
-        // the outfit revert right after then clears too.
+        // Restraints first: releasing their slots can hand a slot back to the outfit, which the next step clears.
         Step("restraints", permissions.Restraints, () => restraints.ForceUnlock());
         Step("outfit", permissions.Outfit, () => outfit.RevertToBase());
         Step("title", permissions.Title, title.ForceClear);
@@ -485,10 +405,9 @@ public sealed class ChatCommandListener : IDisposable
         Step("animation", permissions.Gesture, gesture.ResetActiveTemporary);
         Step("toy", permissions.ToyControl, () => toyControl.ForceStop());
         Step("teleport", permissions.Teleport && teleport.IsInProgress, () => teleport.Stop("Owner sent Revert all"));
-        // Last, so the releases above have already dropped their own holds; the collar's is re-applied.
+        // Last, so the releases above have already dropped their own holds.
         Step("moodles", permissions.Moodles, () => moodles.Ledger.ClearAllExceptCollar());
-        // Everything a Custom Trigger could have applied is gone now, so a later "revert custom triggers"
-        // must not undo something applied after this.
+        // A later "revert custom triggers" must not undo something applied after this.
         customTriggers.ForgetEffects();
 
         if (done.Count == 0 && failed.Count == 0)
@@ -540,7 +459,7 @@ public sealed class ChatCommandListener : IDisposable
                 : LocalTestResult.Fail("Outfit unlock did nothing - no lock or attached moodle was held.");
         }
 
-        // `outfit wear <name>`: the Owner's unlocked apply - same as `lock`, but nothing gets locked.
+        // `outfit wear <name>`: like `lock`, but nothing gets locked.
         const string wearPrefix = "wear ";
         if (rest.StartsWith(wearPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -590,9 +509,6 @@ public sealed class ChatCommandListener : IDisposable
         };
     }
 
-    /// Only `collar unlock` exists - the collar only ever applies as a side effect of pairing acceptance
-    /// (see AcceptPending), never through a chat command, so there is no `collar lock` counterpart to
-    /// title/outfit's own force-apply grammar.
     private LocalTestResult HandleForceCollar(string rest, PairingState? sourcePairing)
     {
         if (sourcePairing is null)
@@ -607,8 +523,7 @@ public sealed class ChatCommandListener : IDisposable
 
         if (rest.Equals("lock", StringComparison.OrdinalIgnoreCase))
         {
-            // collar/collaring "A different Owner's lock command takes over the collar": this always
-            // supersedes whichever pairing owned the collar before.
+            // Always supersedes whichever pairing owned the collar before.
             return collar.ForceApply(sourcePairing.Id)
                 ? LocalTestResult.Ok("Collar applied and locked.")
                 : LocalTestResult.Fail("Collar apply failed - no collar item configured.");
@@ -738,8 +653,7 @@ public sealed class ChatCommandListener : IDisposable
 
     private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock)
     {
-        // collar/custom-triggers "Revert custom triggers". An older Sub doesn't know this sub-verb and rejects
-        // it, so it fails closed (nothing is reverted) rather than doing anything unexpected.
+        // An older Sub rejects this sub-verb, so it fails closed.
         if (rest.Trim().Equals("revert", StringComparison.OrdinalIgnoreCase))
             return customTriggers.RevertEffects();
 
@@ -771,9 +685,7 @@ public sealed class ChatCommandListener : IDisposable
             : LocalTestResult.Fail(reason ?? "Teleport failed.");
     }
 
-    /// collar/leash-travel: the leashed Owner's automatic "I moved, come along". Only acts while this Sub is
-    /// leashed to the sender (FollowCommand checks); Teleport's own guards (permission, acknowledgement,
-    /// duty, plugins, aetheryte) apply through TeleportCommand, and a refusal ends the leash.
+    /// Only acts while leashed to the sender; Teleport's guards apply and a refusal ends the leash.
     private LocalTestResult HandleLeashTravel(string payload, PairingState? sourcePairing)
     {
         if (!TeleportTarget.TryParse(payload, out var destination))
@@ -781,9 +693,7 @@ public sealed class ChatCommandListener : IDisposable
 
         var wasLeashedToSender = sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id;
         var (success, reason) = follow.TravelTo(destination, sourcePairing);
-        // collar/leash-travel: the sender's client still thinks this Sub is leashed to them - say it isn't,
-        // once per `leash travel`. (A leash that did belong to them and failed to travel already sent its
-        // own `travel` notice from the release.)
+        // The sender's client still thinks this Sub is leashed to them. A leash that did belong to them already sent its own notice.
         if (!success && !wasLeashedToSender)
             NotifyNotLeashed(sourcePairing);
         return success
@@ -825,9 +735,7 @@ public sealed class ChatCommandListener : IDisposable
         var aliases = config.Aliases;
         var permissions = config.Permissions;
 
-        // collar/control-vocabulary "Control words are fixed": clear-title, unlock, leash, unleash and
-        // clear-moodle are literals every client understands, never Sub-renamable, so an Owner never has to
-        // discover a mutable command. Checked before the Sub's own aliases so no alias can shadow them.
+        // Fixed words every client understands, checked before the Sub's aliases so none can shadow them.
         if (Matches(alias, ControlWords.ClearTitle))
         {
             if (!permissions.Title)
@@ -844,13 +752,11 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Ok($"\"{alias}\" matched unlock-outfit.");
         }
 
-        // collar/control-vocabulary "Leash accepts options": `leash [length:N] [moodle:"..."]`, moodle always
-        // last, so it's stripped first. Anything else after it (an invalid length included) isn't a leash command.
+        // `leash [length:N] [moodle:"..."]`: moodle is always last, so it's stripped first.
         var leashRest = LengthOption.Strip(MoodleOption.Strip(alias, out var leashMoodle), out var leashLength);
         if (Matches(leashRest, ControlWords.Leash))
         {
-            // collar/leash "Sub tells the Owner when the leash comes off": a refused leash is reported back too,
-            // so the Owner's client doesn't show (or travel with) a leash that never engaged.
+            // A refused leash is reported back so the Owner's client doesn't show one that never engaged.
             if (!permissions.Follow)
             {
                 NotifyLeashRefused(sourcePairing);
@@ -866,8 +772,7 @@ public sealed class ChatCommandListener : IDisposable
         {
             if (!permissions.Follow)
                 return LocalTestResult.Fail("Follow permission is not enabled.");
-            // An unleash from a different Owner than the one holding the leash still releases it, but the
-            // holding Owner's client didn't send it - they're told.
+            // An unleash from a different Owner still releases the leash; the holding Owner is told.
             follow.Release(sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id ? LeashEnd.OwnerUnleash : LeashEnd.Other);
             return LocalTestResult.Ok($"\"{alias}\" matched leash-release.");
         }
@@ -911,7 +816,6 @@ public sealed class ChatCommandListener : IDisposable
                 : LocalTestResult.Fail($"Alias \"{alias}\" matched a gesture, but it failed to play.");
         }
 
-        // A restraint's own word - a captured device's name or a configured mod restraint's alias - toggles it.
         if (restraints.MatchesWord(alias))
         {
             if (!(permissions.Restraints && config.TosAcknowledged))
@@ -931,10 +835,7 @@ public sealed class ChatCommandListener : IDisposable
                 : LocalTestResult.Fail($"Alias \"{alias}\" matched a Moodle, but it failed to apply.");
         }
 
-        // collar/custom-triggers "Sub defines a named Custom Trigger bundling multiple actions": no
-        // category permission gate here - each bundled action checks its own category's permission
-        // independently inside CustomTriggerCommand.Apply, so a disabled category is skipped rather than
-        // blocking the whole trigger the way every other branch above does.
+        // No permission gate: each bundled action checks its own.
         var customTrigger = aliases.CustomTriggers.FirstOrDefault(t => Matches(alias, t.Alias));
         if (customTrigger is not null)
             return customTriggers.Apply(customTrigger.Actions);
@@ -945,8 +846,7 @@ public sealed class ChatCommandListener : IDisposable
     private static bool Matches(string received, string configured) =>
         !string.IsNullOrWhiteSpace(configured) && string.Equals(received, configured.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    /// Prefers a PlayerPayload when present (structured, unambiguous); falls back to parsing the plain
-    /// "Name Surname@World" text form, since not every chat type embeds a PlayerPayload for the sender.
+    /// Not every chat type embeds a PlayerPayload, so fall back to parsing "Name Surname@World".
     private static (string? Name, string? World) ExtractNameAndWorld(SeString sender)
     {
         var playerPayload = sender.Payloads.OfType<PlayerPayload>().FirstOrDefault();

@@ -7,14 +7,8 @@ using Dalamud.Plugin.Ipc;
 
 namespace Oathbound.Plugin.Ipc;
 
-/// Thin wrapper around vnavmesh's (awgil/ffxiv_navmesh) IPC surface - no NuGet API package, so this mirrors
-/// its `vnavmesh.<Name>` call gates by hand, same shape as LifestreamIpc. collar/teleport's navigation leg
-/// is the only consumer; every call fails soft (returns false/null, never throws) so a Sub without vnavmesh
-/// gets a clean refusal instead of a crash.
-///
-/// Deliberately uses `Nav.PathfindCancelable` + `Path.MoveTo` rather than `SimpleMove.*`: SimpleMove queues
-/// a task that starts walking whenever pathfinding finishes, which could be after the Sub already pressed
-/// Stop (design.md D6). Owning the token and the returned Task lets TeleportCommand discard a stale path.
+/// Hand-rolled mirror of vnavmesh's call gates; every call fails soft. Uses PathfindCancelable + Path.MoveTo rather
+/// than SimpleMove, which could start walking after the Sub pressed Stop.
 public sealed class VnavmeshIpc
 {
     private readonly ICallGateSubscriber<bool> isReady;
@@ -38,15 +32,13 @@ public sealed class VnavmeshIpc
         isRunning = Plugin.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.Path.IsRunning");
     }
 
-    /// Probes `Nav.IsReady` - cheap and read-only, and it answers (true or false) whenever vnavmesh is loaded,
-    /// so any exception means "not installed / not loaded / contract mismatch".
+    /// Any exception means not installed, not loaded, or a contract mismatch.
     public bool IsAvailable { get { try { isReady.InvokeFunc(); return true; } catch { return false; } } }
 
-    /// Whether the current zone's navmesh is built and loaded. False (not "unknown") on failure, so callers
-    /// keep waiting rather than pathing against a mesh that isn't there.
+    /// False on failure, so callers keep waiting rather than path against a missing mesh.
     public bool TryIsReady() { try { return isReady.InvokeFunc(); } catch { return false; } }
 
-    /// 0..1 build progress for the current zone's mesh, or -1 when unavailable/not building.
+    /// -1 when unavailable or not building.
     public float TryGetBuildProgress() { try { return buildProgress.InvokeFunc(); } catch { return -1f; } }
 
     public Task<List<Vector3>>? TryPathfind(Vector3 from, Vector3 to, bool fly, CancellationToken cancel)

@@ -77,9 +77,7 @@ public static class CommandSelector
             if (byPrefix.Count > 1) return new GestureResolution(ResolutionStatus.Ambiguous, null);
         }
 
-        // Most specific name first: the full label (with its trigger), then the entry's own label, then the bare
-        // animation name. The same animation often exists as several entries (one per trigger, or none), so a
-        // selector that names one exactly must not be called ambiguous just because a looser name matches more.
+        // Most specific first, so a selector naming one entry exactly isn't called ambiguous because a looser name matches more.
         Func<GestureCatalogEntry, string>[] tiers =
         [
             e => GestureLabel(e.ModName, e.GroupName, e.AnimationName, e.Trigger),

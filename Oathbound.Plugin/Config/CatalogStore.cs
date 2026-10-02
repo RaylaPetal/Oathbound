@@ -6,22 +6,14 @@ using System.Text.Json;
 
 namespace Oathbound.Plugin.Config;
 
-/// collar/config-performance "Catalogs live outside the hot-saved config file" (split-catalog-storage-from-
-/// config): Penumbra/gesture/moodle scan results and imported peer catalogs used to live inline on
-/// PluginConfig, so every config.Save() call anywhere in the plugin - including switching the Active Pairing
-/// dropdown - re-serialized and rewrote them even though nothing about them changed. This owns their own
-/// file instead, written only by the scan/import call sites that actually mutate a catalog. See this
-/// change's design.md for the full rationale, including the [JsonExtensionData]-based migration below.
+/// Scanned and imported catalogs live in their own file, so an unrelated config.Save() doesn't rewrite them.
 public sealed class CatalogStore
 {
     private const string FileName = "catalogs.json";
 
     private static string FilePath => Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, FileName);
 
-    /// Populates `config`'s catalog properties from disk, migrating a pre-upgrade install's inline catalogs
-    /// (captured by GetPluginConfig() into each mapping's LegacyExtensionData) into the sidecar file the
-    /// first time this runs. A no-op read-through on every later launch. Never throws - worst case on a
-    /// missing/corrupt/unmigratable file is empty catalogs, which costs the user a rescan, not a failed load.
+    /// Migrates an older install's inline catalogs on first run. Never throws - worst case is empty catalogs and a rescan.
     public void LoadOrMigrate(PluginConfig config)
     {
         if (!File.Exists(FilePath))
@@ -33,8 +25,7 @@ public sealed class CatalogStore
         LoadInto(config);
     }
 
-    /// Snapshots every mapping's current in-memory catalog off `config` and writes it, via a temp-file-then-
-    /// replace so a crash mid-write can never leave a truncated/corrupt catalogs.json behind.
+    /// Temp-file-then-replace, so a crash mid-write can't leave a corrupt file.
     public void Save(PluginConfig config)
     {
         var data = new CatalogStoreData
@@ -87,7 +78,7 @@ public sealed class CatalogStore
         TryAssign<RestraintCatalogExportEntry>(config.RestraintMapping.LegacyExtensionData, "ImportedPeerCatalog", v => config.RestraintMapping.ImportedPeerCatalog = v);
         TryAssign<MoodlesStatusEntry>(config.MoodlesMapping.LegacyExtensionData, "LocalCatalog", v => config.MoodlesMapping.LocalCatalog = v);
 
-        // Never let the legacy inline data round-trip back into the main config on a later config.Save().
+        // Never let the legacy inline data round-trip back into the main config.
         config.GestureMapping.LegacyExtensionData = null;
         config.RestraintMapping.LegacyExtensionData = null;
         config.MoodlesMapping.LegacyExtensionData = null;

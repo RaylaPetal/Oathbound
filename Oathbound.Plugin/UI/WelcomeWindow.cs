@@ -6,12 +6,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/onboarding "Welcome window appears once on first plugin load": a deliberately minimal, distinct
-/// window (not a mode of CollarWindow, per design.md's "Welcome window is a distinct Window" decision) shown
-/// before CollarWindow's own nav bar/character header - both of which assume Role/pairing state already
-/// exists - would otherwise render confusingly incomplete. Role and trigger phrase write straight to
-/// `PluginConfig.Role`/`TriggerPhrase`, the same fields Settings' Identity & Pairing tab reads and writes -
-/// there is no separate onboarding-only copy of either value.
+/// First-run window, shown before the main window needs Role/pairing state. Writes the same config fields Settings uses.
 public sealed class WelcomeWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -31,7 +26,6 @@ public sealed class WelcomeWindow : Window, IDisposable
 
     public override void OnOpen() => triggerPhraseInput = plugin.Configuration.TriggerPhrase;
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 

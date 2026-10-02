@@ -23,21 +23,14 @@ public enum DependencyState
     NotInstalled,
     Disabled,
     NotResponding,
-    /// Intiface Central only: this plugin can't tell whether the app is installed, only whether it's connected.
+    /// Intiface only: we can't tell whether the app is installed, only whether it's connected.
     NotConnected,
 }
 
 public sealed record DependencyInfo(DependencyId Id, string Name, string Purpose, string WhoNeedsIt);
 
-/// collar/ui-organization "Settings shows a dependency status header" (design.md D13): the one place that
-/// decides whether each external plugin/app is usable. The Settings header, nav tile gating, inline feature
-/// gating and permission notes all read this; command handlers deliberately don't (they keep their own live
-/// IPC probes and fail closed on their own).
-///
-/// Installed/disabled comes from Dalamud's InstalledPlugins, which an IPC probe alone can't tell apart; a
-/// working probe always wins, so a plugin that answers is never reported missing over an internal-name
-/// mismatch. Recomputed when Dalamud reports a plugin change and otherwise at most every RefreshInterval, so
-/// UI reads every frame stay cheap.
+/// Whether each external plugin/app is usable, for the UI only - command handlers keep their own probes. A working
+/// probe always wins over the installed list. Recomputed on plugin changes and at most every RefreshInterval.
 public sealed class DependencyStatusService : IDisposable
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(5);
@@ -100,10 +93,9 @@ public sealed class DependencyStatusService : IDisposable
 
     public bool IsReady(DependencyId id) => Get(id) == DependencyState.Ready;
 
-    /// The ids among `required` that aren't Ready, in the order given.
     public IReadOnlyList<DependencyId> Missing(IEnumerable<DependencyId> required) => required.Where(id => !IsReady(id)).ToList();
 
-    /// e.g. "Requires Honorific (installed but disabled)." or null when nothing is missing.
+    /// e.g. "Requires Honorific (installed but disabled).", or null.
     public string? MissingReason(IEnumerable<DependencyId> required)
     {
         var missing = Missing(required);
@@ -149,7 +141,7 @@ public sealed class DependencyStatusService : IDisposable
         states[DependencyId.Intiface] = SafeProbe(intifaceConnected) ? DependencyState.Ready : DependencyState.NotConnected;
     }
 
-    /// design.md D13 resolution order: a working probe wins; otherwise the installed list says why it's missing.
+    /// A working probe wins; otherwise the installed list says why it's missing.
     private static DependencyState Resolve(Func<bool> probe, Dictionary<string, bool> installed, string internalName)
     {
         if (SafeProbe(probe))

@@ -12,8 +12,7 @@ using Oathbound.Plugin.Safety;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/reactions: the Reactions module - a list of the user's own reactions with a ReactToMe-style
-/// editor underneath. Available to both roles; nothing here is sent to or driven by a paired peer.
+/// The Reactions module. Available to both roles; nothing here involves a paired peer.
 public sealed partial class ModuleWindow
 {
     private ReactionRule? reactionDraft;
@@ -29,7 +28,7 @@ public sealed partial class ModuleWindow
 
     private static List<(uint Id, string Name, string Command)>? emoteRows;
 
-    /// Every emote with a slash command, cached once - used by the trigger and gesture pickers.
+    /// Cached once.
     private static List<(uint Id, string Name, string Command)> EmoteRows => emoteRows ??=
         Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>()
             .Where(e => e.RowId > 0 && e.Name.ExtractText().Length > 0)
@@ -167,7 +166,6 @@ public sealed partial class ModuleWindow
         if (ImGui.InputTextWithHint("Name (optional)##reaction", "Shown in the list", ref name, 64))
             draft.Name = name;
 
-        // --- Trigger ---
         Section.SubHeading("When");
         var kind = (int)draft.TriggerKind;
         ImGui.SetNextItemWidth(260);
@@ -200,7 +198,6 @@ public sealed partial class ModuleWindow
                 IconGlyph.WrappedDisabled($"Someone has to say: {trigger} {phrase.Trim()}");
         }
 
-        // --- Who ---
         Section.SubHeading("Who can trigger it");
         var anyone = draft.AllowAnyone ? 1 : 0;
         if (ImGui.RadioButton("Only people I'm paired with##reactionWho", ref anyone, 0))
@@ -210,7 +207,6 @@ public sealed partial class ModuleWindow
             draft.AllowAnyone = true;
         IconGlyph.HelpMarker("Paired means anyone you own or who owns you. With Anyone, strangers can set this reaction off too.");
 
-        // --- Actions ---
         Section.SubHeading("Then (pick at least one)");
         DrawReactionGesture(draft);
         DrawGatedReactionAction(DependencyId.Glamourer, () => DrawReactionItem(draft));
@@ -218,7 +214,6 @@ public sealed partial class ModuleWindow
         DrawGatedReactionAction(DependencyId.Moodles, () => DrawReactionMoodle(draft));
         DrawReactionChat(draft);
 
-        // --- Cooldown ---
         Section.SubHeading("Cooldown");
         var cooldown = draft.CooldownSeconds;
         ImGui.SetNextItemWidth(160);
@@ -259,7 +254,7 @@ public sealed partial class ModuleWindow
         IconGlyph.HelpMarker("Runs this reaction's actions once right now, on yourself, without waiting for the trigger. A chat message is really sent.");
     }
 
-    /// Null when the draft can be saved, otherwise the reason it can't.
+    /// Null when the draft can be saved.
     private string? ValidateReaction(ReactionRule draft)
     {
         if (draft.TriggerKind == ReactionTriggerKind.Emote && draft.EmoteId == 0)
@@ -277,8 +272,7 @@ public sealed partial class ModuleWindow
         return null;
     }
 
-    /// The phrase (or its first word) matching a reserved word or any of the user's own aliases - those are
-    /// read as commands by the same trigger word, so a reaction must never share one.
+    /// Those words are read as commands by the same trigger word, so a reaction must never share one.
     private string? PhraseCollision(string phrase)
     {
         var config = plugin.Configuration;
@@ -302,8 +296,7 @@ public sealed partial class ModuleWindow
         return null;
     }
 
-    /// collar/ui-organization "Partly dependent features are disabled inline": Reactions run on the local client
-    /// in either role, so each plugin-backed action type is gated on its own plugin while the rest stay usable.
+    /// Each plugin-backed action is gated on its own plugin; the rest stay usable.
     private void DrawGatedReactionAction(DependencyId required, Action draw)
     {
         var blocked = DependencyGates.FeatureBlockedReason(plugin, required);

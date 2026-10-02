@@ -6,14 +6,10 @@ using System.Text.Json;
 
 namespace Oathbound.Plugin.Relay;
 
-/// The character fields a code invitation or acceptance carries encrypted (collar/pairing "Character identity
-/// is hidden from the relay").
+/// Carried encrypted, so the relay never learns who pairs.
 public sealed record PairingCharacter(string Name, string World, string? TriggerPhrase);
 
-/// collar/pairing + collar/pairing-recovery: pairing codes and recovery codes, and everything derived from
-/// them. Must agree byte-for-byte with protocol/constants.json `pairingCode`/`recoveryCode` and the
-/// `pairingCode`/`recoveryCode` entries in protocol/vectors/crypto-vectors.json (worker/test/vectors.spec.ts
-/// checks the Worker side; this side is checked by hand against the same vectors).
+/// Must agree byte-for-byte with protocol/constants.json and crypto-vectors.json; the plugin side is only checked by hand.
 public static class PairingCodes
 {
     private const string Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32: no I, L, O, U
@@ -31,8 +27,7 @@ public static class PairingCodes
     public static string NewPairingCode() => Encode(RelayCrypto.RandomBytes(PairingCodeBytes));
     public static string NewRecoveryCode() => Encode(RelayCrypto.RandomBytes(RecoveryCodeBytes));
 
-    /// Uppercase, dashes and whitespace removed, I/L -> 1 and O -> 0 (so a typed code survives the usual
-    /// look-alike mistakes). Returns null if anything outside the alphabet remains or the length is wrong.
+    /// Uppercase, separators removed, I/L -> 1 and O -> 0. Null if anything outside the alphabet remains or the length is wrong.
     public static string? Normalize(string? input, int expectedChars)
     {
         if (input is null) return null;
@@ -47,7 +42,7 @@ public static class PairingCodes
         return sb.Length == expectedChars ? sb.ToString() : null;
     }
 
-    /// Groups of four for display: K7QM-3XRP-9DTA-WV2E.
+    /// Groups of four: K7QM-3XRP-9DTA-WV2E.
     public static string Format(string normalized)
     {
         var sb = new StringBuilder();
@@ -81,7 +76,7 @@ public static class PairingCodes
     private static byte[] Hkdf(string normalized, byte[] info) =>
         HKDF.DeriveKey(HashAlgorithmName.SHA256, Encoding.UTF8.GetBytes(normalized), outputLength: 32, salt: [], info: info);
 
-    /// The code invitation's invitationId (a 43-character capability); the relay stores only its SHA-256.
+    /// The relay stores only its SHA-256.
     public static string LookupId(string normalizedPairingCode) => RelayCrypto.Base64UrlEncode(Hkdf(normalizedPairingCode, PairLookupInfo));
     public static byte[] CharacterKey(string normalizedPairingCode) => Hkdf(normalizedPairingCode, PairEncryptionInfo);
     public static string BackupId(string normalizedRecoveryCode) => RelayCrypto.Base64UrlEncode(Hkdf(normalizedRecoveryCode, BackupIdInfo));
@@ -101,7 +96,7 @@ public static class PairingCodes
         return new EncryptedBlob { Nonce = RelayCrypto.Base64UrlEncode(nonce), Ciphertext = RelayCrypto.Base64UrlEncode(ciphertext) };
     }
 
-    /// Null if the blob doesn't decrypt under this code (wrong code, tampered, or the wrong side's blob).
+    /// Null if it doesn't decrypt under this code.
     public static PairingCharacter? DecryptCharacter(string normalizedPairingCode, string invitationId, bool inviter, EncryptedBlob? blob)
     {
         if (blob is null) return null;

@@ -5,10 +5,7 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Safety;
 
-/// A single enforcement mechanism a restriction rule kind drives (movement lock, walk-only, action-block,
-/// gag chat) - Engage/Release must be idempotent, the same contract MovementLockService.Engage/Release
-/// already has, since RestrictionRuleManager only calls Engage on a 0->1 transition and Release on a 1->0
-/// transition but never assumes anything about prior state beyond that.
+/// Engage/Release must be idempotent.
 public interface IRestrictionEnforcer
 {
     bool IsAvailable { get; }
@@ -16,16 +13,8 @@ public interface IRestrictionEnforcer
     void Release();
 }
 
-/// collar/restraints: generalizes SlotLockManager's per-owner claim tracking (collar/slot-locking) from
-/// equipment slots to restriction rule kinds. Deliberately diverges from SlotLockManager's strict
-/// one-owner-per-key model: some rule kinds carry per-instance configuration that two simultaneously
-/// active instances can actually disagree on (ForcedPose's pose target; ArmsCuffed/LegsCuffed/
-/// FullBodyCuffed's chosen animation; Gagged's chosen Customize+ preset), so those alone are conflict-
-/// checked against a string "config key" (see ConfigKey) - the other kinds (WalkOnly, ActionBlock, and a
-/// Gagged rule with no Customize+ preset) are reference-counted with no config-key comparison: any number
-/// of devices may hold the same rule kind active at once, and the
-/// underlying enforcer only releases once the last holder releases. See design.md's "Decisions" section
-/// for why this diverges from SlotLockManager.
+/// Per-owner claims for restriction rule kinds. Kinds with per-instance config (pose target, chosen animation,
+/// Gagged's Customize+ preset) conflict-check on it; the rest are reference-counted and release with the last holder.
 public sealed class RestrictionRuleManager
 {
     private readonly Dictionary<RestraintRuleKind, Dictionary<string, string>> activeByKind = new();
@@ -39,12 +28,8 @@ public sealed class RestrictionRuleManager
     {
         foreach (var rule in rules)
         {
-            // Arms/Legs Cuffed are animation-managed rules: RestraintCommand preflights their catalog
-            // identity and performs their transactional Penumbra activation. They deliberately have no
-            // IRestrictionEnforcer. Full Body Cuffed (and a mod-sourced Forced Pose) are different because
-            // they additionally own an immobilization claim, and Gagged always needs ChatGagService for
-            // its chat-garble restriction even when its optional animation is unset - all three must
-            // retain a registered, available enforcer.
+            // Arms/Legs Cuffed are animation-only and have no enforcer. Full Body Cuffed and mod Forced Pose also immobilize,
+            // and Gagged always needs ChatGagService.
             if (rule.Kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed)
                 continue;
 
@@ -58,12 +43,7 @@ public sealed class RestrictionRuleManager
         return true;
     }
 
-    /// The per-instance configuration a rule kind conflict-checks on - ForcedPose's pose target (or, when
-    /// mod-sourced, its chosen animation), ArmsCuffed/LegsCuffed/FullBodyCuffed's chosen animation id,
-    /// Gagged's chosen Customize+ preset (its animation is optional/cosmetic and never conflict-checked,
-    /// unlike the other bound-animation kinds, since Gagged's mechanical restriction - chat-garble - never
-    /// depends on it). Null for kinds/instances with no such configuration (WalkOnly/ActionBlock, and a
-    /// Gagged rule with no Customize+ preset, are never conflict-checked).
+    /// Null for kinds/instances with no such configuration. Gagged's animation is cosmetic and never checked.
     private static string? ConfigKey(RestraintRuleAssignment rule) => rule.Kind switch
     {
         RestraintRuleKind.ForcedPose => rule.PoseModeId == 0 ? $"mod:{rule.AnimationId}" : rule.PoseModeId.ToString(),
@@ -72,9 +52,7 @@ public sealed class RestrictionRuleManager
         _ => null,
     };
 
-    /// True if `rules` contains a config-checked assignment (see ConfigKey) whose configuration differs
-    /// from an already-active claim of the same kind held by a different owner - the only case where two
-    /// rule instances can conflict.
+    /// Only a config-checked kind can conflict, and only with a different owner.
     public bool WouldConflict(IEnumerable<RestraintRuleAssignment> rules, string owner)
     {
         foreach (var rule in rules)
@@ -90,9 +68,7 @@ public sealed class RestrictionRuleManager
         return false;
     }
 
-    /// Activates every rule in `rules` for `owner`. Refuses (activating nothing) if WouldConflict is true -
-    /// callers must not have applied anything visible yet when this returns false, same "refuse the whole
-    /// action, never partially" guarantee OutfitCommand.ApplyDesign gives via SlotLockManager.WouldOverlap.
+    /// Refuses, activating nothing, on any conflict.
     public bool TryActivate(string owner, IReadOnlyList<RestraintRuleAssignment> rules)
     {
         if (rules.Count == 0)
@@ -120,8 +96,7 @@ public sealed class RestrictionRuleManager
         return true;
     }
 
-    /// Deactivates every rule kind `owner` holds. A rule kind only actually disengages its enforcer once no
-    /// other owner still holds it active.
+    /// An enforcer only disengages once no other owner holds that kind.
     public void Release(string owner)
     {
         foreach (var (kind, owners) in activeByKind)
@@ -133,9 +108,7 @@ public sealed class RestrictionRuleManager
         }
     }
 
-    /// Panic's own release: drops every tracked claim and unconditionally releases every registered
-    /// enforcer, regardless of refcount - mirrors SlotLockManager.ReleaseAllForPanic's "drop bookkeeping,
-    /// don't bother with per-owner accounting" shape.
+    /// Releases every enforcer regardless of refcount.
     public void ReleaseAllForPanic()
     {
         activeByKind.Clear();

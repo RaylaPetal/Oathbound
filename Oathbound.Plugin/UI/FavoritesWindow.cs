@@ -9,16 +9,8 @@ using System.Numerics;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/ui-organization "Favorites destination reuses the existing favorites menu" (redesign-nav-and-
-/// modules), reworked: the main window's Favorites nav entry opens this dedicated, persistent window
-/// instead of QuickAccessMenu's popup. QuickAccessMenu's own "Open main window"/"Open settings" fallback
-/// links exist for its original callers (the floating on-screen button and the DTR bar entry, both useful
-/// even when the main window is closed) - from a nav entry already inside the main window, those links are
-/// meaningless, and for a Sub (who has no favorites concept at all - see QuickAccessMenu's own comment on
-/// why) they were the *only* thing that popup ever showed, which read as broken rather than empty. Reuses
-/// QuickAccessMenu's category-building data logic (CategorizedFavorites/FixedActions) so the two surfaces
-/// can't drift apart on what counts as "favorited"; only the rendering differs (persistent Send rows here,
-/// a popup menu there).
+/// Persistent favorites window for the main window's nav entry. Shares QuickAccessMenu's data shaping so the two
+/// never disagree about what's favorited.
 public sealed class FavoritesWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -31,7 +23,6 @@ public sealed class FavoritesWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 
@@ -87,8 +78,7 @@ public sealed class FavoritesWindow : Window, IDisposable
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
     }
 
-    /// Teleport can't join the regular favorite rows above - it has no static command text, resolved live
-    /// via `TeleportSendAction` instead, matching `QuickAccessMenu.DrawTeleportMenuItem`'s exact reasoning.
+    /// Teleport has no static command text; resolved live via TeleportSendAction.
     private void DrawTeleportRow(bool canSend)
     {
         using (ImRaii.Disabled(!canSend))

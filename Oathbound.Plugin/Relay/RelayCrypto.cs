@@ -13,9 +13,7 @@ using BigInteger = Org.BouncyCastle.Math.BigInteger;
 
 namespace Oathbound.Plugin.Relay;
 
-/// A P-256 key pair (signing or ephemeral ECDH), holding only BouncyCastle parameter objects - no OS handle,
-/// nothing to actually dispose. IDisposable purely so existing `using var key = RelayCrypto.Generate...()`
-/// call sites don't need to change; Dispose() is a no-op.
+/// BouncyCastle parameters only; Dispose() is a no-op kept for `using` call sites.
 public sealed class RelayEcKeyPair : IDisposable
 {
     internal ECPrivateKeyParameters? Private;
@@ -23,19 +21,10 @@ public sealed class RelayEcKeyPair : IDisposable
     public void Dispose() { }
 }
 
-/// Every algorithm choice here is fixed by protocol/constants.json and must interoperate exactly with the
-/// Worker (protocol/vectors/crypto-vectors.json is the cross-runtime proof of that - see
-/// Oathbound.Plugin.Tests/Program.cs). Nothing in this file ever logs, exports, or embeds a private key in
-/// an envelope; only public keys and signatures cross the wire.
-///
-/// Deliberately BouncyCastle, not System.Security.Cryptography.ECDsa/ECDiffieHellman: on Windows those are
-/// backed by CNG (NCryptCreatePersistedKey for key generation), and Wine's CNG shim does not implement EC
-/// key generation (fails with NTE_NOT_SUPPORTED / 0x80090029) - since Dalamud plugins commonly run under
-/// Wine, a CNG-backed implementation crashes the plugin on load for exactly the installs
-/// protocol/docs/threat-model.md's "Local key storage under Wine" section already calls out as a concern.
-/// BouncyCastle is pure managed code with no OS crypto API dependency, so it works identically under Wine
-/// and native Windows. AES-GCM and SHA-256 stay on the BCL (System.Security.Cryptography): those use
-/// Windows BCrypt, not NCrypt, and are not implicated in the failure this class works around.
+/// Algorithms are fixed by protocol/constants.json and must interoperate exactly with the Worker
+/// (protocol/vectors/crypto-vectors.json). Private keys are never logged, exported or put in an envelope.
+/// BouncyCastle, not the BCL's ECDsa/ECDiffieHellman: those are CNG-backed and Wine's CNG can't generate EC keys,
+/// which would crash the plugin on load. AES-GCM and SHA-256 use BCrypt and are unaffected.
 public static class RelayCrypto
 {
     private static readonly Org.BouncyCastle.Asn1.X9.X9ECParameters CurveParams = Org.BouncyCastle.Asn1.Nist.NistNamedCurves.GetByName("P-256");
@@ -63,26 +52,16 @@ public static class RelayCrypto
         return bytes;
     }
 
-    /// 256-bit capability secret / high-entropy id, base64url without padding (43 characters) - matches
-    /// protocol/schemas/common.schema.json `capabilityId` and the request-signing `nonce` pattern's shape
-    /// family (see RandomNonce for the shorter 128-bit variant). Used for capability ids other than
-    /// invitationId (e.g. catalog requestId) - see RandomInvitationId for the shorter invitation-specific id.
+    /// 256-bit capability id, base64url without padding (43 characters).
     public static string RandomCapabilityId() => Base64UrlEncode(RandomBytes(32));
 
-    /// 128-bit request-signing nonce, base64url without padding (22 characters).
+    /// 128-bit, base64url without padding (22 characters).
     public static string RandomNonce() => Base64UrlEncode(RandomBytes(16));
 
-    /// 128-bit invitation id, base64url without padding (22 characters) - shorter than RandomCapabilityId's
-    /// 256 bits since an invitation is single-use, short-lived (protocol/constants.json
-    /// sizeAndExpiryLimits.invitationExpirySeconds), and already bounded by the deviceInvitationCreate rate
-    /// limit; the shorter id keeps the `collarinvite` tell shorter without weakening it in practice
-    /// (protocol/constants.json capabilitySecrets.invitationIdException).
+    /// 128 bits is enough for a single-use, short-lived, rate-limited invitation, and keeps the tell short.
     public static string RandomInvitationId() => Base64UrlEncode(RandomBytes(16));
 
-    /// 128-bit acceptance proof token, lowercase hex (32 characters) - an opaque single-use value compared
-    /// for exact equality against the acknowledgement tell's carried value (protocol/constants.json
-    /// `proofDigest`), never used as a content-integrity hash, so generating it directly from random bytes
-    /// (rather than hashing them) loses nothing.
+    /// Compared for exact equality only, never used as a hash, so plain random bytes are fine.
     public static string RandomProofDigestHex() => Convert.ToHexStringLower(RandomBytes(16));
 
     private static byte[] FixedLength32(BigInteger value) => BigIntegers.AsUnsignedByteArray(32, value);
@@ -116,18 +95,14 @@ public static class RelayCrypto
     public static byte[] ExportPrivateD(RelayEcKeyPair key) =>
         FixedLength32(key.Private?.D ?? throw new InvalidOperationException("Key pair has no private component to export."));
 
-    /// Deterministic so both peers can compute it locally with no server round trip - matches the Worker's
-    /// `computePairIdHash` exactly (worker/src/lib/pairs.ts): SHA-256 of the two device key ids, sorted
-    /// (ordinal/UTF-16 code unit order, same as JavaScript's default Array.sort on strings) so order never
-    /// matters.
+    /// Must match the Worker's computePairIdHash: SHA-256 of both key ids, sorted ordinally like JS's default sort.
     public static string ComputePairIdHash(string deviceKeyIdA, string deviceKeyIdB)
     {
         var (a, b) = string.CompareOrdinal(deviceKeyIdA, deviceKeyIdB) <= 0 ? (deviceKeyIdA, deviceKeyIdB) : (deviceKeyIdB, deviceKeyIdA);
         return Sha256Hex(CanonicalJson.Serialize(new System.Collections.Generic.Dictionary<string, object?> { ["a"] = a, ["b"] = b }));
     }
 
-    /// SHA-256 fingerprint (hex) of the JCS-canonicalized signing public key JWK - matches the Worker's
-    /// `deviceKeyIdForPublicKey` exactly.
+    /// SHA-256 of the JCS-canonicalized public key JWK; matches the Worker's deviceKeyIdForPublicKey.
     public static string DeviceKeyId(EcPublicKeyJwk publicKeyJwk) =>
         Sha256Hex(CanonicalJson.Serialize(new System.Collections.Generic.Dictionary<string, object?>
         {
@@ -137,9 +112,7 @@ public static class RelayCrypto
             ["y"] = publicKeyJwk.Y,
         }));
 
-    /// Raw r||s ECDSA signature (64 bytes for P-256), base64url without padding (86 characters) - never DER.
-    /// Signs the SHA-256 digest of `message` directly (ECDsaSigner expects the already-hashed message
-    /// representative, equivalent to .NET's "ECDSA with SHA-256" over the same input).
+    /// Raw r||s (64 bytes), base64url without padding - never DER.
     public static string SignRaw(RelayEcKeyPair privateKey, string message)
     {
         if (privateKey.Private is null) throw new InvalidOperationException("Key pair has no private component to sign with.");
@@ -199,8 +172,7 @@ public static class RelayCrypto
 
     public static RelayEcKeyPair ImportEphemeralPublicKey(EcPublicKeyJwk publicKeyJwk) => ImportPublicKey(publicKeyJwk);
 
-    /// Raw uncompressed SEC1 point (0x04 || X || Y, 65 bytes for P-256) - matches WebCrypto's
-    /// `exportKey("raw", ...)` byte-for-byte, since both are just the uncompressed point encoding.
+    /// 0x04 || X || Y, byte-for-byte what WebCrypto's exportKey("raw") gives.
     public static byte[] ExportRawUncompressedPoint(RelayEcKeyPair key)
     {
         var point = key.Public.Q.Normalize();
@@ -231,21 +203,19 @@ public static class RelayCrypto
         return FixedLength32(z);
     }
 
-    /// HKDF-SHA256, 32-byte (AES-256) output. `salt`/`info` must match protocol/constants.json exactly:
-    /// salt = SHA-256(ownerEphemeralRawUncompressed || subEphemeralRawUncompressed), info =
-    /// "oathbound-relay-catalog-v1" || pairIdHash || requestId (UTF-8 concatenation).
+    /// HKDF-SHA256 to 32 bytes. salt = SHA-256(ownerEphemeral || subEphemeral),
+    /// info = "oathbound-relay-catalog-v1" || pairIdHash || requestId - both must match protocol/constants.json.
     public static byte[] DeriveAesKey(byte[] sharedSecret, byte[] salt, byte[] info) =>
         HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedSecret, outputLength: 32, salt: salt, info: info);
 
     public static byte[] BuildCatalogHkdfInfo(string pairIdHash, string requestId) =>
         Encoding.UTF8.GetBytes("oathbound-relay-catalog-v1" + pairIdHash + requestId);
 
-    /// catalog-push only: a distinct label so a mailbox key can never be confused with a request key -
-    /// "oathbound-relay-catalog-push-v1" || pairIdHash || receiveKeyId.
+    /// A distinct label so a mailbox key can never be confused with a request key.
     public static byte[] BuildCatalogPushHkdfInfo(string pairIdHash, string receiveKeyId) =>
         Encoding.UTF8.GetBytes("oathbound-relay-catalog-push-v1" + pairIdHash + receiveKeyId);
 
-    /// 128-bit mailbox receive key id (protocol/schemas/catalog-mailbox-key.schema.json `receiveKeyId`).
+    /// 128-bit mailbox receive key id.
     public static string RandomReceiveKeyId() => Base64UrlEncode(RandomBytes(16));
 
     private static RelayEcKeyPair ImportPrivateKey(EcPublicKeyJwk publicKeyJwk, byte[] privateD)
@@ -268,8 +238,7 @@ public static class RelayCrypto
     public const int AeadNonceLengthBytes = 12;
     public const int AeadTagLengthBytes = 16;
 
-    /// Returns ciphertext with the 16-byte GCM tag appended, matching WebCrypto's `encrypt` output shape
-    /// (the Worker never separates tag from ciphertext).
+    /// Tag appended, matching WebCrypto's encrypt output.
     public static byte[] AesGcmEncrypt(byte[] key, byte[] nonce, byte[] plaintext, byte[] associatedData)
     {
         var ciphertext = new byte[plaintext.Length];

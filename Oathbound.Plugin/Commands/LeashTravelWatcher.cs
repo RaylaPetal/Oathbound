@@ -7,15 +7,13 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/leash-travel "Owner's client sends leash travel automatically" (design D1): Owner side. After this
-/// client arrives in a new area (or jumps a long way inside one), every Sub it shows as leashed gets one
-/// `leash travel` with the Owner's new location - the third automatic tell the README documents. Nothing is
-/// sent for a Sub that isn't leashed, and nothing at all where the leash can't follow (design D3).
+/// Owner side: after arriving in a new area (or jumping far inside one), sends one `leash travel` to every Sub it
+/// shows as leashed - an automatic tell the README documents. Nothing where the leash can't follow.
 public sealed class LeashTravelWatcher
 {
-    /// A same-area move farther than this between two updates is a relocation (an aethernet hop), not walking.
+    /// Farther than this between two updates is a relocation (an aethernet hop), not walking.
     private const float JumpDistance = 30f;
-    /// Wait after loading in so the position has settled before it's sent.
+    /// Lets the position settle after loading in.
     private static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(1);
 
     private readonly PluginConfig config;
@@ -52,7 +50,7 @@ public sealed class LeashTravelWatcher
 
         if (lastArea is null)
         {
-            // First sighting (plugin load, login): nothing moved yet.
+            // First sighting: nothing moved yet.
             lastArea = area;
             lastPosition = position;
             return;

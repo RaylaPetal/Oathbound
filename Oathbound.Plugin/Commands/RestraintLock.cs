@@ -2,9 +2,7 @@ using System;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/restraint-lock-timer: how long an Owner's restraint command locks the Restraints category -
-/// Permanent (until `restraint unlock`/panic/pairing end, the pre-existing behavior) or Timed, which
-/// RestraintCommand releases on its own once the duration has passed.
+/// Permanent (until unlock, panic or pairing end) or Timed, released automatically by RestraintCommand.
 public readonly record struct RestraintLock(TimeSpan? Duration)
 {
     public static readonly TimeSpan MinDuration = TimeSpan.FromMinutes(1);
@@ -12,8 +10,7 @@ public readonly record struct RestraintLock(TimeSpan? Duration)
 
     public static RestraintLock Permanent => new(null);
 
-    /// Clamped to [MinDuration, MaxDuration] - an out-of-range request is honored at the nearest bound
-    /// rather than rejected.
+    /// Out-of-range requests are clamped, not rejected.
     public static RestraintLock Timed(TimeSpan duration) =>
         new(duration < MinDuration ? MinDuration : duration > MaxDuration ? MaxDuration : duration);
 
@@ -23,8 +20,7 @@ public readonly record struct RestraintLock(TimeSpan? Duration)
     public bool IsTimed => Duration is not null;
     public int? Seconds => Duration is { } d ? (int)d.TotalSeconds : null;
 
-    /// Compact human-readable duration ("2d 3h", "1h 30m", "12m 5s") for the Owner's picker and the Sub's
-    /// remaining-time line.
+    /// e.g. "2d 3h", "1h 30m", "12m 5s".
     public static string Format(TimeSpan span)
     {
         if (span < TimeSpan.Zero)

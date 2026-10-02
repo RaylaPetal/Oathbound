@@ -21,12 +21,10 @@ public sealed class GestureCommand
     }
     private const string ExportPrefix = "COLLAR-GESTURE-V1|";
 
-    /// Gap between the Penumbra redraw and playing the tied trigger, so the animation reliably starts
-    /// after the redraw visually settles instead of racing a visible flicker.
+    /// Lets the Penumbra redraw settle before playing, instead of racing a visible flicker.
     private const long PlayDelayMs = 500;
 
-    /// How long an active temporary activation survives with no further gesture play before it's
-    /// automatically reverted.
+    /// An idle temporary activation is reverted after this long.
     private const long IdleTimeoutMs = 30_000;
 
     private readonly PluginConfig config;
@@ -41,8 +39,6 @@ public sealed class GestureCommand
     public int? LastScanTotalMods { get; private set; }
     public string? LastScanError { get; private set; }
 
-    /// Whether there's an active temporary Penumbra activation to revert - lets the Gesture module's
-    /// manual Reset control enable/disable itself.
     public bool HasActiveTemporary => activeTemporary is not null;
 
     public GestureCommand(PluginConfig config, PenumbraIpc penumbra, TemporaryModSettingsCoordinator temporarySettings, CatalogStore catalogStore)
@@ -54,9 +50,7 @@ public sealed class GestureCommand
         scanner = new GestureCatalogScanner(penumbra, config);
     }
 
-    /// Advanced from Plugin.OnFrameworkUpdate - the same per-frame hook already driving the panic
-    /// hotkey, so the delayed play and idle-timeout revert both stay on the framework thread instead of
-    /// racing a background Task.
+    /// Keeps the delayed play and idle revert on the framework thread.
     public void OnFrameworkUpdate()
     {
         var now = Environment.TickCount64;
@@ -70,9 +64,7 @@ public sealed class GestureCommand
 
         if (activeTemporary is { } active && now >= active.IdleUntilTicks)
         {
-            // Never pull the mod out from under an animation that's still playing: a looping emote or a
-            // sit/doze pose would drop straight back to vanilla. Keep holding it until the character is back
-            // to standing normally, then release.
+            // Never pull the mod out from under a looping emote or pose; wait until the character stands normally.
             if (IsStanding())
                 ResetActiveTemporary();
             else
@@ -80,11 +72,9 @@ public sealed class GestureCommand
         }
     }
 
-    /// While the gesture is still playing past its idle timeout, how often to check whether it has ended.
     private const long StillPlayingRecheckMs = 2_000;
 
-    /// Reverts the active temporary gesture activation on demand - used by the manual Reset control and
-    /// internally whenever a different mod's temporary activation needs to replace this one.
+    /// Also called whenever a different mod's activation replaces this one.
     public void ResetActiveTemporary()
     {
         if (activeTemporary is not { } active)
@@ -101,11 +91,7 @@ public sealed class GestureCommand
         LastScanError = result.Error;
         if (result.Error != null) return;
 
-        // Not `.ToDictionary(e => e.Id)` - `StableId` hashes ModDirectory/GroupName/AnimationName/Trigger
-        // only, so two distinct groups/options that happen to share a name and produce no detected
-        // trigger (common - most options aren't emotes) can legitimately hash to the same id. ToDictionary
-        // throws on that; a plain indexer assignment keeps the last-scanned entry for a colliding id
-        // instead of crashing the whole rescan.
+        // Not ToDictionary: distinct options can hash to the same StableId, and ToDictionary would throw.
         var catalog = new Dictionary<string, GestureCatalogEntry>();
         foreach (var entry in result.Entries)
             catalog[entry.Id] = entry;
@@ -121,9 +107,7 @@ public sealed class GestureCommand
         return mods is null ? [] : mods.Select(x => (x.Key, x.Value, penumbra.TryGetModPath(x.Key, x.Value))).OrderBy(x => x.Value).ToList();
     }
 
-    /// collar/catalog-sync: serializes only `GestureExportEntry`'s slim shape, not the full
-    /// `GestureCatalogEntry` - see that type's own doc comment for why (the exported file's size scales
-    /// with entry count, not with how many option groups each entry's source mod happens to have).
+    /// Exports the slim GestureExportEntry shape so the file scales with entry count only.
     public string ExportCatalog() => string.Join("\n", config.GestureMapping.LocalCatalog.Values
         .Where(e => !string.IsNullOrWhiteSpace(e.ModDirectory) && e.GroupSelections.Count > 0).OrderBy(e => e.Label)
         .Select(e => ExportPrefix + Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(GestureExportEntry.From(e))))));
@@ -173,8 +157,7 @@ public sealed class GestureCommand
         var collection = penumbra.TryGetLocalPlayerCollectionId();
         if (collection is null) return new ApplyResult(ApplyStatus.CollectionUnavailable, entry.AnimationName);
 
-        // Switching to a different mod's temporary activation must revert whatever was previously
-        // active first, so its settings never linger once an unrelated gesture takes over.
+        // Revert the previous mod's activation first so its settings never linger.
         if (activeTemporary is { } active && (active.Collection != collection.Value || active.ModDirectory != entry.ModDirectory))
             ResetActiveTemporary();
 
@@ -193,15 +176,10 @@ public sealed class GestureCommand
         return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
     }
 
-    /// collar/follow: any emote/pose command played here cancels the game's own follow state, through a
-    /// path MovementLockService's UnfollowDetour doesn't cover - fired after every successful play so
-    /// FollowCommand can re-assert the leash regardless of which caller (Gesture or a restraint's forced
-    /// pose) triggered it. See design.md's "react to gesture playback" decision.
+    /// Emotes cancel the game's follow through a path MovementLockService doesn't hook, so FollowCommand re-asserts on this.
     public static event Action? EmotePlayed;
 
-    /// Internal rather than private: collar/restraints' Arms Cuffed/Legs Cuffed/Full Body Cuffed rules
-    /// reuse this exact one-shot trigger playback for their own chosen animation, distinct from Gesture's
-    /// own temporary-activation/idle-timeout bookkeeping which those rules deliberately don't share.
+    /// Internal: restraint cuff rules reuse this one-shot playback without Gesture's idle bookkeeping.
     internal static unsafe bool Play(GestureTrigger trigger)
     {
         if (trigger.Kind == GestureTriggerKind.SlashCommand)
@@ -232,13 +210,9 @@ public sealed class GestureCommand
         return true;
     }
 
-    /// How long to wait before checking whether a pose command only stood the character up.
     private static readonly TimeSpan PoseRetryDelay = TimeSpan.FromMilliseconds(1500);
 
-    /// Sends /groundsit, /sit or /doze for `emoteModeId` (1-3). Those commands toggle: sent while already
-    /// sitting, they stand the character up instead of switching to the newly selected pose. So when the
-    /// character isn't in its normal standing state, check again once the transition has played out and,
-    /// if it's standing now, send the command a second time to sit in the new pose.
+    /// /groundsit, /sit and /doze toggle: sent while seated they stand the character up. If that happened, send it again.
     internal static unsafe void SendPoseCommand(int emoteModeId)
     {
         var command = emoteModeId switch { 1 => "/groundsit", 2 => "/sit", 3 => "/doze", _ => "" };
@@ -257,14 +231,11 @@ public sealed class GestureCommand
         }, PoseRetryDelay);
     }
 
-    /// How long to let one /cpose step land before reading the pose again.
     private static readonly TimeSpan CPoseStepDelay = TimeSpan.FromMilliseconds(700);
     private const int MaxStandingIdleSteps = 7;
 
-    /// Standing idles have no "switch to pose N" command - /cpose only steps to the next one - so step until
-    /// the character's current idle is `target`. Only while standing with the weapon sheathed: there /cpose
-    /// would change a sitting pose or the battle stance instead. Capped at one full cycle, so a character
-    /// without that many idles doesn't keep cycling.
+    /// /cpose only steps to the next idle, so step until it's `target` - only while standing with the weapon sheathed.
+    /// Capped at one full cycle.
     internal static unsafe void RotateStandingIdle(byte target, int stepsLeft = MaxStandingIdleSteps)
     {
         var player = Control.GetLocalPlayer();

@@ -11,14 +11,8 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/ui-organization "Sub Control window": opened via the header's toggle (`CollarWindow.
-/// DrawSubControlToggle`), this is a single console listing every category's *full* sendable command list
-/// (not just favorites - see `QuickAccessMenu.CategorizedAll`), Send-only (no Favorite/Edit/Remove - those
-/// are authoring actions that stay in each category's own module window), so ordering a Sub to do something
-/// never requires opening a category tab or having pre-favorited anything. Unlike every other secondary
-/// window in this plugin, its position is not independently movable - `PreDraw` re-docks it to
-/// `CollarWindow`'s current right edge every frame (see design.md's "Continuous docking mechanism") and
-/// closes itself once the main window closes.
+/// Send-only console of every category's full command list. Docked to CollarWindow's right edge every frame,
+/// and closes when it does.
 public sealed class SubControlWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -31,22 +25,15 @@ public sealed class SubControlWindow : Window, IDisposable
     {
         this.plugin = plugin;
         this.collarWindow = collarWindow;
-        // NoMove: position is programmatically glued every frame in PreDraw below - offering a drag
-        // affordance that would just snap back the next frame is worse than not offering one at all.
+        // Position is glued every frame, so a drag affordance would only snap back.
         Flags = ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoCollapse;
-        // 540 wide: room for a restraint row's Send + a readable label + the full Timed lock picker
-        // (Timed combo, minutes field with -/+ and "min") without the label being cut down to nothing.
+        // Room for a restraint row's Send, a readable label and the full Timed lock picker.
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(540, 260), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
     }
 
     public void Dispose() { }
 
-    /// design.md "Continuous docking mechanism" / "Auto-close when the main window closes": re-pins this
-    /// window to `CollarWindow`'s current right edge every frame (`ImGuiCond.Always`, so it wins any stray
-    /// drag), and closes this window the frame after the main window closes - `DrawInternal`'s own is-open
-    /// check happens once per window per frame, ahead of `PreDraw`, so setting `IsOpen = false` here takes
-    /// effect starting next frame rather than retroactively skipping this one; an accepted, imperceptible
-    /// one-frame trade-off (see design.md's Risks) for not needing a separately-registered close hook.
+    /// ImGuiCond.Always wins any stray drag. Setting IsOpen here takes effect next frame - an accepted one-frame lag.
     public override void PreDraw()
     {
         Theme.PushWindowStyle();
@@ -118,9 +105,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// collar/ui-organization "Large category sections stay decluttered": Animation and Restraints get their
-    /// own search filter over the already-configured, sendable list - independent search state per category,
-    /// separate from any module window's own search-in-progress (design.md's "Row rendering" decision).
+    /// Animation and Restraints get their own search, separate from the module windows'.
     private void DrawSearchableCategory(string label, List<QuickCommand> commands, bool canSend, ref string search, Func<QuickCommand, string, bool>? extraMatch)
     {
         if (commands.Count == 0)
@@ -145,9 +130,7 @@ public sealed class SubControlWindow : Window, IDisposable
         {
             foreach (var cmd in visible)
             {
-                // collar/restraint-lock-timer: the same per-restraint timer as its module-window row (one
-                // shared QuickCommand.LockSeconds), so a change here shows up there and vice versa. Its width
-                // is reserved up front so a long label gets shortened rather than pushing it off the edge.
+                // Shares QuickCommand.LockSeconds with the module row. Its width is reserved so a long label gets shortened.
                 var hasLock = OwnerLockOption.Accepts(cmd.Command);
                 DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, hasLock ? OwnerLockOption.InlineWidth(cmd) : 0f);
                 if (hasLock)
@@ -157,10 +140,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// Animation rows grouped under one collapsible node per mod, the same grouping the Animation module
-    /// window uses - so each row only needs the short "animation — pose" label instead of repeating the
-    /// mod name on every line. Rows keep the Sub's own manifest order (not alphabetical, see
-    /// ModuleWindow.DrawGestureQuickSection). While searching, every mod with a match is opened.
+    /// Grouped per mod like the Animation module, in the Sub's manifest order. Searching opens every matching mod.
     private void DrawAnimationRows(List<QuickCommand> visible, bool searching, bool canSend)
     {
         foreach (var mod in visible.GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
@@ -174,7 +154,7 @@ public sealed class SubControlWindow : Window, IDisposable
                 .Select(c => (Cmd: c, Entry: ModuleWindow.AutoLabeledGesture(plugin.Configuration, c)))
                 .ToList();
 
-            // A big mod gets its own search box, scoped to just that mod's animations.
+            // A big mod gets its own search box.
             var expandVariants = searching;
             if (rows.Count > ModSearchThreshold)
             {
@@ -191,9 +171,7 @@ public sealed class SubControlWindow : Window, IDisposable
                 expandVariants |= trimmed.Length > 0;
             }
 
-            // Pose/emote variants of one animation (e.g. the same dance exported for six emotes) fold into one
-            // collapsible entry whose rows show only the variant. Only entries still carrying their imported
-            // label are grouped - a renamed/manual entry stays its own row, same rule as the module window.
+            // Pose variants of one animation fold together. Renamed/manual entries stay their own rows.
             foreach (var variants in rows.GroupBy(r => r.Entry?.AnimationName ?? $"\u0001{r.Cmd.Label}\u0001{r.Cmd.Command}"))
             {
                 var list = variants.ToList();
@@ -218,7 +196,6 @@ public sealed class SubControlWindow : Window, IDisposable
         }
     }
 
-    /// Mods with more animations than this get their own search box inside their group.
     private const int ModSearchThreshold = 15;
     private readonly Dictionary<string, string> modSearches = new();
 
@@ -233,10 +210,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// collar/ui-organization "Toy Control section offers only discrete, one-shot commands": built-in
-    /// patterns, stop, and the Owner's own saved patterns only - no intensity/duration control, matching
-    /// design.md's "Full-category data shaping" decision (Toy Control has no `OwnerQuickCommands` list of
-    /// its own to draw on).
+    /// Discrete, one-shot commands only - no intensity/duration control.
     private void DrawToyControlSection(bool canSend)
     {
         if (!ImGui.CollapsingHeader("Toy Control###subControlCategory_ToyControl"))
@@ -258,10 +232,7 @@ public sealed class SubControlWindow : Window, IDisposable
             yield return (pattern.Name, ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop));
     }
 
-    /// Teleport can't join the regular rows above - it has no static command text, resolved live via
-    /// `TeleportSendAction` instead, matching `FavoritesWindow.DrawTeleportRow` exactly (including its
-    /// failure notification) rather than gating it behind whether it's favorited, since this window shows
-    /// everything.
+    /// Teleport has no static command text; resolved live via TeleportSendAction.
     private void DrawTeleportRow(bool canSend)
     {
         if (!ImGui.CollapsingHeader("Teleport###subControlCategory_Teleport"))
@@ -290,10 +261,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Unindent();
     }
 
-    /// One Send button plus its label. The label is shortened with "..." to fit what's left of the row (minus
-    /// `reservedWidth` for anything drawn after it on the same line), so the window never needs to grow to
-    /// show a long name; hovering shows the full label (`fullLabel` when the row shows a shorter one) above
-    /// the exact text that would be sent.
+    /// The label is shortened to fit; hovering shows the full label and the exact text that would be sent.
     private void DrawSendRow(string label, string command, bool canSend, float reservedWidth = 0f, string? fullLabel = null)
     {
         var messages = plugin.ChatComposer.ComposeAll(command);
@@ -316,8 +284,7 @@ public sealed class SubControlWindow : Window, IDisposable
 
     private const string Ellipsis = "...";
 
-    /// `text` unchanged when it fits in `maxWidth`, otherwise the longest prefix that fits with "..."
-    /// appended (binary search on length - labels here can run past 100 characters).
+    /// Binary search on length - labels can run past 100 characters.
     private static string FitWithEllipsis(string text, float maxWidth)
     {
         if (ImGui.CalcTextSize(text).X <= maxWidth)

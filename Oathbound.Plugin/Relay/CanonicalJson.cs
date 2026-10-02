@@ -7,14 +7,8 @@ using System.Text;
 
 namespace Oathbound.Plugin.Relay;
 
-/// RFC 8785 (JSON Canonicalization Scheme) subset covering exactly the shapes the relay protocol uses:
-/// strings, non-negative integers, booleans, nested objects (as IDictionary&lt;string, object?&gt;), and
-/// arrays. The Worker's TypeScript side uses the `canonicalize` npm package (a full RFC 8785
-/// implementation); this must byte-for-byte agree with it for every envelope this plugin ever signs or
-/// verifies, so protocol/vectors/crypto-vectors.json is the source of truth this is tested against, not the
-/// other way around. Object key order at every call site is irrelevant - keys are always sorted here by
-/// ordinal (UTF-16 code unit) comparison, matching JavaScript's own string ordering for the ASCII-only field
-/// names this protocol uses.
+/// The RFC 8785 subset the relay protocol uses. Must agree byte-for-byte with the Worker's `canonicalize` package;
+/// protocol/vectors/crypto-vectors.json is the source of truth.
 public static class CanonicalJson
 {
     public static string Serialize(object? value)
@@ -55,8 +49,7 @@ public static class CanonicalJson
     {
         sb.Append('{');
         var first = true;
-        // Ordinal comparison matches JavaScript's default string comparison for our ASCII-only key names,
-        // which is what RFC 8785 requires (comparison by UTF-16 code unit).
+        // Ordinal order matches JS's UTF-16 code unit comparison, as RFC 8785 requires.
         foreach (var key in dict.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
             if (!first) sb.Append(',');

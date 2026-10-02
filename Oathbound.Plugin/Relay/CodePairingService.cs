@@ -7,23 +7,15 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// What the invitee sees after entering a code, before choosing Accept or Decline.
 public sealed record CodePreview(string Code, string InvitationId, PairingCharacter Inviter, PairingDirection OwnDirection, long ExpiresAt,
     string InviterDeviceKeyId, EcPublicKeyJwk InviterPublicKey);
 
-/// collar/pairing: pairing by code, with no tells. The inviter creates a code and shares it however they
-/// like; the invitee enters it, sees who invited them, and accepts; the inviter's client picks the acceptance
-/// up at its next check and asks the inviter to confirm that character; confirming activates the pairing on
-/// both sides. Neither side has to be online at the same time. Each side's character only ever travels
-/// encrypted under a key derived from the code (PairingCodes), so the relay never learns who is pairing.
-///
-/// Gameplay commands are untouched by any of this: they still travel as tells and are still accepted only
-/// from the stored peer's verified tell sender, so a mistaken or false character can't be used to control
-/// anyone (see protocol/docs/threat-model.md, invariant 2).
+/// Pairing by code, with no tells and no need to be online together. Each side's character travels encrypted under
+/// a key derived from the code, so the relay never learns who pairs. Commands are still only accepted from the
+/// stored peer's verified tell sender.
 public sealed class CodePairingService
 {
-    /// How often to poll while something is outstanding: quickly for a while after this side acts (the other
-    /// person is often online right then), then slowly for the rest of the code's 7-day life.
+    /// Fast for a while after this side acts, then slow for the rest of the code's 7-day life.
     private static readonly TimeSpan FastPollInterval = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan FastPollWindow = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan SlowPollInterval = TimeSpan.FromMinutes(5);
@@ -49,8 +41,7 @@ public sealed class CodePairingService
 
     public CodePreview? Preview { get; private set; }
 
-    /// Last failure to show next to the pairing controls, and a one-off outcome notice (a code expired, the
-    /// inviter declined). Both are cleared by the next successful action.
+    /// Cleared by the next successful action.
     public string? LastError { get; private set; }
     public string? Notice { get; private set; }
 
@@ -59,8 +50,7 @@ public sealed class CodePairingService
 
     public void DismissNotice() => Notice = null;
 
-    /// The local character as a pairing peer will see it. Reads the object table, so call it on the main
-    /// thread (from UI code) and pass the result in.
+    /// Reads the object table, so call it on the main thread.
     public static PairingCharacter? CurrentCharacter(string? triggerPhrase)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
@@ -89,8 +79,7 @@ public sealed class CodePairingService
 
     // ---- Inviter ----
 
-    /// Creates a code for the other person to enter. Replaces (and withdraws on the relay) any earlier unused
-    /// code of this install. Returns the formatted code, or null on failure (see LastError).
+    /// Replaces (and withdraws on the relay) any earlier unused code. Null on failure (see LastError).
     public async Task<string?> CreateCodeAsync(PairingDirection direction, PairingCharacter self, CancellationToken ct)
     {
         if (!DirectionAllowed(direction)) { Fail("The current Role does not support that pairing direction."); return null; }
@@ -143,7 +132,7 @@ public sealed class CodePairingService
         }
     }
 
-    /// Withdraws the outgoing code: "cancel" while nobody has accepted, "reject" once someone has.
+    /// "cancel" while nobody has accepted, "reject" once someone has.
     public async Task CancelOutgoingAsync(CancellationToken ct)
     {
         if (Outgoing is not { } outgoing) return;
@@ -158,7 +147,7 @@ public sealed class CodePairingService
         }
         catch (RelayException ex) when (ex.Code is "expired" or "not_found")
         {
-            // Already over on the relay - nothing left to withdraw.
+            // Already over on the relay.
         }
         catch (RelayException ex)
         {
@@ -169,8 +158,7 @@ public sealed class CodePairingService
         LastError = null;
     }
 
-    /// The inviter confirms the character that accepted: activates the pairing (the relay creates it on
-    /// consume) and adds it locally.
+    /// The relay creates the pair on consume.
     public async Task<bool> ConfirmAsync(CodeInvitationState state, CancellationToken ct)
     {
         if (!state.IsInviter || state.Status != "needs-confirm" || state.PeerDeviceKeyId is null || state.PeerPublicKeyX is null || state.PeerPublicKeyY is null)
@@ -200,13 +188,11 @@ public sealed class CodePairingService
         }
     }
 
-    /// The inviter rejects the character that accepted (someone else got hold of the code).
     public Task RejectAsync(CodeInvitationState state, CancellationToken ct) => WithdrawAsync(state, ct);
 
     // ---- Invitee ----
 
-    /// Looks a typed code up and, if it's a valid, pending invitation, sets Preview so the UI can show who is
-    /// inviting and as what. Nothing is sent or changed until AcceptPreviewAsync.
+    /// Nothing is sent or changed until AcceptPreviewAsync.
     public async Task<bool> LookupAsync(string typedCode, CancellationToken ct)
     {
         Preview = null;
@@ -243,7 +229,6 @@ public sealed class CodePairingService
             if (inviter is null) { Fail("That invitation couldn't be read."); return false; }
             if (invitation.Role is not ("owner" or "sub")) { Fail("That invitation couldn't be read."); return false; }
 
-            // This install becomes the opposite of what the inviter declared.
             var ownDirection = invitation.Role == "owner" ? PairingDirection.SubSide : PairingDirection.OwnerSide;
             if (!DirectionAllowed(ownDirection))
             {
@@ -264,8 +249,7 @@ public sealed class CodePairingService
         }
     }
 
-    /// Declining only forgets the preview locally; the code stays usable until it expires or the inviter
-    /// withdraws it (spec: "Invitee declines").
+    /// Only forgets the preview locally; the code stays usable until it expires or is withdrawn.
     public void DeclinePreview() => Preview = null;
 
     public async Task<bool> AcceptPreviewAsync(PairingCharacter self, CancellationToken ct)
@@ -302,7 +286,7 @@ public sealed class CodePairingService
                 InvitationId = preview.InvitationId,
                 AccepterDeviceKeyId = identity.DeviceKeyId!,
                 AccepterPublicKey = identity.GetPublicKeyJwk(),
-                // Unused by code invitations (no acknowledgement tell), but part of the acceptance shape.
+                // Unused by code invitations, but part of the acceptance shape.
                 ProofDigest = RelayCrypto.RandomProofDigestHex(),
                 Role = preview.OwnDirection == PairingDirection.OwnerSide ? "owner" : "sub",
                 EncryptedCharacter = PairingCodes.EncryptCharacter(preview.Code, preview.InvitationId, inviter: false, self with { TriggerPhrase = config.TriggerPhrase }),
@@ -316,8 +300,7 @@ public sealed class CodePairingService
             config.Save();
             Preview = null;
 
-            // Same as the tell flow's Accept: a configured collar goes on as part of accepting to be someone's
-            // Sub. Must run on the main thread (MoodlesIpc touches the object table).
+            // Must run on the main thread (MoodlesIpc touches the object table).
             if (state.Direction == PairingDirection.SubSide && config.Permissions.Collar && config.Collar.IsConfigured)
                 await Plugin.Framework.RunOnFrameworkThread(() => collar.ForceApply(state.PairingId)).ConfigureAwait(false);
 
@@ -334,7 +317,6 @@ public sealed class CodePairingService
 
     // ---- Polling ----
 
-    /// Called every framework tick; starts a background poll when one is due and something is outstanding.
     public void OnFrameworkUpdate(CancellationToken ct)
     {
         if (config.CodeInvitations.Count == 0) return;
@@ -345,7 +327,6 @@ public sealed class CodePairingService
         Plugin.FireAndForget(PollAllAsync(ct));
     }
 
-    /// Poll right away (login, or a manual "check now").
     public void PollSoon() => nextPollUtc = DateTime.MinValue;
 
     private async Task PollAllAsync(CancellationToken ct)
@@ -420,13 +401,12 @@ public sealed class CodePairingService
             return;
         }
 
-        // Activation first: the pair row is what "confirmed" really means, and it outlives the invitation.
+        // Activation first: the pair row is what "confirmed" means, and it outlives the invitation.
         var pairIdHash = RelayCrypto.ComputePairIdHash(identity.DeviceKeyId, state.PeerDeviceKeyId);
         try
         {
             var pair = await relay.FetchPairAsync(pairIdHash, ct).ConfigureAwait(false);
-            // Only a live pair created after this acceptance counts - an older (possibly revoked) epoch between
-            // the same two devices must never be mistaken for this confirmation.
+            // Only a live pair created after this acceptance counts, never an older epoch between the same devices.
             if (pair.RevokedAt is null && pair.CreatedAt >= state.AcceptedAt - 300)
             {
                 var peerKey = new EcPublicKeyJwk { X = state.PeerPublicKeyX, Y = state.PeerPublicKeyY };
@@ -440,7 +420,6 @@ public sealed class CodePairingService
         }
         catch (RelayException ex) when (ex.Code is "unauthorized" or "not_found")
         {
-            // No pair between these devices yet - not confirmed.
         }
         catch (RelayException)
         {
@@ -459,12 +438,10 @@ public sealed class CodePairingService
         }
         catch (RelayException)
         {
-            // Transient.
         }
     }
 
-    /// An accepted invitation that will never be confirmed: undo the collar applied at accept time, if it
-    /// was applied for this pairing.
+    /// Undo the collar applied at accept time, if it was for this pairing.
     private void EndAccepted(CodeInvitationState state, string notice)
     {
         Remove(state);

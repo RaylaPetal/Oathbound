@@ -16,15 +16,11 @@ using Oathbound.Plugin.Safety;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/status-indicators: the gagged/restrained/leashed icons next to nameplate names. The icons live in
-/// KamiToolKit's own overlay addon (drawn above nameplates, behind game windows) and are positioned each
-/// frame from the nameplate's name text - nothing is ever attached to the NamePlate addon itself, so the
-/// game's own icon and any other plugin's nameplate edits (GagSpeak's gag icon, Lightless's labels) are
-/// untouched. Disposing the overlay controller removes every icon.
+/// Status icons in KamiToolKit's own overlay, positioned each frame from the nameplate's name text. Nothing is
+/// attached to the NamePlate addon, so other nameplate edits stay untouched. Disposing the controller removes every icon.
 public sealed unsafe class StatusIconOverlay : OverlayNode
 {
-    /// Status-effect icons are 24x32 textures (not the 32x32 IconImageNode assumes - sampling 32 wide shows a
-    /// sliver of the neighbouring icon), so the node keeps that 3:4 shape. IconHeight is in nameplate units.
+    /// Status icons are 24x32 (sampling 32 wide shows a sliver of the next icon). IconHeight is in nameplate units.
     private static readonly Vector2 IconTextureSize = new(24f, 32f);
     private const float IconHeight = 28f;
     private const float Gap = 2f;
@@ -32,7 +28,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
     private readonly PluginConfig config;
     private readonly StatusIndicatorState state;
     private readonly uint[] iconIds;
-    // Three icons per nameplate slot, created lazily the first time a slot needs one.
+    // Created lazily per slot.
     private readonly IconImageNode?[] icons = new IconImageNode?[AddonNamePlate.NumNamePlateObjects * 3];
     private bool warned;
 
@@ -99,8 +95,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
             if (!shown[i]) HideSlot(i);
     }
 
-    /// Lays the active icons out in a row that ends just left of the rendered name, vertically centered on
-    /// it, scaled with the nameplate (nameplates shrink with distance).
+    /// Scaled with the nameplate, which shrinks with distance.
     private void PlaceRow(int index, AtkTextNode* nameText, CharacterStatus status)
     {
         var res = &nameText->AtkResNode;
@@ -110,7 +105,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
 
         var boxWidth = res->Width * scale;
         var drawnWidth = MathF.Min(textWidth * scale, boxWidth);
-        // Nameplate names are centered in their text box.
+        // Names are centered in their text box.
         var textLeft = res->ScreenX + (boxWidth - drawnWidth) / 2f;
         var centerY = res->ScreenY + res->Height * scale / 2f;
 
@@ -167,9 +162,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
                 node.IsVisible = false;
     }
 
-    /// Resolves the three icons from the game's own Status sheet (English names, so it works whatever the
-    /// client language): Silence for gagged, Fetters for restrained, Bind for leashed. 0 = not found, and
-    /// that icon simply isn't drawn.
+    /// From the Status sheet by English name, so it works in any client language. 0 = not found, not drawn.
     public static uint[] ResolveIconIds()
     {
         var sheet = Plugin.DataManager.GetExcelSheet<Status>(ClientLanguage.English);
@@ -181,7 +174,6 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
     }
 }
 
-/// Owns KamiToolKit and the overlay for the status icons, so Plugin only has one thing to create and dispose.
 public sealed class StatusIconRenderer : IDisposable
 {
     private readonly OverlayController? controller;

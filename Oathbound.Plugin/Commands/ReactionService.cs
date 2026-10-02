@@ -12,25 +12,14 @@ using Oathbound.Plugin.Safety;
 
 namespace Oathbound.Plugin.Commands;
 
-/// A mod a reaction turned on and that is still on - the only reaction state tracked, so it can be turned
-/// off again from the Reactions window, by panic, or on unload.
+/// Tracked so it can be turned off again from the window, by panic, or on unload.
 public sealed record ActiveReactionMod(string ReactionId, Guid Collection, string Directory, string Name);
 
-/// collar/reactions: local, automatic reactions to an emote used on the user or a chat trigger phrase. Runs
-/// on the user's own client only and is never driven by, or reported to, a paired peer. Events are queued
-/// (chat arrives on the chat callback) and acted on from the framework tick, like ToyTriggerEvaluator.
-/// Only the first matching reaction per event fires, so one hug can't set off several reactions at once.
-///
-/// Actions are fire-and-forget: nothing is locked, re-applied or reverted on a timer. The one exception is
-/// a turned-on mod, held as a layered claim in TemporaryModSettingsCoordinator (so it never clobbers a
-/// restraint's claim on the same mod) until turned off.
-///
-/// A chat action sends text automatically in reaction to what other players do - the user chose to allow
-/// that with only the per-reaction cooldown (never under 10s for chat) as a guard; see ChatSender's note
-/// and the README's automation section.
+/// Local automatic reactions to emotes or a chat trigger phrase; never driven by or reported to a peer.
+/// Events are queued and acted on from the framework tick. Only the first matching reaction per event fires.
+/// A chat action replies automatically, guarded only by its cooldown (at least 10 s for chat).
 public sealed class ReactionService : IDisposable
 {
-    /// Player-authored channels a chat trigger listens on.
     private static readonly XivChatType[] WatchedChatTypes =
     [
         XivChatType.Say, XivChatType.Yell, XivChatType.Shout, XivChatType.CustomEmote,
@@ -60,7 +49,6 @@ public sealed class ReactionService : IDisposable
 
     public IReadOnlyList<ActiveReactionMod> ActiveMods => activeMods;
 
-    /// When each reaction last fired (Environment.TickCount64), for the list's "last fired" column.
     public long? LastFired(string reactionId) => lastFiredTicks.TryGetValue(reactionId, out var t) ? t : null;
 
     public ReactionService(PluginConfig config, SubRuntimeState runtimeState, EmoteWatcher emoteWatcher, GlamourerIpc glamourer, SlotLockManager slotLocks,
@@ -88,7 +76,7 @@ public sealed class ReactionService : IDisposable
         chatEvents.Enqueue(new ChatEvent(message.Message.TextValue.Trim(), name, world));
     }
 
-    /// Called every framework tick, after EmoteWatcher.Poll.
+    /// After EmoteWatcher.Poll.
     public void OnFrameworkUpdate()
     {
         var chatThisTick = new List<ChatEvent>();
@@ -130,7 +118,7 @@ public sealed class ReactionService : IDisposable
         }
     }
 
-    /// The rest of a message after the user's own trigger word, or null when it doesn't start with it.
+    /// Null when the message doesn't start with the trigger word.
     private string? PhraseAfterTriggerWord(string text)
     {
         var trigger = config.TriggerPhrase.Trim();
@@ -140,7 +128,7 @@ public sealed class ReactionService : IDisposable
         return rest.Length > 0 && char.IsWhiteSpace(rest[0]) ? rest.Trim() : null;
     }
 
-    /// The phrase must be the whole remainder or its leading words (so "kneel" matches "kneel please").
+    /// The phrase must be the whole remainder or its leading words.
     public static bool PhraseMatches(string said, string phrase)
     {
         var wanted = Normalize(phrase);
@@ -151,8 +139,7 @@ public sealed class ReactionService : IDisposable
 
     private static string Normalize(string text) => string.Join(' ', text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
-    /// Paired characters only (either direction) unless the reaction allows anyone. World is compared when
-    /// both sides have one; a sender with no world (some chat types) matches on name alone.
+    /// Paired characters only unless the reaction allows anyone. A sender with no world matches on name alone.
     private bool SourceAllowed(ReactionRule rule, string name, string? world)
     {
         if (rule.AllowAnyone)
@@ -171,8 +158,7 @@ public sealed class ReactionService : IDisposable
         Fire(rule);
     }
 
-    /// Runs every configured action once. Each is independent: one failing or being skipped (a locked slot,
-    /// a missing plugin) never stops the others. Also used by the editor's Test button.
+    /// Each action is independent: one failing never stops the others.
     public void Fire(ReactionRule rule)
     {
         Run("gesture", () => PlayGesture(rule));
@@ -188,9 +174,7 @@ public sealed class ReactionService : IDisposable
         catch (Exception ex) { Plugin.Log.Warning(ex, $"Reaction {what} action failed."); }
     }
 
-    /// Skipped while a restraint holds a pose or animation, so a reaction can't break a restraint's hold.
-    /// Keep facing clears the target around the gesture (ReactToMe's approach) and puts it back on the next
-    /// frame, unless the user picked a new target in between.
+    /// Skipped while a restraint holds a pose. Keep facing clears the target around the gesture and restores it next frame.
     private void PlayGesture(ReactionRule rule)
     {
         if (rule.Gesture is not { } gesture)
@@ -211,7 +195,7 @@ public sealed class ReactionService : IDisposable
             }, delayTicks: 1);
     }
 
-    /// Never into a slot another feature (outfit, restraint, collar) currently holds locked - the lock wins.
+    /// Never into a slot another feature holds locked.
     private void EquipItem(ReactionRule rule)
     {
         if (rule is not { ItemSlot: { } slot, ItemId: > 0 and var itemId } || slotLocks.GetLockedValue(slot) is not null)
@@ -231,8 +215,7 @@ public sealed class ReactionService : IDisposable
         penumbra.TryRedrawLocalPlayer();
     }
 
-    /// Turns a reaction-enabled mod off again: releasing the claim restores whatever was underneath it (the
-    /// user's own Penumbra settings, or another feature's claim).
+    /// Releasing the claim restores whatever was underneath.
     public void TurnOff(ActiveReactionMod mod)
     {
         modSettings.Release(OwnerKey(mod.ReactionId), mod.Collection, mod.Directory);
@@ -240,7 +223,7 @@ public sealed class ReactionService : IDisposable
         penumbra.TryRedrawLocalPlayer();
     }
 
-    /// collar/reactions "Panic suspends reactions": suspends every reaction and turns off every reaction mod.
+    /// Suspends every reaction and turns off every reaction mod.
     public void ReleaseAllForPanic()
     {
         runtimeState.ReactionsSuspended = true;
@@ -263,7 +246,7 @@ public sealed class ReactionService : IDisposable
     public void Dispose()
     {
         Plugin.ChatGui.ChatMessage -= OnChatMessage;
-        // Claims themselves are released by TemporaryModSettingsCoordinator.Dispose on unload.
+        // Claims themselves are released by TemporaryModSettingsCoordinator.Dispose.
         activeMods.Clear();
     }
 }

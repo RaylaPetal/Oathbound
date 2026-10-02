@@ -5,18 +5,13 @@ using Oathbound.Plugin.Ipc;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Layers Oathbound's temporary Penumbra claims per collection/mod. Releasing the top claim restores the
-/// next claim instead of blindly deleting another feature's active override.
-///
-/// While a claim is held, Oathbound keeps control of the mod: the settings are locked (see PenumbraIpc),
-/// and if they're dropped or changed anyway - Penumbra removes even locked temporary settings when a mod's
-/// structure changes - the top claim is put back on the next frame.
+/// Layers our temporary Penumbra claims per collection/mod; releasing the top claim restores the next one.
+/// If held settings are dropped or changed anyway, the top claim is put back next frame.
 public sealed class TemporaryModSettingsCoordinator : IDisposable
 {
     private sealed record Claim(string Owner, Dictionary<string, IReadOnlyList<string>> Selections);
 
-    /// Minimum gap between two re-asserts of the same mod, so a fight with something else rewriting it
-    /// can't turn into a per-frame loop.
+    /// So a fight with something else rewriting the mod can't become a per-frame loop.
     private const long ReassertCooldownMs = 1000;
 
     private readonly Dictionary<(Guid Collection, string Mod), List<Claim>> claims = new();
@@ -24,7 +19,7 @@ public sealed class TemporaryModSettingsCoordinator : IDisposable
     private readonly HashSet<(Guid Collection, string Mod)> pendingReassert = new();
     private readonly PenumbraIpc penumbra;
 
-    /// True while Oathbound itself is writing - the change events that write fires are its own, not a loss.
+    /// The change events our own writes fire aren't a loss.
     private bool writing;
 
     public TemporaryModSettingsCoordinator(PenumbraIpc penumbra)
@@ -56,8 +51,7 @@ public sealed class TemporaryModSettingsCoordinator : IDisposable
         return Set(collection, mod, layers[^1].Selections);
     }
 
-    /// Releases every claim still held - on unload, since a locked setting can't be removed by anything but
-    /// Oathbound's own key and would otherwise stay stuck until the game restarts.
+    /// A locked setting can only be removed with our key, so release everything on unload.
     public void Dispose()
     {
         penumbra.SettingChanged -= OnSettingChanged;
@@ -88,7 +82,7 @@ public sealed class TemporaryModSettingsCoordinator : IDisposable
         var now = Environment.TickCount64;
         if (lastReassert.TryGetValue(key, out var last) && now - last < ReassertCooldownMs)
         {
-            // Still wanted, just too soon - try again once the cooldown is over instead of dropping it.
+            // Too soon - retry after the cooldown instead of dropping it.
             if (pendingReassert.Add(key))
                 Plugin.Framework.RunOnTick(() => Reassert(key), TimeSpan.FromMilliseconds(ReassertCooldownMs));
             return;

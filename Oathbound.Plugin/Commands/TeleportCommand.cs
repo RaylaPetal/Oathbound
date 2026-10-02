@@ -15,7 +15,7 @@ using Oathbound.Plugin.Ipc;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/teleport stages, in journey order (design.md D4). Idle means no journey.
+/// In journey order. Idle means no journey.
 public enum TeleportStage
 {
     Idle,
@@ -30,14 +30,9 @@ public enum TeleportStage
     Arriving,
 }
 
-/// collar/teleport: the Sub's whole "come to the Owner" journey - world change, aetheryte teleport or
-/// housing-ward travel, instance change, then vnavmesh navigation (mounting and flying when far) to within
-/// a few yalms of the Owner - with the Sub's movement locked from start to finish (design.md D4).
-///
-/// Every guard runs on the Sub's own client before anything moves; the Sub's client protects itself and never
-/// trusts the Owner's tell to have already checked duty/combat/permission. Every way a journey can end - arrival,
-/// the header's Stop, panic, revert-all, the source pairing ending, a failure before navigation - goes
-/// through `Stop`/`Finish`, so the lock and vnavmesh are always torn down together (design.md D10).
+/// The Sub's whole journey to the Owner: world change, aetheryte or ward travel, instance change, then vnavmesh
+/// navigation, with movement locked throughout. Every guard runs on the Sub's client before anything moves.
+/// Every end goes through Stop/Finish, so the lock and vnavmesh are always torn down together.
 public sealed class TeleportCommand
 {
     private const string LockOwner = "Teleport";
@@ -63,18 +58,16 @@ public sealed class TeleportCommand
     private readonly VnavmeshIpc vnavmesh;
     private readonly MovementLockService movementLock;
 
-    // Journey plan, fixed at Apply time.
+    // Fixed at Apply time.
     private TeleportTarget? target;
     private Guid? sourcePairingId;
     private string? ownerName;
     private uint aetheryteId;
     private string? districtName;
     private int housingPlot;
-    /// collar/leash-travel (design D6): started by ApplyLeashTravel for a leashed Sub, rather than by the
-    /// Owner's own Teleport.
+    /// Started by ApplyLeashTravel rather than the Owner's own Teleport.
     private bool isLeashJourney;
 
-    // Stage bookkeeping.
     private TeleportStage stage;
     private DateTime stageStartedAt;
     private bool observedTravelBusy;
@@ -82,7 +75,6 @@ public sealed class TeleportCommand
     private DateTime lastProgressAt;
     private Vector3? lastProgressPosition;
 
-    // Navigation.
     private CancellationTokenSource? pathCancel;
     private Task<List<Vector3>>? pendingPath;
     private bool pendingPathFly;
@@ -106,13 +98,10 @@ public sealed class TeleportCommand
     public bool IsInProgress => stage != TeleportStage.Idle;
     public bool IsLeashJourneyInProgress => IsInProgress && isLeashJourney;
 
-    /// collar/leash-travel: raised once when a leash journey ends - true on arrival, false for any stop or
-    /// failure. Not raised when a newer leash travel from the same Owner replaces the journey.
+    /// True on arrival, false for any stop or failure. Not raised when a newer leash travel replaces the journey.
     public event Action<bool>? LeashJourneyEnded;
 
-    /// collar/leash-travel "A newer trip replaces the current one": a leash journey from the same pairing is
-    /// replaced silently; anything else in progress (the Owner's own Teleport) wins and this is refused.
-    /// Every guard in Apply applies unchanged.
+    /// A leash journey from the same pairing is replaced silently; anything else in progress wins.
     public (bool Success, string? Reason) ApplyLeashTravel(TeleportTarget destination, PairingState source)
     {
         if (IsInProgress)
@@ -128,19 +117,16 @@ public sealed class TeleportCommand
         return result;
     }
 
-    /// Stops the journey only if it is a leash journey (the leash being released mid-trip).
     public void StopLeashJourney(string reason)
     {
         if (IsLeashJourneyInProgress)
             Stop(reason);
     }
 
-    /// 0..1 while the zone's navmesh is still building, otherwise negative (see VnavmeshIpc).
+    /// 0..1 while the zone's navmesh is building, otherwise negative.
     public float NavBuildProgress => stage == TeleportStage.PreparingNav ? vnavmesh.TryGetBuildProgress() : -1f;
 
-    /// collar/teleport "Sub refuses Teleport when travel cannot safely happen": checked in the spec's order so
-    /// the reason reported is always the first thing actually blocking the command. On success the journey has
-    /// started and runs from OnFrameworkUpdate.
+    /// Guards run in a fixed order so the reported reason is the first real blocker.
     public (bool Success, string? Reason) Apply(TeleportTarget destination, PairingState? source)
     {
         if (!config.Permissions.Teleport)
@@ -176,7 +162,6 @@ public sealed class TeleportCommand
 
         if (destination.IsHousingWard)
         {
-            // collar/teleport "Sub travels to the Owner's housing ward".
             skipTravel = sameTerritory && TeleportDestinations.CurrentWard() == (destination.Ward, destination.Subdivision);
             if (!skipTravel)
             {
@@ -190,8 +175,7 @@ public sealed class TeleportCommand
         }
         else
         {
-            // collar/teleport "Sub chooses the arrival aetheryte" - including the skip shortcut when already
-            // closer than any attuned aetheryte in the same world, zone, and instance.
+            // Skips travel when already closer than any attuned aetheryte in the same world, zone and instance.
             var aetheryte = TeleportDestinations.FindNearestAttunedAetheryte(destination.Territory, destination.Position);
             var sameInstance = destination.Instance == 0 || TeleportDestinations.CurrentPublicInstance() == destination.Instance;
             var ownDistance = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), new Vector2(destination.Position.X, destination.Position.Z));
@@ -209,8 +193,7 @@ public sealed class TeleportCommand
         flying = false;
         dismountSent = false;
 
-        // design.md D5: input stays suppressed for the whole journey; Teleporting adds full immobilize on top
-        // for the cast and loading screen only.
+        // Input stays suppressed for the whole journey; Teleporting adds full immobilize for the cast and loading screen.
         movementLock.EngageSuppressInput(LockOwner);
 
         if (skipTravel)
@@ -266,7 +249,7 @@ public sealed class TeleportCommand
                 return;
 
             case TeleportStage.ChangingInstance:
-                // A failed or refused instance change is not fatal (spec): navigate in the current instance.
+                // A failed or refused instance change isn't fatal: navigate in the current instance.
                 if (WaitForTravel() is null) return;
                 EnterStage(TeleportStage.PreparingNav);
                 return;
@@ -292,8 +275,7 @@ public sealed class TeleportCommand
         }
     }
 
-    /// collar/teleport "Sub can stop an in-progress Teleport from the header" + panic/revert-all/unpair: halts
-    /// everything immediately. Safe to call when idle.
+    /// Safe to call when idle.
     public void Stop(string reason) => StopCore(reason, arrived: false, notifyLeash: true);
 
     private void StopCore(string reason, bool arrived, bool notifyLeash)
@@ -307,8 +289,7 @@ public sealed class TeleportCommand
         if (wasLifestreamStage)
         {
             lifestream.TryAbort();
-            // teleport-lifestream-autorun D4: Lifestream may have left its aetheryte-approach autorun on. After the
-            // abort so its queue can't turn it back on; a no-op when autorun isn't running.
+            // Lifestream may have left its autorun on. After the abort so its queue can't turn it back on.
             Chat.SendMessage("/automove off");
         }
         movementLock.ReleaseImmobilize(LockOwner);
@@ -324,8 +305,7 @@ public sealed class TeleportCommand
             LeashJourneyEnded?.Invoke(arrived);
     }
 
-    /// collar/teleport "Panic, Revert all, and unpair end an in-progress Teleport" (unpair case): PairingService
-    /// and RevocationService only announce that *some* pairing ended, so check whether it was this journey's.
+    /// Pairing-ended events don't say which pairing, so check whether it was this journey's.
     public void StopIfSourcePairingEnded()
     {
         if (!IsInProgress || sourcePairingId is not { } id)
@@ -334,7 +314,7 @@ public sealed class TeleportCommand
             Stop("the pairing that sent it ended");
     }
 
-    /// Fails a journey before navigation began (spec: lock released, Sub told why).
+    /// Before navigation began: lock released, Sub told why.
     private void Fail(string reason)
     {
         lastFailure = reason;
@@ -360,8 +340,7 @@ public sealed class TeleportCommand
         lastProgressAt = stageStartedAt;
         lastProgressPosition = Plugin.ObjectTable.LocalPlayer?.Position;
 
-        // teleport-lifestream-autorun D2: Lifestream walks up to aetherytes with `/automove on`, so autorun is let
-        // through only while it's driving; the cast and vnavmesh navigation keep it blocked.
+        // Lifestream walks to aetherytes with autorun, so it's allowed only while Lifestream drives.
         if (IsLifestreamTravelStage(next))
             movementLock.AllowAutorun(LockOwner);
         else
@@ -371,8 +350,7 @@ public sealed class TeleportCommand
     private static bool IsLifestreamTravelStage(TeleportStage s) =>
         s is TeleportStage.ChangingWorld or TeleportStage.TravelingToWard or TeleportStage.ChangingInstance;
 
-    /// teleport-lifestream-autorun D3: a loading screen, a zone transition, or TravelProgressDistance of movement
-    /// counts as progress. TravelStallTimeout without any means Lifestream is stuck (e.g. out of interaction range).
+    /// A loading screen, zone change or TravelProgressDistance of movement counts as progress.
     private bool HasTravelStalled()
     {
         var now = DateTime.UtcNow;
@@ -394,8 +372,6 @@ public sealed class TeleportCommand
         TeleportStage.ChangingInstance => "changing instance",
         _ => s.ToString(),
     };
-
-    // --- Travel stages -----------------------------------------------------------------------------------
 
     private void BeginChangingWorld()
     {
@@ -421,7 +397,7 @@ public sealed class TeleportCommand
 
         EnterStage(TeleportStage.Teleporting);
         movementLock.EngageImmobilize(LockOwner);
-        // subIndex 0 covers every plain aetheryte; the id always comes from FindNearestAttunedAetheryte.
+        // subIndex 0 covers every plain aetheryte.
         if (!lifestream.TryTeleport(aetheryteId, 0))
         {
             movementLock.ReleaseImmobilize(LockOwner);
@@ -437,10 +413,8 @@ public sealed class TeleportCommand
             EnterStage(TeleportStage.PreparingNav);
     }
 
-    /// `Lifestream.IsBusy` alone isn't enough: Lifestream considers a teleport "done" as soon as it fires the
-    /// in-game action, before the cast bar (Casting87) or loading screen (BetweenAreas) actually runs. So travel
-    /// only counts as finished after it has been observed busy at least once and then gone idle. Returns null
-    /// while still waiting, true when finished, false when travel never started within TravelStartTimeout.
+    /// Lifestream reports done when it fires the action, before the cast or loading screen. So travel finishes only after
+    /// being seen busy and then idle. Null while waiting, false if travel never started within TravelStartTimeout.
     private bool? WaitForTravel()
     {
         if (IsTravelBusy())
@@ -459,8 +433,6 @@ public sealed class TeleportCommand
         || Plugin.Condition[ConditionFlag.BetweenAreas]
         || Plugin.Condition[ConditionFlag.BetweenAreas51];
 
-    // --- Navigation --------------------------------------------------------------------------------------
-
     private unsafe void BeginMountingOrNavigating()
     {
         var player = Plugin.ObjectTable.LocalPlayer;
@@ -471,7 +443,7 @@ public sealed class TeleportCommand
             return;
         }
 
-        // design.md D8: Mount Roulette only when the game says it's usable here (not in cities/indoors).
+        // Mount Roulette only when the game says it's usable here.
         var actions = ActionManager.Instance();
         if (actions == null || actions->GetActionStatus(ActionType.GeneralAction, MountRouletteAction) != 0)
         {
@@ -490,8 +462,7 @@ public sealed class TeleportCommand
         RequestPath(flying);
     }
 
-    /// The Owner's live position while their character is visible to this client, otherwise the position the
-    /// command carried (spec: "the destination SHALL follow the Owner's live position").
+    /// The Owner's live position while visible, otherwise the commanded position.
     private Vector3 LiveGoal()
     {
         var owner = FindOwner();
@@ -506,9 +477,7 @@ public sealed class TeleportCommand
             && string.Equals(o.Name.TextValue, ownerName, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// design.md D6: a cancelable pathfind this class owns. Only the current `pendingPath` is ever polled, and Stop
-    /// or a retarget drops that reference (and cancels its token), so a path that finishes after
-    /// Stop or a newer retarget is discarded instead of handed to vnavmesh.
+    /// Only the current pendingPath is polled, so a path finishing after Stop or a retarget is discarded.
     private void RequestPath(bool fly)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
@@ -562,8 +531,7 @@ public sealed class TeleportCommand
             return;
         lastCheck = now;
 
-        // design.md D7 retarget: follow the Owner once visible, without dropping the current path until the new
-        // one arrives (Path.MoveTo simply replaces the waypoints).
+        // Keep the current path until the new one arrives.
         if (pendingPath is null && Vector3.Distance(goal, navTarget) > RetargetDistance)
         {
             RequestPath(flying);
@@ -582,7 +550,7 @@ public sealed class TeleportCommand
             return;
         }
 
-        // A flying path can fail near overhangs/interiors - fall back to the ground straight away.
+        // A flying path can fail near overhangs or interiors - fall back to the ground.
         if (pendingPathFly)
         {
             flying = false;
@@ -598,9 +566,7 @@ public sealed class TeleportCommand
         EnterStuck();
     }
 
-    /// design.md D7: stuck = distance to the goal hasn't dropped by ProgressMinDelta over ProgressWindow, or
-    /// vnavmesh stopped (its own StopOnStuck) short of the goal. Stuck never releases the lock - it retries,
-    /// and the header offers Stop.
+    /// Stuck never releases the lock - it retries, and the header offers Stop.
     private void UpdateProgress(Vector3 position, Vector3 goal, DateTime now)
     {
         var distance = Vector3.Distance(position, goal);

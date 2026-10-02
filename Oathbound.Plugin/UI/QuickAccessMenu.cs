@@ -10,22 +10,9 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/ui-organization "Compact favorites window lists only favorited commands" (reworked): replaces
-/// the former `FavoritesWindow` with a two-level ImGui popup (design.md's "Quick-access menu is an ImGui
-/// popup, not a window") - opened by the DTR bar entry, so it lives as its own static-ish helper rather than a
-/// `Window` subclass.
-///
-/// `Toggle()` is called from a DTR bar click callback, which Dalamud can invoke outside any ImGui frame
-/// entirely - it MUST
-/// NOT call any ImGui popup API (OpenPopup/BeginPopup/IsPopupOpen) directly. Every one of those is scoped
-/// to Dear ImGui's "current window" at the time of the call (its ID is hashed together with whatever
-/// window happens to be current), so calling them from mismatched contexts computes mismatched popup IDs
-/// - which was the actual cause of the open flicker and the popup appearing in the wrong place - and
-/// calling them when there is no current ImGui frame/window at all (as a DTR click callback can do)
-/// dereferences invalid internal ImGui state, which is what was crashing the game on click. `Toggle()`
-/// therefore only flips a plain flag; every real ImGui popup call happens inside `Draw()`, which is always
-/// invoked from the exact same place every frame (`QuickAccessMenuHost.Draw()`), so Open/Begin are always
-/// called from one consistent, always-valid context.
+/// The favorites popup, opened from the server info bar entry.
+/// Toggle() may run outside any ImGui frame (a DTR click callback), so it only flips a flag: calling popup APIs there
+/// computes mismatched IDs or crashes the game. Every real popup call happens in Draw().
 public static class QuickAccessMenu
 {
     private const string PopupId = "CollarQuickAccessMenu";
@@ -40,9 +27,7 @@ public static class QuickAccessMenu
             openRequested = true;
     }
 
-    /// Best-effort only - real open/closed state is Dear ImGui's, only ever queried from inside `Draw()`
-    /// where the ID-stack context is known-good; this just avoids re-requesting an open that's already
-    /// pending/showing when Toggle() is called twice before a frame has run.
+    /// Best-effort; avoids re-requesting an open that's already pending.
     private static bool IsLikelyOpen { get; set; }
 
     public static void Draw(Plugin plugin)
@@ -53,15 +38,11 @@ public static class QuickAccessMenu
             ImGui.OpenPopup(PopupId);
         }
 
-        // collar/ui-organization "Quick-access button and menu use the plugin's own theme": pushed for
-        // the whole method (via `using` declarations, not blocks) so every return path - BeginPopup
-        // failing, the closeRequested branch, and the normal fallthrough to EndPopup - pops them exactly
-        // once, matching Card.cs's push/pop shape for the same Theme.CardBg/CardRounding pair.
+        // `using` declarations so every return path pops these exactly once.
         using var popupBg = ImRaii.PushColor(ImGuiCol.PopupBg, Theme.CardBg);
         using var popupRounding = ImRaii.PushStyle(ImGuiStyleVar.PopupRounding, Theme.CardRounding);
         using var headerHovered = ImRaii.PushColor(ImGuiCol.HeaderHovered, Theme.TileBgHover);
 
-        // Dear ImGui's own default placement (at the click on the server info bar entry) applies.
         if (!ImGui.BeginPopup(PopupId))
         {
             IsLikelyOpen = false;
@@ -80,12 +61,7 @@ public static class QuickAccessMenu
             return;
         }
 
-        // Owner quick commands are meant to be sent to a different, paired Sub - a character currently
-        // configured as Sub has nothing to send them to (its own client never applies anything it sends
-        // to itself, see ChatCommandListener.OnChatMessage's Role check), so the menu stays limited to the
-        // plain open-window shortcuts below instead of exposing a Send list that would only do nothing.
-        // collar/multi-pairing: driven by the active pairing's direction (falling back to Role when none is
-        // active), matching CollarWindow's own Owner/Sub view selection.
+        // A Sub has no one to send Owner commands to, so the menu shows only the open-window shortcuts.
         var activePairing = plugin.Configuration.ActivePairing;
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (isOwnerMode)
@@ -110,10 +86,7 @@ public static class QuickAccessMenu
                     ImGui.EndMenu();
                 }
 
-                // collar/ui-organization "Header includes a quick Teleport action": Teleport has no static
-                // Command text to compose (it's resolved live at send time), so it can't join the synthetic
-                // QuickCommand entries CategorizedFavorites builds for the other fixed actions - it gets its
-                // own top-level entry instead of a category submenu.
+                // Teleport has no static command text, so it gets its own top-level entry.
                 if (teleportFavorited)
                     DrawTeleportMenuItem(plugin, canSend);
             }
@@ -127,12 +100,7 @@ public static class QuickAccessMenu
         ImGui.EndPopup();
     }
 
-    /// Built-in fixed-action rows that have static command text (everything except Teleport, which is
-    /// resolved live - see DrawTeleportMenuItem) - collar/ui-organization "Owner can favorite ... built-in
-    /// fixed-action row[s]". Grouped under the same category label its `DrawFixedQuickRow` call site lives
-    /// under in CollarWindow, so a favorited "Collar lock" appears in the same submenu as any favorited
-    /// Collar QuickCommand. Internal (not private) - FavoritesWindow's own persistent-window rendering
-    /// reuses this same data shaping rather than duplicating it, only drawing it differently.
+    /// Fixed actions with static command text, grouped like their rows in the UI. Shared with FavoritesWindow.
     internal static readonly (string Id, string Label, string Category, string Command)[] FixedActions =
     [
         (FixedActionIds.CollarLock, "Collar lock", "Collar", "collar lock"),
@@ -168,17 +136,12 @@ public static class QuickAccessMenu
             .ToList();
     }
 
-    /// Synthesizes a plain `QuickCommand` (Label + Command only) for each favorited fixed action in
-    /// `category`, so `DrawFavoriteMenuItem` below can send it exactly like any saved quick command - these
-    /// are never written back to `quick.*` lists, just built fresh each frame for display.
+    /// Built fresh each frame for display, never saved.
     private static IEnumerable<QuickCommand> FavoritedFixedActionsFor(string category, HashSet<string> favoriteIds) =>
         FixedActions.Where(a => a.Category == category && favoriteIds.Contains(a.Id))
             .Select(a => new QuickCommand { Label = a.Label, Command = a.Command });
 
-    /// collar/ui-organization "Sub Control window lists every configured command ... not only favorites":
-    /// the unfiltered counterpart to `CategorizedFavorites` above - every entry per category (including
-    /// every fixed action, not only favorited ones), so the Sub Control window's "show everything" view and
-    /// this class's "show favorites only" views can never disagree about what a category's commands are.
+    /// Every entry per category, favorite or not, so the "show everything" and favorites views always agree.
     internal static List<(string Label, List<QuickCommand> Commands)> CategorizedAll(OwnerQuickCommands quick)
     {
         (string Label, List<QuickCommand> List)[] categories =
@@ -200,7 +163,6 @@ public static class QuickAccessMenu
             .ToList();
     }
 
-    /// Same synthesis as `FavoritedFixedActionsFor`, without the favorite-id filter.
     private static IEnumerable<QuickCommand> FixedActionsFor(string category) =>
         FixedActions.Where(a => a.Category == category)
             .Select(a => new QuickCommand { Label = a.Label, Command = a.Command });
@@ -218,10 +180,7 @@ public static class QuickAccessMenu
             ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
     }
 
-    /// Teleport can't join `FixedActions` above - it has no static `Command` text, resolved live via
-    /// `TeleportSendAction` instead. The popup closes on click (design.md), so a resolution failure is
-    /// reported via a transient notification (matching `CatalogSyncRelayService`'s existing pattern) rather
-    /// than an inline message.
+    /// The popup closes on click, so a resolution failure is reported as a notification.
     private static void DrawTeleportMenuItem(Plugin plugin, bool canSend)
     {
         using (ImRaii.Disabled(!canSend))

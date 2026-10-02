@@ -12,9 +12,7 @@ public readonly record struct GlamourerDesign(System.Guid Id, string DisplayName
 
 public readonly record struct GlamourerEquippedItem(ulong ItemId, byte Stain, byte Stain2);
 
-/// The 10 gear slots this plugin's per-slot locking (collar/slot-locking) operates on - matches
-/// `SetItem`'s own `ApiEquipSlot` parameter and `Glamourer.Designs.DesignData.NumEquipment`. Deliberately
-/// excludes MainHand/OffHand (weapons) and customization/bonus items - locking has never covered those here.
+/// Weapons and customization are deliberately excluded.
 public static class LockableEquipSlots
 {
     public static readonly IReadOnlyList<ApiEquipSlot> All =
@@ -24,10 +22,7 @@ public static class LockableEquipSlots
     ];
 }
 
-/// Thin wrapper around the Glamourer.Api calls collar/outfit needs, always targeting the local player
-/// (objectIndex 0) - see design.md's Context: only the local client's own state change reaches anyone else.
-/// Per-slot locking (collar/slot-locking, see SlotLockManager) never uses Glamourer's own actor-wide
-/// `Combination` lock - every apply here goes through `ApplyFlag.Once` only.
+/// Always targets the local player (objectIndex 0). Never uses Glamourer's actor-wide lock - every apply is ApplyFlag.Once.
 public sealed class GlamourerIpc : IDisposable
 {
     private const int LocalPlayerObjectIndex = 0;
@@ -40,19 +35,13 @@ public sealed class GlamourerIpc : IDisposable
     private readonly GetState getState;
     private readonly ApiVersion apiVersion = new(Plugin.PluginInterface);
 
-    /// collar/ui-organization dependency status: cheapest read-only gate; any exception (not installed,
-    /// disabled, incompatible API) means unavailable.
+    /// Any exception means unavailable.
     public bool IsAvailable { get { try { apiVersion.Invoke(); return true; } catch { return false; } } }
     private readonly EventSubscriber<nint, StateFinalizationType> stateFinalized;
     private readonly EventSubscriber<nint, StateChangeType> stateChanged;
 
-    /// Fires whenever the local player's own tracked Glamourer state changes, from any source (manual
-    /// edit through Glamourer's own UI, another IPC caller, automation, gearset change) - what
-    /// SlotLockManager's enforcement loop reacts to instead of polling every frame. Subscribed on both
-    /// `StateChangedWithType` (fires per individual edit - e.g. unequipping one piece in Glamourer's own
-    /// UI) and `StateFinalized` (fires once a grouped change, e.g. a full design apply, completes) -
-    /// mirroring GagSpeak's own `GlamourListener`, since a single manual slot edit only ever raises
-    /// `StateChangedWithType`, never `StateFinalized` on its own.
+    /// Fires on any change to the local player's Glamourer state. Subscribed to both StateChangedWithType and
+    /// StateFinalized, since a single manual slot edit only raises the former.
     public event Action? LocalPlayerStateChanged;
 
     public GlamourerIpc()
@@ -85,24 +74,17 @@ public sealed class GlamourerIpc : IDisposable
             LocalPlayerStateChanged?.Invoke();
     }
 
-    /// The Sub's own saved Glamourer designs, with the folder path shown in Glamourer's design browser -
-    /// mirrors PenumbraIpc's sort-path use for the gesture folder allowlist.
+    /// Includes the design-browser folder path.
     public IReadOnlyList<GlamourerDesign> GetDesigns() =>
         getDesignListExtended.Invoke()
             .Select(kv => new GlamourerDesign(kv.Key, kv.Value.DisplayName, kv.Value.FullPath))
             .ToList();
 
-    /// Applies one of the Sub's own saved designs by id - the primary Wardrobe flow (collar/outfit).
-    /// Never locks through Glamourer's own state; SlotLockManager tracks and enforces whichever of the
-    /// design's own equipment slots (see GetDesignEquipSlots) need to stay in place afterward.
+    /// Never locks through Glamourer; SlotLockManager enforces the design's slots afterwards.
     public GlamourerApiEc ApplyDesign(System.Guid designId) =>
         applyDesign.Invoke(designId, LocalPlayerObjectIndex, 0, ApplyFlagEx.DesignDefault);
 
-    /// Reads which of the 10 lockable gear slots a design is itself configured to change
-    /// (`Equipment.<Slot>.Apply`, confirmed via decompiling `DesignBase.SerializeEquipment()`) - what
-    /// "the slots the design itself changes" means for collar/outfit's per-slot lock, independent of
-    /// whatever happens to already be equipped. Defensive against a missing/malformed shape: a slot whose
-    /// `Apply` flag can't be read is treated as not applied, never thrown.
+    /// The slots a design is configured to change (`Equipment.<Slot>.Apply`). An unreadable flag counts as not applied.
     public IReadOnlySet<ApiEquipSlot> GetDesignEquipSlots(System.Guid designId)
     {
         var design = getDesignJObject.Invoke(designId);
@@ -120,28 +102,18 @@ public sealed class GlamourerIpc : IDisposable
         return slots;
     }
 
-    /// Applies a single equipment slot with `ApplyFlag.Once` only - never locks through Glamourer's own
-    /// state. The one write path SlotLockManager uses both to establish a lock and to re-assert one that
-    /// drifted.
+    /// ApplyFlag.Once only - the one write path SlotLockManager uses.
     public GlamourerApiEc SetItemOnce(ApiEquipSlot slot, ulong itemId, IReadOnlyList<byte> stains) =>
         setItem.Invoke(LocalPlayerObjectIndex, slot, itemId, stains, 0, ApplyFlag.Once);
 
-    /// Reverts the local player to Glamourer's automation-managed state for equipment only (deliberately
-    /// excluding `Customization`, so this never touches face/body data) - what SlotLockManager.Release
-    /// uses to make a released slot pick up automation's value, immediately followed by re-asserting every
-    /// slot that wasn't part of the release (see SlotLockManager's snapshot/restore sequence).
+    /// Equipment only, never customization.
     public GlamourerApiEc RevertToAutomationEquipmentOnly() =>
         revertToAutomation.Invoke(LocalPlayerObjectIndex, 0, ApplyFlag.Equipment);
 
-    /// Reverts the local player fully (equipment and customization) to Glamourer's automation-managed
-    /// state - PanicHandler's own unconditional whole-actor revert (design.md: "Panic keeps a single,
-    /// unconditional whole-actor revert"), unlike SlotLockManager's equipment-only, snapshot/restore
-    /// release path.
+    /// Equipment and customization.
     public GlamourerApiEc RevertToAutomationFull() => revertToAutomation.Invoke(LocalPlayerObjectIndex);
 
-    /// Reads a single equipment slot out of the local player's current Glamourer state - generalizes
-    /// GetCurrentNeckItem's Neck-only lookup to any of the 10 lockable slots. Returns null on any failure
-    /// (wrong ec, unexpected JSON shape, no state available) rather than throwing.
+    /// Null on any failure rather than throwing.
     public GlamourerEquippedItem? GetEquipSlotValue(ApiEquipSlot slot)
     {
         var (ec, state) = getState.Invoke(LocalPlayerObjectIndex, 0);

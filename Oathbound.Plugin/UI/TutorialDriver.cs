@@ -4,17 +4,11 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/onboarding: one step of the guided tutorial - `TabId` must match one of `CollarWindow.NavItems`'s
-/// ids. `OwnerText`/`SubText` are each required (no silent fallback to the other Role's copy per design.md)
-/// for any tab that Role's sequence includes; a step with `OwnerText` null is skipped entirely when building
-/// the Owner sequence (see `permissions`, which is Sub-only), and likewise for `SubText`.
+/// `TabId` must match a CollarWindow nav id. A step with null text for a role is left out of that role's sequence.
 public sealed record TutorialStep(string TabId, string TabLabel, string? OwnerText, string? SubText);
 
-/// collar/onboarding: drives `CollarWindow`'s `activeModule` from outside the window itself, so the Welcome
-/// window, Settings' "Rerun Tutorial" button, and a first-ever Role switch can all start the same tutorial
-/// without `CollarWindow` needing to know about any of those three callers (design.md's "Tutorial driver
-/// lives outside CollarWindow" decision). One shared step list is filtered per Role at start time, rather
-/// than two hand-maintained lists, so the sequence can't silently drift out of sync with `NavItems`.
+/// Drives the module window from outside CollarWindow, so any caller can start a tutorial. One step list,
+/// filtered per role, so it can't drift from the nav items.
 public sealed class TutorialDriver
 {
     private static readonly List<TutorialStep> AllSteps =
@@ -65,9 +59,7 @@ public sealed class TutorialDriver
     public bool IsActive { get; private set; }
     public PairingDirection? ActiveDirection { get; private set; }
 
-    /// collar/multi-pairing: set only while chaining from the Owner tutorial into the Sub tutorial for a
-    /// Switch's first-ever Role selection (see StartIfUnseenForRole) - consumed and cleared as soon as the
-    /// chained tutorial starts.
+    /// Set only while chaining a Switch's Owner tutorial into the Sub one.
     private PairingDirection? pendingChainDirection;
 
     public TutorialStep? CurrentStep => IsActive && stepIndex < activeSteps.Count ? activeSteps[stepIndex] : null;
@@ -75,8 +67,7 @@ public sealed class TutorialDriver
     public int TotalSteps => activeSteps.Count;
     public bool IsLastStep => stepIndex >= activeSteps.Count - 1;
 
-    /// Starts (or restarts) the guided tutorial for `direction` unconditionally - used by Settings' "Rerun
-    /// Tutorial" button, which must replay regardless of whether it has already been seen.
+    /// Unconditional, for "Rerun Tutorial".
     public void Start(PairingDirection direction)
     {
         ActiveDirection = direction;
@@ -92,8 +83,6 @@ public sealed class TutorialDriver
         collarWindow.SetActiveModuleForTutorial(activeSteps[0].TabId);
     }
 
-    /// collar/onboarding "Tutorial completion is tracked independently per Role": only starts the tutorial
-    /// for `direction` if its `HasSeen*Tutorial` flag is still false.
     public void StartIfUnseen(PairingDirection direction)
     {
         var seen = direction == PairingDirection.OwnerSide ? plugin.Configuration.HasSeenOwnerTutorial : plugin.Configuration.HasSeenSubTutorial;
@@ -101,11 +90,7 @@ public sealed class TutorialDriver
             Start(direction);
     }
 
-    /// collar/onboarding "Tutorial completion is tracked independently per Role" / "First-ever switch to
-    /// Switch triggers both tutorials": the path used by the Welcome window's "Continue" action and by a
-    /// Role change elsewhere (Settings' Role combo). For Owner/Sub this is just StartIfUnseen on the
-    /// matching direction; for Switch, it starts whichever of the two tutorials is still unseen, and if
-    /// both are, chains the Sub tutorial to start automatically once the Owner one finishes or is exited.
+    /// For Switch, starts whichever tutorial is unseen; with both unseen, chains the Sub one after the Owner one.
     public void StartIfUnseenForRole(PluginRole role)
     {
         switch (role)
@@ -147,8 +132,7 @@ public sealed class TutorialDriver
         collarWindow.SetActiveModuleForTutorial(activeSteps[stepIndex].TabId);
     }
 
-    /// collar/onboarding "User can exit the tutorial early": still marks the current Role's tutorial as
-    /// seen, same as completing every step, so exiting early never leaves the tutorial re-triggering later.
+    /// Still marks the tutorial as seen, so it never re-triggers.
     public void ExitEarly() => Complete();
 
     private void Complete()

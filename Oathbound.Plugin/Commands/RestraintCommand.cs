@@ -14,11 +14,8 @@ using Glamourer.Api.Enums;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/restraints: applies a restraint device's single captured gear piece (locking exactly its one
-/// equipment slot, via SlotLockManager - same "Restraints" owner name collar/slot-locking's spec already
-/// reserves) and activates every restriction rule the device carries (via RestrictionRuleManager). Follows
-/// OutfitCommand's exact two-tier shape: Sub self-apply/release via alias, Owner force-apply/force-unlock
-/// "joker" override that locks out the Sub's own controls while active.
+/// Applies restraint devices: locks their gear slot and activates their restriction rules. Sub toggle via its word;
+/// Owner force-apply locks out the Sub's own controls while active.
 public sealed class RestraintCommand
 {
     private const string ExportPrefix = "OATHBOUND-RESTRAINT-V1|";
@@ -26,9 +23,7 @@ public sealed class RestraintCommand
     public string? LastFailureReason { get; private set; }
     private const string Owner = "Restraints";
 
-    /// Restraints supersede outfits: a restraint may take over a slot a locked outfit holds. The outfit's
-    /// piece and lock are set aside and come back when the restraint is released (SlotLockManager.TryLock).
-    /// The collar is not in this list - its Neck lock still refuses a conflicting restraint.
+    /// A restraint may take over a locked outfit's slot (restored on release). The collar's Neck lock still refuses it.
     private static readonly string[] TakesOverFrom = [OutfitCommand.SlotLockOwner];
     private const long PlayDelayMs = 500;
 
@@ -115,25 +110,18 @@ public sealed class RestraintCommand
         catch { return false; }
     }
 
-    /// Every currently-active device (Sub-applied or Owner-forced), for UI display.
     public IReadOnlySet<string> ActiveDeviceIds => activeDeviceIds;
     private readonly HashSet<string> activeDeviceIds = new();
 
-    /// Arms Cuffed/Legs Cuffed/Full Body Cuffed rules each temporarily activate their own chosen animation
-    /// mod - keyed by (device, rule kind) rather than just device, since one device can carry more than one
-    /// bound-animation rule at once (collar/restraints "Arms Cuffed and Legs Cuffed can be active
-    /// together"), each needing its own independent Penumbra temporary-activation to revert. Deliberately
-    /// separate from GestureCommand's own `activeTemporary` tracking - a restraint's held animation must
-    /// never be subject to Gesture's 30-second idle-timeout revert, and vice versa.
+    /// Keyed by (device, rule kind): one device can hold several bound animations. Kept apart from GestureCommand
+    /// so a restraint's animation is never hit by Gesture's idle-timeout revert.
     private readonly Dictionary<(string DeviceId, RestraintRuleKind Kind), (Guid Collection, string ModDirectory)> boundAnimations = new();
     private readonly Dictionary<(string DeviceId, RestraintRuleKind Kind), (GestureTrigger Trigger, long ReadyAtTicks)> pendingBoundPlays = new();
     private readonly Dictionary<string, (Guid Collection, string ModDirectory)> activeCatalogOverrides = new();
 
     public bool IsActive(string deviceId) => activeDeviceIds.Contains(deviceId);
 
-    /// A restraint's own word: a captured device's name, or a configured mod restraint's optional alias.
-    /// There is no separate restraint-alias list - the word you give a restraint when setting it up is the
-    /// word the Owner sends, both bare (toggle) and after `restraint lock` (force).
+    /// A captured device's name, or a configured mod restraint's alias - the same word bare (toggle) or after `restraint lock`.
     private RestraintDeviceDefinition? FindDeviceByWord(string word) =>
         config.RestraintMapping.Devices.Values.FirstOrDefault(d => string.Equals(d.Name.Trim(), word.Trim(), StringComparison.OrdinalIgnoreCase));
 
@@ -145,9 +133,7 @@ public sealed class RestraintCommand
 
     private static string CatalogRuntimeId(string catalogId) => $"catalog:{catalogId}";
 
-    /// Sub self-service toggle by a restraint's own word (see FindDeviceByWord): applies it if inactive,
-    /// releases it if active. Refused outright while an Owner force-lock is in effect, same as
-    /// OutfitCommand.Apply/Unlock's OutfitForceLocked check.
+    /// Refused while an Owner force-lock is in effect.
     public bool ToggleByWord(string word)
     {
         LastFailureReason = null;
@@ -186,17 +172,13 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// The Owner's direct override: matches `deviceName` against the Sub's own captured device catalog
-    /// (case-insensitive) - same lookup shape as OutfitCommand.ForceApply. Applies the device using its own
-    /// stored rules. Always force-locks. `moodleOverride` (here and on every Force* below) is the Owner's
-    /// optional `moodle:"..."` pick (collar/attached-moodles), used instead of the device's default moodle.
+    /// Always force-locks. `moodleOverride` (here and below) replaces the device's default moodle.
     public bool ForceApply(string deviceName, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
         var entry = FindDeviceByWord(deviceName);
         if (entry is null)
         {
-            // A configured mod restraint's alias works here too, using the Sub's own rules for it.
             if (FindConfiguredModByWord(deviceName) is { ItemId: { } itemId } mod && mod.Rules.Count > 0)
                 return ForceApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride, restraintLock);
             LastFailureReason = $"device \"{deviceName}\" was not found";
@@ -210,10 +192,7 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// Applies a Sub-authored Custom Trigger's restraint action by its stable captured-device identity.
-    /// A Custom Trigger is still an Owner command, so this deliberately does not use Toggle (which is
-    /// Sub self-service and is refused after an Owner force-lock). Multiple calls from the same bundle may
-    /// therefore add multiple compatible devices before leaving the category force-locked.
+    /// A Custom Trigger is an Owner command, so this doesn't use the Sub's Toggle (refused while force-locked).
     public bool ForceApplyById(string deviceId, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
@@ -223,8 +202,7 @@ public sealed class RestraintCommand
             return false;
         }
 
-        // Re-running an apply-only bundle is idempotent: do not toggle an active device back off or try to
-        // acquire its already-held restriction claims again.
+        // Idempotent: don't toggle an active device back off.
         if (activeDeviceIds.Contains(deviceId))
         {
             Replay(deviceId, device.Rules);
@@ -239,10 +217,7 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// The Owner's rule-carrying override (collar/restraints "Owner force-apply and force-release
-    /// override"): matches `deviceName` against every captured device, and activates exactly the rules the
-    /// Owner assigned to their quick command, ignoring whatever rules the Sub may have separately assigned
-    /// to that same device.
+    /// Activates exactly the Owner's rules, ignoring the Sub's own rules for that device.
     public bool ForceApply(string deviceName, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         var captured = config.RestraintMapping.Devices.Values
@@ -269,11 +244,7 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// The Owner's ad-hoc override (collar/restraints "Owner-authored ad-hoc restraint device"): the Owner
-    /// picked `slot`/`itemId` directly, with no Sub-side captured device to look up by name. The runtime
-    /// device id is derived deterministically from slot+item (design.md's "Ad-hoc device identity") rather
-    /// than a stored `RestraintDeviceDefinition.Id`, so conflict tracking and release work exactly like a
-    /// name-referenced device without needing one to exist in the Sub's own catalog.
+    /// The device id is derived from slot+item, so release/conflict tracking works without a Sub-side device.
     public bool ForceApplyAdHoc(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         var device = new RestraintDeviceDefinition
@@ -287,7 +258,7 @@ public sealed class RestraintCommand
             Rules = rules,
         };
 
-        // No Sub-side device behind an ad-hoc apply, so no default moodle - only an Owner override applies.
+        // No Sub-side device behind an ad-hoc apply, so only an Owner moodle override applies.
         if (!ApplyDevice(device.Id, device, moodleOverride))
             return false;
 
@@ -300,7 +271,7 @@ public sealed class RestraintCommand
         if (activeCatalogOverrides.ContainsKey(CatalogRuntimeId(catalogId)))
         {
             Replay(CatalogRuntimeId(catalogId), rules);
-            // Re-sending an already-worn restraint still counts as applied, so it (re)sets the lock too.
+            // Re-sending an already-worn restraint still (re)sets the lock.
             EngageLock(restraintLock);
             return true;
         }
@@ -310,8 +281,7 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// Applies a shared Penumbra restraint mod without touching the force-lock - ForceApplyCatalog adds that
-    /// for Owner commands; the Sub's own toggle (ToggleByWord) uses this directly.
+    /// No force-lock here; ForceApplyCatalog adds it for Owner commands.
     private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride)
     {
         LastFailureReason = null;
@@ -397,28 +367,22 @@ public sealed class RestraintCommand
             chatGagService.ApplyCustomizePreset(runtimeId, rule.CustomizePresetId);
         activeDeviceIds.Add(runtimeId);
 
-        // The Sub's default comes from the configured mod restraint this catalog entry+item corresponds to.
         var configured = config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId);
         moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(runtimeId), configured?.AttachedMoodle, moodleOverride);
         slotLocks.VerifySoon();
         return true;
     }
 
-    /// collar/restraint-lock-timer "The most recent lock command sets the lock": called only after an Owner
-    /// command actually applied, so a refused command leaves the existing lock (and its timer) untouched.
+    /// Only called after an Owner command actually applied, so a refused command leaves the lock untouched.
     private void EngageLock(RestraintLock restraintLock)
     {
         runtimeState.RestraintsForceLocked = true;
         runtimeState.RestraintsLockExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
     }
 
-    /// The only thing that can release every Owner-forced device besides panic.
     public bool ForceUnlock()
     {
-        // This is a safety teardown, not an ordinary per-device toggle. Slot locks survive reloads in
-        // config, while activeDeviceIds and restriction claims deliberately do not; relying only on the
-        // latter made an Owner unlock falsely report success while leaving persisted Glamourer gear in
-        // place. Release each layer independently and unconditionally so partial/stale state heals too.
+        // Slot locks survive reloads but device/claim bookkeeping doesn't, so release every layer unconditionally.
         var hadRestraints = activeDeviceIds.Count > 0 || boundAnimations.Count > 0 || activeCatalogOverrides.Count > 0 || runtimeState.RestraintsForceLocked;
         restrictionRules.ReleaseAllForPanic();
         ReleaseAllBoundAnimationsForPanic();
@@ -429,14 +393,10 @@ public sealed class RestraintCommand
         return gearReleased || hadRestraints;
     }
 
-    /// Advances delayed bound-animation triggers after Penumbra's redraw has settled. Playing the emote
-    /// immediately after requesting redraw races the character rebuild and commonly results in no visible
-    /// animation; GestureCommand uses the same framework-thread delay for this reason.
+    /// Plays bound animations after Penumbra's redraw settles; playing immediately races the rebuild.
     public void OnFrameworkUpdate()
     {
-        // collar/restraint-lock-timer "Timed lock expiry releases restraints": exactly `restraint unlock`'s
-        // teardown, deferred until the character can actually be changed (logged in, not mid zone-change) -
-        // including an end time that passed while the plugin wasn't even loaded.
+        // Deferred until the character can be changed, including an end time that passed while unloaded.
         if (runtimeState.RestraintsForceLocked
             && runtimeState.RestraintsLockExpiresAtUtc is { } expiresAt
             && DateTime.UtcNow >= expiresAt
@@ -458,11 +418,7 @@ public sealed class RestraintCommand
         }
     }
 
-    /// Applies a device's single captured gear piece (locking its one equipment slot, via SlotLockManager -
-    /// refused if that slot is already locked by a different owner) and activates every rule it carries
-    /// (via RestrictionRuleManager - refused if a rule conflicts with an already-active one). Both checks
-    /// run before anything is applied, and both must pass, so a refused apply never leaves a partial visual
-    /// or rule change behind - same "refuse the whole action" guarantee OutfitCommand.ApplyDesign gives.
+    /// Both the slot and rule checks run before anything applies, so a refused apply leaves nothing partial.
     private unsafe bool ApplyDevice(string deviceId, RestraintDeviceDefinition device, string? moodleOverride = null)
     {
         var hasGear = device.Slot is not null && device.ItemId is not null;
@@ -546,9 +502,7 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// One-shot: places the character into the configured pose via the game's own pose-set + emote command,
-    /// the same mechanism GestureCommand.Play uses for a gesture's tied trigger. Distinct from the ongoing
-    /// movement suppression MovementLockEnforcer provides - this only fires once, at apply time.
+    /// One-shot pose at apply time.
     private static unsafe void ApplyPose(int poseModeId)
     {
         var playerState = PlayerState.Instance();
@@ -566,9 +520,7 @@ public sealed class RestraintCommand
         GestureCommand.SendPoseCommand(poseModeId);
     }
 
-    /// An Owner re-sending a restraint that's already on: nothing is re-acquired, but its pose and bound
-    /// animations play again - so a Sub who stood up, sat down or changed pose in the meantime is put back
-    /// in the restraint's position instead of the re-send silently doing nothing.
+    /// Re-sent while already on: replay its pose/animations so the Sub is put back in position.
     private void Replay(string deviceId, IEnumerable<RestraintRuleAssignment> rules)
     {
         var ruleList = rules.ToList();
@@ -585,14 +537,7 @@ public sealed class RestraintCommand
         }
     }
 
-    /// collar/restraints "Arms Cuffed and Legs Cuffed rules lock the Sub into a chosen bound animation":
-    /// temporarily activates the rule's chosen animation's mod/options (the same Penumbra call
-    /// GestureCommand.Execute uses) and plays its tied trigger once - a pose trigger then holds naturally
-    /// (the game's own idle-pose persists until changed), a slash-emote trigger plays once. Tracked
-    /// separately per (device, rule kind) in `boundAnimations` so it is never subject to Gesture's own
-    /// idle-timeout revert, and reverted explicitly in ReleaseDevice/ReleaseAllBoundAnimationsForPanic
-    /// instead. Silently does nothing if the animation is missing, stale, or Penumbra is unavailable - the
-    /// device still applies its other rules/slot lock even if the bound animation can't engage.
+    /// Silently does nothing if the animation is missing or stale; the device's other rules still apply.
     private GestureCatalogEntry? ResolveAnimation(string? selector)
     {
         if (string.IsNullOrWhiteSpace(selector)) return null;
@@ -600,10 +545,7 @@ public sealed class RestraintCommand
         if (resolved is not null)
             return resolved;
 
-        // The current restraint wire format uses commas between rules, so BuildLockCommand escaped
-        // commas inside readable animation labels as a middle dot. Restore that presentation escape
-        // before local catalog resolution. Without this, real options such as
-        // "Get Cuffed (Gsit2,idle,walk)" arrive as "Gsit2·idle·walk" and always fail preflight.
+        // Restraint rules are comma-separated, so commas in animation labels travel as a middle dot - restore them.
         return selector.Contains('·')
             ? CommandSelector.ResolveGestureDetailed(config.GestureMapping.LocalCatalog.Values, selector.Replace('·', ','), requireTrigger: false).Entry
             : null;
@@ -653,11 +595,7 @@ public sealed class RestraintCommand
             Plugin.Log.Warning($"Restraint release for '{deviceId}' removed temporary animation settings, but the Penumbra redraw failed; a manual redraw may be required.");
     }
 
-    /// collar/restraints "Panic releases every active restriction rule": reverts every currently-held bound
-    /// animation regardless of which device engaged it, and drops the (by then already-stale) active-device
-    /// bookkeeping - mirrors RestrictionRuleManager.ReleaseAllForPanic's "drop bookkeeping unconditionally"
-    /// shape, since Panic's own SlotLockManager/RestrictionRuleManager steps already tear down everything
-    /// else this class doesn't own.
+    /// Drops the device bookkeeping too; panic's other steps tear down slots and rules.
     public void ReleaseAllBoundAnimationsForPanic()
     {
         var removedAny = false;
@@ -684,9 +622,7 @@ public sealed class RestraintCommand
         if (removed) penumbra.TryRedrawLocalPlayer();
     }
 
-    /// collar/custom-triggers "Revert custom triggers": releases just these devices (each with its own rules,
-    /// animations, moodle and mod setting), leaving any other active restraint on. Once nothing is left
-    /// active, the Owner's force-lock (and any timer) goes too, since there's nothing left for it to hold.
+    /// Once nothing is left active, the Owner's force-lock and timer go too.
     public void ReleaseDevices(IEnumerable<string> deviceIds)
     {
         foreach (var deviceId in deviceIds.ToList())
@@ -704,23 +640,16 @@ public sealed class RestraintCommand
         chatGagService.RevertCustomizePreset(deviceId);
         moodles.Ledger.Release(AttachedMoodleLedger.RestraintSource(deviceId));
 
-        // A shared Penumbra restraint (toggled off by its alias) also holds a temporary mod setting.
         if (activeCatalogOverrides.Remove(deviceId, out var catalogOverride)
             && temporarySettings.Release(deviceId, catalogOverride.Collection, catalogOverride.ModDirectory))
             penumbra.TryRedrawLocalPlayer();
 
-        // Only release the shared "Restraints" slot lock once no other active device still needs it -
-        // SlotLockManager.Release tears down every slot the owner holds, so this must wait until the last
-        // active device releases, mirroring RestrictionRuleManager's own refcounting.
+        // SlotLockManager.Release drops every slot the owner holds, so wait for the last device.
         if (activeDeviceIds.Count == 0)
             slotLocks.Release(Owner);
     }
 
-    /// Sub-side: captures a new restraint device from an optional slot+item picked in `ItemPickerWindow`
-    /// (mod-filtered - collar/restraints "Restraint device captured from a single equipped gear piece"),
-    /// or from rules alone with no gear at all. Undyed (stain 0/0) - no dye picker in this flow yet
-    /// (design.md's Non-Goals). Never touches live Glamourer state; the item does not need to be currently
-    /// equipped or owned. Refuses to save a device with neither gear nor a rule - it would do nothing.
+    /// Undyed. Refuses a device with neither gear nor a rule.
     public bool CaptureDeviceFromItem(ApiEquipSlot? slot, ulong? itemId, string name, List<RestraintRuleAssignment> rules, AttachedMoodleRef? attachedMoodle = null)
     {
         if (slot is null && itemId is null && rules.Count == 0)
@@ -751,21 +680,14 @@ public sealed class RestraintCommand
 
     private const string RulesToken = "rules:";
 
-    /// Builds the chat text for an Owner's rule-carrying restraint quick command: the device name always
-    /// quoted (so TryParseLockCommand can find where it ends) followed by a `rules:` token listing every
-    /// assigned rule. An older paired Sub client that doesn't understand this suffix still sees a quoted
-    /// name it won't match against its own unquoted device names, so it fails closed (no action) rather
-    /// than applying the wrong rules - see design.md's "additive, gracefully-degrading payload" decision.
+    /// The name is always quoted so the parser finds where it ends; an older Sub fails closed on it.
     public static string BuildLockCommand(string deviceName, List<RestraintRuleAssignment> rules)
     {
         var tokens = rules.SelectMany(RuleTokens);
         return $"restraint lock \"{deviceName}\" {RulesToken}{string.Join(',', tokens)}";
     }
 
-    /// One rule assignment maps to one wire token for every kind except Gagged, which emits a `gagged`
-    /// token (optionally carrying its animation) plus, only when a Customize+ preset is configured, a
-    /// second `gagcplus` token - always emitted immediately after `gagged` so ParseRuleTokens can attach
-    /// it to the Gagged rule it just added without needing token order to be otherwise significant.
+    /// Gagged may emit a second `gagcplus` token, always right after `gagged`.
     private static IEnumerable<string> RuleTokens(RestraintRuleAssignment r)
     {
         switch (r.Kind)
@@ -796,8 +718,7 @@ public sealed class RestraintCommand
         }
     }
 
-    /// Just the rule token list (what follows `rules:`), shared with CustomTriggerCommand's self-contained
-    /// `cast` restraint segment so both encode rules identically.
+    /// Shared with CustomTriggerCommand so both encode rules identically.
     public static string EncodeRuleTokens(List<RestraintRuleAssignment> rules) => string.Join(',', rules.SelectMany(RuleTokens));
     public static List<RestraintRuleAssignment> DecodeRuleTokens(string tokens) => ParseRuleTokens(tokens);
 
@@ -831,10 +752,7 @@ public sealed class RestraintCommand
         return rules.Count > 0;
     }
 
-    /// Parses the remainder of a `restraint lock ...` command (after the "lock " prefix) into a device
-    /// name and, if present, the Owner-assigned rules carried in a `rules:` suffix. A legacy plain/unquoted
-    /// name (no quotes, no rule suffix) parses as before - the whole remainder is the name, rules null -
-    /// preserving the pre-existing Sub-tag lookup path for hand-typed overrides and stale saved commands.
+    /// A legacy unquoted name with no rules parses as the whole remainder.
     public static bool TryParseLockCommand(string remainder, out string deviceName, out List<RestraintRuleAssignment>? rules)
     {
         rules = null;
@@ -861,16 +779,10 @@ public sealed class RestraintCommand
         return deviceName.Length > 0;
     }
 
-    /// A literal placeholder for the `restraint wear` verb's fixed slot/item positional tokens when the
-    /// ad-hoc device carries no gear - see design.md's "Wire format" decision. Keeps token count and order
-    /// fixed rather than making the slot/item tokens' presence variable.
+    /// Keeps the slot/item positions fixed when the ad-hoc device has no gear.
     private const string NoGearToken = "-";
 
-    /// Builds the chat text for an Owner-authored ad-hoc restraint device (collar/restraints "Owner-
-    /// authored ad-hoc restraint device"): carries the full slot/item/label/rules definition inline, since
-    /// there is no Sub-side name to look up - see design.md's "Wire grammar" decision for why this is a
-    /// separate sub-verb (`wear`) rather than an extension of `lock`'s name-lookup shape. Slot/item are
-    /// optional - a rules-only ad-hoc device emits `NoGearToken` for both positions.
+    /// Carries the full definition inline, since there's no Sub-side name to look up.
     public static string BuildWearCommand(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules)
     {
         var tokens = rules.SelectMany(RuleTokens);
@@ -880,13 +792,7 @@ public sealed class RestraintCommand
         return $"restraint wear {slotText} {itemText} \"{label}\" {RulesToken}{string.Join(',', tokens)}";
     }
 
-    /// Parses the remainder of a `restraint wear ...` command (after the "wear " prefix) into an optional
-    /// slot, optional item id, label, and Owner-assigned rules. Fails closed (returns false) on any
-    /// malformed segment - an ad-hoc device with neither gear nor rules is meaningless (nothing would
-    /// activate), so this never silently applies a bare gear swap. A `NoGearToken` ("-") in either the slot
-    /// or item position means "no gear" - both positions are always present on the wire, only their values
-    /// vary, so an older parser attempting `ulong.TryParse("-", ...)` on an unrecognized token fails closed
-    /// rather than misapplying (design.md's "Risks/Trade-offs" - this is the one BREAKING wire edge).
+    /// Fails closed on any malformed segment, and on a device with neither gear nor rules.
     public static bool TryParseWearCommand(string remainder, out ApiEquipSlot? slot, out ulong? itemId, out string label, out List<RestraintRuleAssignment> rules)
     {
         slot = null;
@@ -968,21 +874,13 @@ public sealed class RestraintCommand
         return rules;
     }
 
-    /// The animation as it travels on the wire: its catalog id when known, the readable label only as a
-    /// fallback. The id is a stable hash of the Sub's own scan and is resolved first on the Sub's side; a
-    /// label built from the Owner's imported copy of the catalog stops matching once that copy is stale, and
-    /// can match several entries of the same animation - both refused as "missing, stale, or ambiguous".
-    /// A rule with neither (an unfinished editor draft) yields an empty value, which the Sub refuses the
-    /// same way, rather than throwing mid-draw.
+    /// Prefer the catalog id (stable on the Sub's side) over the label, which can go stale or be ambiguous.
     private static string ReadableAnimation(RestraintRuleAssignment rule) =>
         (string.IsNullOrWhiteSpace(rule.AnimationId) ? rule.AnimationLabel : rule.AnimationId)?.Replace(',', '·') ?? "";
 
     private static string ReadableCustomizePreset(RestraintRuleAssignment rule) =>
         (string.IsNullOrWhiteSpace(rule.CustomizePresetLabel) ? rule.CustomizePresetId : rule.CustomizePresetLabel)!.Replace(',', '·');
 
-    /// collar/catalog-sync: every captured device's display name, deduplicated - same plain-name export
-    /// shape OutfitCommand/MoodlesCommand provide, since a restraint device is identified by name alone
-    /// for Owner purposes (ChatCommandListener's `restraint lock <name>` grammar).
     public IReadOnlyList<string> ExportNames() =>
         config.RestraintMapping.Devices.Values.Select(d => d.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();

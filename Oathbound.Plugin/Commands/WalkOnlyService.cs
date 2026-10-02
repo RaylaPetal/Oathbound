@@ -3,12 +3,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/restraints: the walk-only restriction rule. Unlike MovementLockService (which hooks the game's
-/// input-polling functions), forcing walk-only needs no signature hook at all - `Control.Instance()->
-/// IsWalking` is a plain, directly-writable FFXIVClientStructs field (the same one GagSpeak's own
-/// MovementController.ForceWalking sets), so this is just a per-frame poll-and-correct, run from
-/// Plugin.OnFrameworkUpdate alongside GestureCommand's own per-frame work. Directional movement input
-/// itself is untouched - only the walk/run state is forced, so the Sub still moves, just never runs.
+/// The walk-only rule: re-forces Control.IsWalking every frame. No hook needed; directional input is untouched.
 public sealed class WalkOnlyService : IRestrictionEnforcer
 {
     private bool active;

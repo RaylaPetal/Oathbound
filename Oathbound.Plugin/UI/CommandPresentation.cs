@@ -30,13 +30,10 @@ public static class CommandPresentation
         _ => "Unknown rule",
     };
 
-    /// Option names that say nothing on their own - Penumbra mods commonly name a group after the animation
-    /// and give it plain "Enable"/"Disabled" options, so the group is the real name in that case.
+    /// Mods often name the group after the animation and give it plain "Enable"/"Disabled" options.
     private static readonly string[] GenericOptionNames = ["enable", "enabled", "disable", "disabled", "on", "off", "yes", "no", "none", "default"];
 
-    /// The name a person recognizes an animation option by: its group when the option itself is generic
-    /// ("313. [Mittens] - Deep Plaps" rather than "Enable"), otherwise "Group · Option" (or just the option
-    /// when the group is empty or the same text).
+    /// The group when the option name is generic, otherwise "Group - Option".
     public static string AnimationDisplayName(string groupName, string animationName)
     {
         var group = groupName.Trim();

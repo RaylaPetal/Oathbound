@@ -5,13 +5,8 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/status-indicators: the Owner's estimate of each commanded Sub's gagged/restrained/leashed state,
-/// built from the commands this client itself sent - same shape as OwnerToyStatusTracker, for the same
-/// reason: almost nothing about the Sub's state travels back over the wire. The one exception is the leash:
-/// the Sub's client sends a leash-off notice when its leash ends on its side (collar/leash), which
-/// ChatCommandListener applies through MarkUnleashed. Otherwise this can't see the Sub's panic, the Sub's own
-/// alias releases, or a command the Sub's client refused; the UI says so and offers Clear.
-/// In-memory only - it starts empty on every load, and never sends anything.
+/// The Owner's estimate of each Sub's gagged/restrained/leashed state, built from the commands this client sent.
+/// The only state that comes back is the Sub's leash-off notice. In-memory only; never sends anything.
 public sealed class OwnerStatusEstimateTracker : IDisposable
 {
     private readonly PluginConfig config;
@@ -25,8 +20,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         sender.Sent += OnSent;
     }
 
-    /// The estimate for one Owner-side pairing, or null if nothing is estimated active. Drops estimates for
-    /// pairings that ended, and clears a timed restraint whose end time has passed.
+    /// Null if nothing is estimated active. Drops ended pairings and expired timed restraints.
     public OwnerStatusEstimate? For(PairingState pairing)
     {
         if (!estimates.TryGetValue(pairing.Id, out var estimate))
@@ -44,12 +38,9 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
     public OwnerStatusEstimate? ForActivePairing =>
         config.GetActivePairing() is { Direction: PairingDirection.OwnerSide } pairing ? For(pairing) : null;
 
-    /// The Owner's manual "Clear estimate" (spec: "The Owner can see and clear a stale estimate").
     public void Clear(Guid pairingId) => estimates.Remove(pairingId);
 
-    /// collar/leash-travel "Owner's client skips places the leash can't follow" (the Sub's leash will time
-    /// out) and collar/leash's leash-off notice (the Sub's leash already ended). Returns whether the estimate
-    /// showed the Sub leashed until now.
+    /// Returns whether the estimate showed the Sub leashed until now.
     public bool MarkUnleashed(Guid pairingId)
     {
         if (!estimates.TryGetValue(pairingId, out var estimate) || !estimate.Leashed)
@@ -60,7 +51,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
 
     private void OnSent(string text)
     {
-        // Same attribution as ChatComposer.Wrap and OwnerToyStatusTracker: a command goes to the active pairing.
+        // A command goes to the active pairing, same as ChatComposer.Wrap.
         if (config.GetActivePairing() is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
         if (StripEnvelope(text, pairing) is not { Length: > 0 } body) return;
 
@@ -69,8 +60,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         Apply(estimate, body);
     }
 
-    /// Removes the channel prefix (`/tell Name@World `, `/p `, ...) and the trigger phrase, leaving the
-    /// command body exactly as ChatComposer.Wrap received it.
+    /// Leaves the command body exactly as ChatComposer.Wrap received it.
     private string? StripEnvelope(string text, PairingState pairing)
     {
         var rest = text.TrimStart();
@@ -92,7 +82,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         return space < 0 ? "" : s[(space + 1)..].TrimStart();
     }
 
-    /// A tell target is `Name Surname@World` - it contains a space, so skip past the peer's own address.
+    /// The tell target contains a space, so skip past the peer's whole address.
     private static string SkipTellTarget(string s, PairingState pairing)
     {
         var address = $"{pairing.PeerName}@{pairing.PeerWorld}";
@@ -108,11 +98,10 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         switch (word.ToLowerInvariant())
         {
             case ControlWords.Leash when rest.StartsWith(ChatComposer.LeashTravelWord + " ", StringComparison.OrdinalIgnoreCase):
-                // collar/leash-travel: the automatic follow-me, not a new leash - and it may be addressed to a
-                // pairing other than the active one this attribution assumes.
+                // Leash travel isn't a new leash, and may be addressed to a pairing other than the active one.
                 break;
             case ControlWords.Leash:
-                // collar/leash "Leash line drawn at the leash length": the length the Owner sent, 3 when bare.
+                // 3 when bare.
                 LengthOption.Strip(MoodleOption.Strip(rest, out _), out var length);
                 estimate.Leashed = true;
                 estimate.LeashLength = length ?? LengthOption.DefaultYalms;
@@ -162,8 +151,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         estimate.MarkRestrained(rules, restraintLock);
     }
 
-    /// Each part of a (possibly split) bundle arrives as its own message; every restraint action in it marks
-    /// the Sub restrained. Bundles carry no leash action (CustomTriggerActionKind has none).
+    /// Each part of a split bundle arrives separately. Bundles carry no leash action.
     private void ApplyCustomTrigger(OwnerStatusEstimate estimate, string rest)
     {
         rest = LockTimerOption.Strip(rest, out var restraintLock).TrimStart();
@@ -175,9 +163,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
             estimate.MarkRestrained(action.RestraintRules ?? KnownRulesFor(action.RestraintDeviceName), restraintLock);
     }
 
-    /// A `restraint lock <name>` without inline rules uses the Sub's own device rules; the Owner only knows
-    /// them if a saved restraint quick command of that name carries them. Unknown means "restrained, not
-    /// known to be gagged".
+    /// The Owner only knows the rules if a saved quick command of that name carries them.
     private List<RestraintRuleAssignment>? KnownRulesFor(string? deviceName) =>
         deviceName is null ? null : config.QuickCommands.Restraints
             .FirstOrDefault(c => c.RestraintRules is { Count: > 0 } && string.Equals(c.Label, deviceName, StringComparison.OrdinalIgnoreCase))
@@ -193,8 +179,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
     public void Dispose() => sender.Sent -= OnSent;
 }
 
-/// One Owner-side pairing's estimate. `RestrainedUntilUtc` is set by a timed (`lockfor:`) restraint command;
-/// a later Permanent one clears it - the same "latest lock wins" rule the Sub applies.
+/// A later Permanent lock clears RestrainedUntilUtc - latest lock wins, as on the Sub.
 public sealed class OwnerStatusEstimate
 {
     public bool Gagged { get; internal set; }

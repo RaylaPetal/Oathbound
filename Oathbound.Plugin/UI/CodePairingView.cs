@@ -7,9 +7,7 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/pairing: Settings' "pair with a code" controls - create and share a code, or enter one - and the
-/// in-between states (waiting for someone to enter it, confirm the character who did, waiting for the
-/// inviter to confirm). All state lives in CodePairingService; this only draws it.
+/// All state lives in CodePairingService; this only draws it.
 public sealed class CodePairingView
 {
     private readonly Plugin plugin;

@@ -7,19 +7,16 @@ using Oathbound.Plugin.Ipc;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/teleport: where the Owner is, as carried in the `teleport` tell. `Ward` is 1-based and 0 outside a
-/// residential district; `Instance` is 0 when the zone isn't split into instances.
+/// `Ward` is 1-based, 0 outside a residential district; `Instance` is 0 when the zone isn't split.
 public sealed record TeleportTarget(string World, uint Territory, int Instance, int Ward, bool Subdivision, Vector3 Position)
 {
     public bool IsHousingWard => Ward > 0;
 
-    /// design.md D1: `world:"<name>" terr:<u32> inst:<0-9> ward:<0-30> sub:<0|1> pos:<x>,<y>,<z>` - one fixed
-    /// token order, invariant culture, one decimal place.
+    /// `world:"<name>" terr:<u32> inst:<0-9> ward:<0-30> sub:<0|1> pos:<x>,<y>,<z>` - fixed order, invariant culture.
     public string ToPayload() => string.Create(CultureInfo.InvariantCulture,
         $"world:\"{World.Trim()}\" terr:{Territory} inst:{Instance} ward:{Ward} sub:{(Subdivision ? 1 : 0)} pos:{Position.X:0.0},{Position.Y:0.0},{Position.Z:0.0}");
 
-    /// Strict inverse of ToPayload: every token required, in order. Anything else - including the older
-    /// `world:"..." shard:<id>` form - is rejected so an old Owner's command fails closed with a reason.
+    /// Strict: every token required, in order, so an older Owner's form fails closed with a reason.
     public static bool TryParse(string rest, out TeleportTarget target)
     {
         target = null!;
@@ -68,17 +65,14 @@ public sealed record TeleportTarget(string World, uint Territory, int Instance, 
     }
 }
 
-/// collar/teleport: game-data lookups the Sub's journey needs - which aetheryte to teleport to, and how a
-/// residential district maps onto Lifestream's housing travel. Pure reads; never moves anything.
+/// Game-data lookups for the Sub's journey. Read-only.
 public static class TeleportDestinations
 {
-    /// TerritoryIntendedUse values (ECommons' TerritoryIntendedUseEnum): 13 = outdoor residential district,
-    /// 14 = housing interiors (houses, apartments, their lobbies).
+    /// TerritoryIntendedUse: 13 = outdoor residential district, 14 = housing interiors.
     private const uint ResidentialAreaUse = 13;
     private const uint HousingInteriorUse = 14;
 
-    /// Lifestream's ResidentialAetheryteKind values paired with the district names its
-    /// ParseResidentialAetheryteKind accepts (design.md D12).
+    /// Lifestream's ResidentialAetheryteKind values with the district names its parser accepts.
     private static readonly (int Kind, string Name)[] Districts =
     [
         (8, "Mist"),
@@ -94,15 +88,13 @@ public static class TeleportDestinations
 
     public static bool IsResidentialArea(uint territory) => IntendedUse(territory) == ResidentialAreaUse;
 
-    /// collar/leash-travel: inn rooms are private instances nobody else can be brought into.
+    /// Private instances nobody else can be brought into.
     public static bool IsInnRoom(uint territory) => IntendedUse(territory) == (uint)ECommons.ExcelServices.TerritoryIntendedUseEnum.Inn;
 
     private static uint? IntendedUse(uint territory) =>
         Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.TerritoryIntendedUse.RowId;
 
-    /// design.md D3: the Sub's own attuned aetheryte in `territory` nearest `ownerPosition`, or null. Positions
-    /// come from the aetheryte's Level row, falling back to its map marker. Distance is compared on the
-    /// ground plane (X/Z), since a map marker carries no height.
+    /// Null if none. Compared on the ground plane, since a map marker has no height.
     public static (uint AetheryteId, float Distance)? FindNearestAttunedAetheryte(uint territory, Vector3 ownerPosition)
     {
         (uint, float)? best = null;
@@ -133,7 +125,7 @@ public static class TeleportDestinations
         if (level.RowId != 0 && level.ValueNullable is { } lv)
             return new Vector2(lv.X, lv.Z);
 
-        // MapMarker fallback: marker coordinates are 0..2048 texture pixels on the aetheryte's map.
+        // Marker coordinates are 0..2048 texture pixels on the aetheryte's map.
         if (row.Map.ValueNullable is not { } map)
             return null;
         var markers = Plugin.DataManager.GetSubrowExcelSheet<Lumina.Excel.Sheets.MapMarker>();
@@ -150,8 +142,7 @@ public static class TeleportDestinations
         return null;
     }
 
-    /// Maps a residential district's territory to the name Lifestream's address parser accepts, by asking
-    /// Lifestream itself which territory each district kind is - no territory ids hardcoded here.
+    /// Asks Lifestream which territory each district is, so no ids are hardcoded.
     public static string? FindDistrictName(LifestreamIpc lifestream, uint territory)
     {
         foreach (var (kind, name) in Districts)
@@ -160,8 +151,7 @@ public static class TeleportDestinations
         return null;
     }
 
-    /// The 1-based address-book plot (1-30 main division, 31-60 subdivision) whose entrance is nearest the
-    /// Owner, or null when Lifestream has no plot data for this district.
+    /// 1-30 main division, 31-60 subdivision. Null when Lifestream has no plot data.
     public static int? FindNearestPlot(LifestreamIpc lifestream, uint territory, bool subdivision, Vector3 ownerPosition)
     {
         var first = subdivision ? PlotsPerDivision : 0;
@@ -180,7 +170,7 @@ public static class TeleportDestinations
         return best;
     }
 
-    /// Current 1-based ward and division, or null when not in a residential district.
+    /// Null when not in a residential district.
     public static unsafe (int Ward, bool Subdivision)? CurrentWard()
     {
         var housing = HousingManager.Instance();

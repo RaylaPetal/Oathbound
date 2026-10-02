@@ -14,13 +14,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// Role, pairing identity, trigger phrase, scan scopes, and scanning live here - the "infrastructure"
-/// side of setup, shared regardless of which alias you're about to define. What each alias actually maps
-/// to (title text, which scanned design/animation, follow words) lives in CollarWindow's own Title/Outfit/
-/// Animation/Collar tabs instead. Safeword configuration stays in the always-visible character header.
-/// Everything here stays
-/// visible regardless of Role, same as CollarWindow's tabs - you can scan/configure before ever flipping
-/// to Sub. Opened via the plugin installer's gear icon (OpenConfigUi) and the `/oathboundsettings` command.
+/// Role, pairing, trigger phrase, permissions and acknowledgements. Visible regardless of Role.
 public class SettingsWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -30,8 +24,7 @@ public class SettingsWindow : Window, IDisposable
     private bool sendingInvitation;
     private bool acceptingInvitation;
 
-    /// collar/multi-pairing: only meaningful for Switch, which can send an invite establishing either
-    /// direction - true invites as the Owner-side (commanding a prospective Sub), false as the Sub-side.
+    /// Only meaningful for Switch: true invites as the Owner-side.
     private bool inviteAsOwnerSide = true;
     private bool confirmingIdentityReset;
     private Guid? confirmingUnpairId;
@@ -40,22 +33,15 @@ public class SettingsWindow : Window, IDisposable
     private string testCommandInput = "";
     private int testCustomTriggerIndex;
 
-    /// Transient, session-only per-action local Test feedback (collar/ui-organization) - see
-    /// CollarWindow's matching field for the rest of the Test controls; Moodles' only lives here since it
-    /// has no Sub-facing module of its own. Each entry auto-clears a short time after being shown (see
-    /// DrawTestButton).
+    /// Session-only test feedback; each entry auto-clears shortly after being shown.
     private readonly Dictionary<string, (LocalTestResult Result, long ShownAtTicks)> testResults = new();
 
-    /// How long a local Test control's result stays visible before auto-clearing (collar/ui-organization).
     private const long TestResultDisplayMs = 4_000;
 
     private static readonly string[] RoleNames = ["Sub", "Owner", "Switch"];
 
     public SettingsWindow(Plugin plugin) : base("Oathbound - Settings###CollarSettingsWindow")
     {
-        // Raised from the original 480: Scan & Export (collar/catalog-sync) now stacks four scan sections
-        // in the window's own scroll region instead of its own nested one - a taller default minimum means
-        // less scrolling to reach it and everything below (ToS card) in the common case.
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(460, 700), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
         this.plugin = plugin;
         codePairingView = new CodePairingView(plugin);
@@ -66,8 +52,6 @@ public class SettingsWindow : Window, IDisposable
 
     private bool selectPermissionsTab;
 
-    /// Opens Settings on its Permissions tab - the tutorial's Permissions step, and anything else that used
-    /// to open the old Permissions navigation destination.
     public void ShowPermissionsTab()
     {
         selectPermissionsTab = true;
@@ -81,13 +65,10 @@ public class SettingsWindow : Window, IDisposable
         triggerPhraseInput = config.TriggerPhrase;
     }
 
-    /// Shared purple window chrome (Theme.PushWindowStyle) - pushed before Begin, popped after End.
     public override void PreDraw() => Theme.PushWindowStyle();
     public override void PostDraw() => Theme.PopWindowStyle();
 
-    /// collar/ui-organization "Settings shows a dependency status header" (design.md D15): its own card above
-    /// the tab bar, so it's on every tab and matches the other Settings cards. One wrapped chip per dependency
-    /// - green detected, red missing - with the exact state and what it's for in the tooltip.
+    /// One chip per dependency, with its exact state in the tooltip.
     private void DrawDependencyHeader()
     {
         var status = plugin.DependencyStatus;
@@ -126,13 +107,6 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// Split into tabs (previously one long vertically-stacked flow) once this window's growth made it too
-    /// tall to comfortably navigate in one scroll region - each tab now scrolls independently within the
-    /// window's remaining space. Grouped by what they're for, not just by prior visual order: Identity &
-    /// Pairing is setup you do once; ToS bundles every risk acknowledgement; Test holds the one local
-    /// testing tool on its own, so it's reachable without scrolling past every acknowledgement. Scanning itself moved to the main window's Sync tab
-    /// (collar/ui-organization) - it's catalog upkeep, grouped with the rest of catalog sync now rather
-    /// than living here.
     public override void Draw()
     {
         var config = plugin.Configuration;
@@ -143,7 +117,6 @@ public class SettingsWindow : Window, IDisposable
         if (!ImGui.BeginTabBar("settingsTabs"))
             return;
 
-        // Each card draws its own icon heading; Section just boxes it, matching the module tabs.
         if (ImGui.BeginTabItem("Identity & Pairing"))
         {
             DrawIdentityCard(config);
@@ -156,8 +129,7 @@ public class SettingsWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        // collar/ui-organization "Permissions live in a Settings tab": set-and-forget, so it moved here out
-        // of the main navigation. Only a Sub accepts anything from a peer, so an Owner gets an explanation.
+        // Only a Sub accepts anything from a peer, so an Owner gets an explanation.
         var selectPermissions = selectPermissionsTab;
         selectPermissionsTab = false;
         if (ImGui.BeginTabItem("Permissions", selectPermissions ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None))
@@ -193,12 +165,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.EndTabBar();
     }
 
-    /// collar/chat-transport "An Owner-style command can be tested entirely locally": type the exact raw
-    /// text an Owner would send (trigger phrase included) and run it through the real dispatch path
-    /// (ChatCommandListener.TestIncomingCommand) - no pairing, no peer, nothing sent or received. A
-    /// different, complementary tool to the per-action Test buttons elsewhere: those bypass command-text
-    /// parsing entirely (calling the underlying action directly), this exercises the parsing itself - the
-    /// trigger-phrase/permission/dispatch layer where every bug this card exists to catch was found.
+    /// Runs raw Owner-style text through the real dispatch path (trigger phrase, permissions, parsing). Nothing is sent.
     private void DrawTestCommandCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.FlaskVial, "Test an Owner command");
@@ -264,17 +231,9 @@ public class SettingsWindow : Window, IDisposable
         DrawTestButton("testOwnerCommand", "Run test", () => plugin.ChatCommandListener.TestIncomingCommand(testCommandInput));
     }
 
-    /// collar/pairing "Sub's pairing identity configuration locks while paired": Role and the trigger
-    /// phrase become read-only for a paired Sub - enforced here in the rendering layer only
-    /// (ImRaii.Disabled), never in PluginConfig/PairingService, the same "UI-only lock" shape pairing's own
-    /// "Sub can't unpair except via panic" has always used (see PairingService.ReleasePeer's comment). The
-    /// Owner side is never locked, paired or not. Pairing is relay-assisted only - there is no manual
-    /// fallback (collar/pairing "Pairing has no manual fallback and never silently weakens").
+    /// Role and trigger phrase are read-only while this device holds any Sub-side pairing; enforced in the UI only.
     private void DrawIdentityCard(PluginConfig config)
     {
-        // collar/pairing "Sub's pairing identity configuration locks while paired" (extended to Switch):
-        // Role and trigger phrase lock while this device holds any active Sub-side pairing, not just while
-        // `Role == Sub` - a Switch's Owner-side capacity never locks anything.
         var subLocked = config.HasActiveSubSidePairing;
         var activePairings = config.Pairings.Where(p => p.IsPaired).ToList();
 
@@ -294,9 +253,7 @@ public class SettingsWindow : Window, IDisposable
             DrawDeviceIdentitySection();
     }
 
-    /// Every active pairing in one bounded, scrolling table - it can grow long for an Owner with many Subs -
-    /// with Unpair on each row. Unpairing still asks for confirmation first; see PanicHandler.ReleasePairing
-    /// for what it does (notify best-effort, publish the relay revocation, revert local state like panic).
+    /// Unpair asks for confirmation; see PanicHandler.ReleasePairing for what it does.
     private void DrawPairingsList(PluginConfig config, List<PairingState> activePairings)
     {
         if (activePairings.Count == 0)
@@ -309,7 +266,7 @@ public class SettingsWindow : Window, IDisposable
         const int visibleRows = 6;
         var rowHeight = ImGui.GetFrameHeightWithSpacing();
         var listHeight = rowHeight * (Math.Min(activePairings.Count, visibleRows) + 1) + ImGui.GetStyle().WindowPadding.Y * 2;
-        // Section.List is the scrolling child (it shrinks to fit a short list), so the table itself doesn't scroll.
+        // Section.List is the scrolling child, so the table itself doesn't scroll.
         using (Section.List("pairingsList", listHeight))
         {
             if (ImGui.BeginTable("pairingsTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
@@ -378,9 +335,7 @@ public class SettingsWindow : Window, IDisposable
         DrawRevocationDeliveryStatus(config);
     }
 
-    /// Which trigger phrase commands in this pairing use. In a Sub-side pairing it's always this device's own
-    /// (ChatCommandListener matches incoming tells against it); in an Owner-side pairing ChatComposer.Wrap uses
-    /// the peer's, falling back to this device's own when the peer never sent one.
+    /// Sub-side: always our own. Owner-side: the peer's, falling back to ours when they never sent one.
     private static (string Phrase, string Source) TriggerPhraseInEffect(PluginConfig config, PairingState p)
     {
         if (p.Direction == PairingDirection.SubSide)
@@ -408,8 +363,7 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.WrappedColored(delivery == "delivered" ? Theme.Success : Theme.Warning, label);
     }
 
-    /// Pairing by code first (the default); an invitation from someone on an older version still shows here
-    /// even while the "Pair by tell" section is collapsed, since it arrives unprompted.
+    /// An invitation from someone on an older version shows here even while "Pair by tell" is collapsed.
     private void DrawPairWithSection(PluginConfig config)
     {
         var pairingService = plugin.PairingService;
@@ -501,7 +455,7 @@ public class SettingsWindow : Window, IDisposable
         }
         else if (confirmingInviteReplace)
         {
-            // The outstanding invitation expired/completed on its own while this prompt was open.
+            // The outstanding invitation expired or completed while this prompt was open.
             confirmingInviteReplace = false;
         }
         if (pairingService.OutgoingInvitationExpiresAt is { } outgoingExpiry)
@@ -521,9 +475,6 @@ public class SettingsWindow : Window, IDisposable
             {
                 config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
                 config.Save();
-                // collar/onboarding "Tutorial completion is tracked independently per Role": the shared path (also
-                // used by the Welcome window) for launching a Role's guided tutorial the first time this Role's
-                // direction(s) are ever gained on this install.
                 plugin.TutorialDriver.StartIfUnseenForRole(config.Role);
             }
         }
@@ -593,8 +544,7 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// collar/pairing "Device-key lifecycle is recoverable and explicit". Fingerprint only - never the
-    /// public key coordinates or, obviously, the private key.
+    /// Fingerprint only - never the key itself.
     private void DrawDeviceIdentitySection()
     {
         var identity = plugin.DeviceIdentityService;
@@ -633,8 +583,7 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// collar/status-indicators + collar/leash-visual: viewer-side display toggles. Both only change what
-    /// this client draws - nothing is sent, and the leash itself keeps working with its line hidden.
+    /// Only changes what this client draws; the leash keeps working with its line hidden.
     private void DrawWorldVisualsCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.Eye, "In-world visuals");
@@ -658,9 +607,6 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.HelpMarker("A line from the Sub's neck to the Owner's hand while leashed. Hiding it doesn't release the leash.");
     }
 
-    /// collar/onboarding "Settings offers a control to rerun the current Role's tutorial": its own card at
-    /// the bottom of Identity & Pairing - a deliberate on-demand action
-    /// rather than one more control folded into the pairing/identity card above it.
     private void DrawTutorialCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.GraduationCap, "Guided tutorial");
@@ -672,9 +618,6 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.HelpMarker("Doesn't affect the other direction's own first-time tutorial.");
     }
 
-    /// Backs Settings' "Test an Owner command" control (`collar/chat-transport`'s "An Owner-style command
-    /// can be tested entirely locally") - the one remaining local-test surface, now that every per-action
-    /// Test button (collar/ui-organization) has been removed.
     private void DrawTestButton(string key, string label, Func<LocalTestResult> run)
     {
         if (ImGui.SmallButton($"{label}##{key}"))
@@ -708,11 +651,7 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.HelpMarker("Required once before the Animation and Follow permission toggles (in the Sub window's Permissions tab) can be enabled at all - Title and Outfit don't need it.");
     }
 
-    /// collar/custom-triggers "Sending a chat message requires its own dedicated permission and
-    /// acknowledgement": deliberately its own card, visibly distinct from the general Automation risk
-    /// acknowledgement above - a Custom Trigger's chat action is a materially broader surface (arbitrary
-    /// text, any channel) than anything the general acknowledgement covers, so it gets its own explicit
-    /// disclosure rather than riding on that existing checkbox.
+    /// Its own card: arbitrary chat on any channel is a broader surface than the general acknowledgement covers.
     private void DrawCustomChatCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.Comments, "Custom Trigger chat messages");
@@ -726,9 +665,7 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// collar/toy-control "Toy control requires its own dedicated consent acknowledgment": same rationale
-    /// as DrawCustomChatCard above, but for the single riskiest category in this plugin - unlike every
-    /// other category, this one actuates a real physical device rather than only in-game state.
+    /// Its own card: this one actuates a physical device.
     private void DrawToyControlCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Toy control");
@@ -742,11 +679,7 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// collar/toy-control "Automatic triggers require their own dedicated consent, separate from
-    /// Owner-command permission": a fourth, distinct rung from DrawToyControlCard above - that one is about
-    /// an Owner's per-occurrence command; this one is about the Sub's own device firing automatically, with
-    /// no per-occurrence click at all, off the Sub's own local game state (health, being hit, a restriction
-    /// state) - a materially different risk shape that needs its own explicit disclosure.
+    /// Its own card: the Sub's device firing automatically off local game state is a different risk from Owner commands.
     private void DrawToyTriggersCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.Bolt, "Automatic toy triggers");
@@ -760,10 +693,7 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// A checkbox whose label can run long (the ToS/Custom-chat acknowledgement text) without getting cut
-    /// off in a narrower window - `ImGui.Checkbox` never wraps its own label, so the checkbox itself
-    /// carries no visible label (`##label` - id only) and the text is drawn separately, wrapped, right
-    /// next to it.
+    /// ImGui.Checkbox never wraps its label, so the label is drawn separately, wrapped.
     private static bool ImGuiCheckbox(string label, bool value, out bool newValue)
     {
         newValue = value;

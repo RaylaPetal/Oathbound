@@ -5,11 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace Oathbound.Plugin.Config;
 
-/// One of the Sub's own individual Moodles statuses (buffs/debuffs) - collar/moodles reads these directly
-/// rather than bundled presets, so the Owner can apply/clear a single status. Moodles statuses have no
-/// folder/category organization the way Penumbra mods or Glamourer designs do, so unlike
-/// GestureMapping/WardrobeMapping there is no allowlist to scope scanning - every registered status is
-/// eligible, matching how Moodles itself presents them as one flat list.
+/// Individual statuses rather than presets, so the Owner can apply a single one. No folder scope - Moodles has none.
 [Serializable]
 public class MoodlesStatusEntry
 {
@@ -17,9 +13,7 @@ public class MoodlesStatusEntry
     public string Name { get; set; } = "";
 }
 
-/// collar/attached-moodles: one of the Sub's own Moodles statuses chosen as the default moodle for an
-/// outfit design, restraint device or the leash. `StatusId` is what gets applied; `StatusName` is only for
-/// display, so the pick still reads sensibly if the status is later renamed or deleted in Moodles.
+/// StatusName is display only, so the pick still reads sensibly if the status is renamed or deleted.
 [Serializable]
 public class AttachedMoodleRef
 {
@@ -30,12 +24,7 @@ public class AttachedMoodleRef
 [Serializable]
 public class MoodlesMapping
 {
-    /// Sub-side: the status catalog this Sub's own scan produced, keyed by status id. Local-only, same
-    /// reasoning as GestureMapping.LocalCatalog - the Owner only ever learns status names via the Sub's
-    /// own "Copy names" export, never a live push.
-    ///
-    /// collar/config-performance "Catalogs live outside the hot-saved config file": [JsonIgnore]d and
-    /// persisted separately by CatalogStore - see GestureMapping's equivalent comment.
+    /// Local only. [JsonIgnore]d and persisted separately by CatalogStore.
     [JsonIgnore]
     public Dictionary<string, MoodlesStatusEntry> LocalCatalog { get; set; } = new();
 

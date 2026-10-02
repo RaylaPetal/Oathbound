@@ -5,11 +5,7 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// This class only ever builds text and returns it - it has no dependency on any chat-send API at all, by
-/// construction, so there is no code path here that could ever transmit anything. Sending (either the
-/// Owner's own paste into the game's chat box, or the explicit one-click Send button - see ChatSender) is
-/// always a separate, deliberate step the UI takes with the string this class hands back, never something
-/// this class does on its own.
+/// Only builds text; it has no send API, so nothing here can ever transmit. Sending is a separate deliberate step.
 public sealed class ChatComposer
 {
     private readonly PluginConfig config;
@@ -19,16 +15,10 @@ public sealed class ChatComposer
         this.config = config;
     }
 
-    /// Builds `/tell <PeerName>@<PeerWorld> <trigger> <command>` - or just the trigger+command, with no
-    /// `/tell` target, if a handshake hasn't captured a peer identity yet. `command` is raw text: either a
-    /// plain alias, or one of ChatCommandListener's reserved-keyword override commands - this class has no
-    /// idea which, since both are just text appended after the trigger phrase.
+    /// `/tell <Peer>@<World> <trigger> <command>`, or just trigger + command when no peer is known.
     public string Compose(string command) => Wrap(command);
 
-    /// Every chat message one Send of `command` becomes: just the composed command when it fits, otherwise
-    /// - for a `customtrigger cast` bundle only - one message per action (see
-    /// CustomTriggerCommand.SplitCastCommand). Anything else that doesn't fit comes back as its single
-    /// too-long message, for the caller's Fits check to reject.
+    /// Oversized `customtrigger cast` bundles split into one message per action; anything else oversized comes back as-is for the caller's Fits check to reject.
     public IReadOnlyList<string> ComposeAll(string command)
     {
         var whole = Compose(command);
@@ -39,14 +29,10 @@ public sealed class ChatComposer
 
     public static bool AllFit(IReadOnlyList<string> messages) => messages.All(CommandSelector.Fits);
 
-    /// collar/teleport: the Owner's `teleport` reserved-word command, carrying where the Owner is at send
-    /// time (world, territory, instance, ward, position) - read by the caller from its own client state,
-    /// since this class stays dependency-free by construction. The Sub picks its own route from this.
+    /// Carries the Owner's current location; the Sub picks its own route.
     public string ComposeTeleport(TeleportTarget target) => Wrap($"teleport {target.ToPayload()}");
 
-    /// collar/leash-travel: the Owner client's automatic `leash travel` to one leashed Sub (design D2). Always a
-    /// `/tell` to that pairing - never the configured channel, which can't address one Sub of several and would
-    /// broadcast the Owner's location - and never the active pairing unless it is that one.
+    /// Always a /tell to that pairing: a channel can't address one Sub and would broadcast the Owner's location.
     public string ComposeLeashTravel(PairingState pairing, TeleportTarget target)
     {
         var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
@@ -55,19 +41,11 @@ public sealed class ChatComposer
 
     public const string LeashTravelWord = "travel";
 
-    /// collar/pairing's relay-assisted handshake: a short lifecycle tell carrying only the invitation's
-    /// capability id - everything else (role, trigger phrase, expiry) lives in the signed invitation itself,
-    /// fetched from the relay once this tell's verified sender is captured (see Relay/PairingService.cs).
-    /// `targetTellAddress` is typed by the user (e.g. "Name Surname@World") since there's no captured peer
-    /// identity yet to address it to automatically.
+    /// Carries only the invitation's id; everything else lives in the signed invitation on the relay.
     public string ComposeRelayInvitation(string targetTellAddress, string invitationId) =>
         $"/tell {targetTellAddress.Trim()} collarinvite {invitationId}";
 
-    /// collar/pairing "Invite target is validated before sending": a typed target that doesn't match
-    /// "Name Surname@World" produces a `/tell` the game itself silently rejects with no plugin-visible
-    /// feedback - this catches the structural cases (no `@`, empty name/world) before that ever happens.
-    /// Cannot and does not check whether the character actually exists; that information is not available
-    /// to the plugin.
+    /// Catches structural errors the game would otherwise reject silently. Can't check that the character exists.
     public static bool TryValidateTellTarget(string target, out string error)
     {
         var trimmed = target.Trim();
@@ -95,65 +73,37 @@ public sealed class ChatComposer
         return true;
     }
 
-    /// collar/pairing's acknowledgement tell, sent automatically as part of accepting a pending relay
-    /// invitation. The target is already known (the verified sender of the invitation being accepted), so
-    /// this composes a full `/tell` directly rather than going through Wrap's already-paired-peer
-    /// addressing. `proofDigest` is what the inviter cross-checks against the signed acceptance it fetches
-    /// from the relay before activating - a relay claim without this exact tell can never activate pairing.
+    /// `proofDigest` is what the inviter checks against the relay's signed acceptance before activating.
     public string ComposePairingAck(string name, string world, string invitationId, string proofDigest) =>
         $"/tell {name}@{world} collarpairack {invitationId} {proofDigest}";
 
-    /// collar/catalog-sync: the Owner's lifecycle tell telling the paired Sub a signed catalog-request now
-    /// exists on the relay - carries only the request's capability id, same "short lifecycle tell, fetch
-    /// the signed content separately" shape as the pairing invitation tell.
+    /// Carries only the request's id; the signed content is fetched from the relay.
     public string ComposeCatalogRequestNotice(string name, string world, string requestId) =>
         $"/tell {name}@{world} collarcatalogreq {requestId}";
 
-    /// collar/catalog-sync "Sub has not opted in": sent back to the Owner instead of building/uploading
-    /// anything, so the Owner learns a permission status without any catalog content ever existing.
+    /// Tells the Owner the Sub hasn't opted in, without any catalog content ever existing.
     public string ComposeCatalogPermissionDenied(string name, string world, string requestId) =>
         $"/tell {name}@{world} collarcatalogdenied {requestId}";
 
-    /// collar/leash "Sub tells the Owner when the leash comes off": the Sub's automatic notice to the Owner
-    /// its leash was attached to, so that Owner's client stops showing the Sub as leashed (and stops sending
-    /// `leash travel`). Carries only the keyword and one reason word - see LeashOffNotifier.
+    /// Carries only the keyword and one reason word.
     public string ComposeLeashOffNotice(string name, string world, LeashEnd reason) =>
         $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOffWord} {reason.ToNoticeWord()}";
 
     public const string LeashOffNoticeKeyword = "collarleash";
     public const string LeashOffWord = "off";
 
-    /// collar/pairing "Panic notifies the peer, best-effort": the automatic notification tell sent from
-    /// PanicHandler as a direct consequence of the panic action itself. Like ComposePairingAck, the target
-    /// is already known (the peer identity cached at the moment panic ran), so this composes a full
-    /// `/tell` directly rather than going through Wrap. Carries no code - ending a trust relationship
-    /// doesn't need one, only establishing a new one does (see design.md).
-    /// `direction` is this device's role in the specific pairing that just ended - never the device's
-    /// overall Role, since a Switch's Role doesn't say which direction any one pairing was.
+    /// `direction` is this device's side in the pairing that ended, not its Role.
     public string ComposeUnpairNotice(string name, string world, PairingDirection direction)
     {
         var roleToken = direction == PairingDirection.OwnerSide ? "owner" : "sub";
         return $"/tell {name}@{world} collarunpair {roleToken}";
     }
 
-    /// collar/chat-transport: uses the peer's trigger phrase captured during pairing (see
-    /// PairingState.PeerTriggerPhrase) when known, so an already-paired relationship can never silently
-    /// diverge again - falls back to this side's own configured TriggerPhrase only when no peer phrase has
-    /// been captured (no pairing yet, or a peer whose handshake didn't declare one).
-    ///
-    /// collar/chat-transport "Composing and sending require active pairing, not just a remembered peer":
-    /// addresses a channel command only while `IsPaired` is true, not merely whenever PeerName/PeerWorld
-    /// happen to be non-empty - PairingService.EndFromVerifiedPeerNotice deliberately leaves those cached
-    /// after a verified peer notice clears Paired, so checking presence alone would let this side keep
-    /// composing (and, via CollarWindow's canSend, keep sending) to a peer whose own side already ended it.
-    ///
-    /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel": which channel
-    /// prefix to use comes from config.OutgoingChannel - Tell keeps its existing addressed form, the other
-    /// four need no address, just their own channel command (see ChatChannelPrefix).
+    /// Uses the peer's captured trigger phrase when known, else our own. Addresses a command only while `IsPaired`:
+    /// peer name/world stay cached after a verified unpair notice.
     private string Wrap(string body)
     {
-        // collar/multi-pairing "Active pairing selection drives outgoing commands": addressed to the
-        // active pairing's peer, or no target at all if none is selected.
+        // Addressed to the active pairing's peer, or no target if none is selected.
         var pairing = config.GetActivePairing();
         var peerTriggerPhrase = pairing?.PeerTriggerPhrase;
         var trigger = (!string.IsNullOrWhiteSpace(peerTriggerPhrase) ? peerTriggerPhrase : config.TriggerPhrase).Trim();
@@ -168,8 +118,7 @@ public sealed class ChatComposer
         return $"{ChatChannelPrefix(config)} {full}";
     }
 
-    /// collar/chat-transport: the non-tell channel commands, shared with ChatSender's allow-list so the
-    /// two can never silently drift apart on what a valid composed prefix looks like.
+    /// Shared with ChatSender's allow-list so the two never drift.
     internal static string ChatChannelPrefix(PluginConfig config) => config.OutgoingChannel switch
     {
         ChatChannel.Party => "/p",

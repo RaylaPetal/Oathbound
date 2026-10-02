@@ -4,14 +4,10 @@ using Oathbound.Plugin.Ipc;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/ui-organization "Sub-side modules are gated on their required dependencies" (design.md D14): the one
-/// table of which module/permission needs which external plugin. UI-only - command handlers already fail
-/// closed on a missing IPC and don't consult this, so the two can't disagree about what's *allowed*, only
-/// briefly about what's *shown* (DependencyStatusService's refresh window).
+/// Which module/permission needs which external plugin. UI-only: command handlers fail closed on their own.
 public static class DependencyGates
 {
-    /// Modules that can't work at all without these. Anything not listed is never tile-gated (partly dependent
-    /// modules gate individual features inline instead; Toy Control is where Intiface gets connected).
+    /// Modules that can't work at all without these. Partly dependent modules gate features inline instead.
     private static readonly Dictionary<string, DependencyId[]> ModuleRequirements = new()
     {
         ["title"] = [DependencyId.Honorific],
@@ -23,9 +19,7 @@ public static class DependencyGates
 
     public static readonly DependencyId[] Teleport = [DependencyId.Lifestream, DependencyId.Vnavmesh];
 
-    /// Why `moduleId`'s nav tile/window is unavailable right now, or null when it's usable. Only ever gates
-    /// while there is an active pairing and it's Sub-side (spec: never for Owner-side pairings or with no
-    /// active pairing) - an Owner sends commands without needing any plugin.
+    /// Null when usable. Only gates for an active Sub-side pairing - an Owner needs no plugin to send.
     public static string? ModuleBlockedReason(Plugin plugin, string moduleId)
     {
         if (plugin.Configuration.ActivePairing is not { Direction: PairingDirection.SubSide })
@@ -33,10 +27,9 @@ public static class DependencyGates
         return ModuleRequirements.TryGetValue(moduleId, out var required) ? plugin.DependencyStatus.MissingReason(required) : null;
     }
 
-    /// Red note for a Permissions row whose category needs a plugin that isn't detected, or null.
     public static string? PermissionNote(Plugin plugin, params DependencyId[] required) => plugin.DependencyStatus.MissingReason(required);
 
-    /// What a Sub-side Custom Trigger part needs, by its category (Chat needs nothing).
+    /// Chat needs nothing.
     public static DependencyId[] CustomTriggerPart(CustomTriggerActionKind kind) => kind switch
     {
         CustomTriggerActionKind.Title => [DependencyId.Honorific],
@@ -47,7 +40,6 @@ public static class DependencyGates
         _ => [],
     };
 
-    /// Inline feature gating: the reason a single feature is unavailable, or null. Unlike tile gating this
-    /// applies in both roles - callers only use it on features that run on the local client.
+    /// Unlike tile gating this applies in both roles, for features that run on the local client.
     public static string? FeatureBlockedReason(Plugin plugin, DependencyId required) => plugin.DependencyStatus.MissingReason([required]);
 }

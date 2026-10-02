@@ -1,9 +1,6 @@
 namespace Oathbound.Plugin.Relay;
 
-/// Mirrors protocol/constants.json's `sizeAndExpiryLimits` - kept as plain C# constants rather than reading
-/// the JSON file at runtime (the Worker can import it directly via its bundler; a Dalamud plugin has no
-/// equivalent build-time asset pipeline for a path outside its own project). protocol/vectors and the
-/// Worker's own enforcement are the source of truth; these must be kept numerically in sync with them.
+/// Mirrors protocol/constants.json's sizeAndExpiryLimits by hand; must stay numerically in sync with it.
 public static class RelayProtocolConstants
 {
     public const int InvitationExpirySeconds = 900;

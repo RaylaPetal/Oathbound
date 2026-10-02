@@ -10,7 +10,7 @@ public unsafe struct OathboundMoveController
     [FieldOffset(0x110)] public int WishdirChanged;
 }
 
-/// collar/leash-mounts: the fly-input result vnavmesh rewrites (PlayerMoveControllerFlyInput).
+/// The fly-input result vnavmesh also rewrites.
 [StructLayout(LayoutKind.Explicit, Size = 0x18)]
 public unsafe struct OathboundFlyInput
 {
@@ -20,7 +20,7 @@ public unsafe struct OathboundFlyInput
     [FieldOffset(0xC)] public float Turn;
 }
 
-/// collar/leash steering: the active camera's horizontal direction, same layout vnavmesh reads (CameraEx).
+/// The active camera's horizontal direction.
 [StructLayout(LayoutKind.Explicit)]
 public unsafe struct OathboundCameraEx
 {

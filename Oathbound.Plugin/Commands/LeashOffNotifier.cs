@@ -3,15 +3,11 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Why a Sub's leash ended (or a `leash` was refused) - decides whether the Owner gets a leash-off notice and
-/// which reason word it carries (collar/leash "Sub tells the Owner when the leash comes off").
+/// Why a Sub's leash ended, or a `leash` was refused.
 public enum LeashEnd
 {
-    /// The Owner's own `unleash` - their client already knows.
     OwnerUnleash,
-    /// The Owner's own revert all - their client already knows.
     OwnerRevertAll,
-    /// The leash's pairing ended - there's no Owner left to tell.
     PairingEnded,
     Panic,
     Travel,
@@ -22,7 +18,7 @@ public enum LeashEnd
 
 public static class LeashEndExtensions
 {
-    /// The notice's reason word. The three Owner-known reasons never reach a notice; they map to `other`.
+    /// Owner-known reasons never reach a notice.
     public static string ToNoticeWord(this LeashEnd reason) => reason switch
     {
         LeashEnd.Panic => "panic",
@@ -32,7 +28,6 @@ public static class LeashEndExtensions
         _ => "other",
     };
 
-    /// The Owner side's reading of a notice's reason word: missing or unknown is `Other`.
     public static LeashEnd FromNoticeWord(string? word) => word?.Trim().ToLowerInvariant() switch
     {
         "panic" => LeashEnd.Panic,
@@ -42,7 +37,7 @@ public static class LeashEndExtensions
         _ => LeashEnd.Other,
     };
 
-    /// Owner-facing wording, completing "{Sub}'s leash came off: ...".
+    /// Completes "{Sub}'s leash came off: ...".
     public static string ToOwnerText(this LeashEnd reason) => reason switch
     {
         LeashEnd.Panic => "they used their safeword.",
@@ -53,9 +48,7 @@ public static class LeashEndExtensions
     };
 }
 
-/// collar/leash "Sub tells the Owner when the leash comes off" (design D2-D3): the Sub side's one place that
-/// sends the leash-off notice tell, so the movement code never touches chat. Every leash end FollowCommand
-/// raises comes through here; the Owner-known reasons and ended pairings send nothing.
+/// Sends the Sub's leash-off notice to the Owner. Owner-initiated ends and ended pairings send nothing.
 public sealed class LeashOffNotifier : IDisposable
 {
     private readonly PluginConfig config;
@@ -74,11 +67,9 @@ public sealed class LeashOffNotifier : IDisposable
 
     public void Dispose() => follow.LeashEnded -= OnLeashEnded;
 
-    /// A `leash` from this pairing that the Sub's client refused.
     public void NotifyRefused(PairingState pairing) => Send(pairing, LeashEnd.Refused);
 
-    /// collar/leash-travel "Sub travels to the Owner on leash travel": a `leash travel` from an Owner this Sub
-    /// isn't leashed to - their client still thinks it is.
+    /// The sender's client still thinks this Sub is leashed to them.
     public void NotifyNotLeashed(PairingState pairing) => Send(pairing, LeashEnd.Other);
 
     private void OnLeashEnded(Guid pairingId, LeashEnd reason)

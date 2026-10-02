@@ -5,12 +5,8 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/restraints: the action-block restriction rule. Hooks ActionManager's own UseAction entry point
-/// directly by its FFXIVClientStructs member-function pointer (`ActionManager.MemberFunctionPointers.
-/// UseAction`) rather than a raw signature scan - the same approach GagSpeak's own action-blocking detour
-/// uses (StaticDetours.UseAction.cs), and more stable than a signature since FFXIVClientStructs itself
-/// tracks this pointer's layout across game patches. Movement input is untouched - only action/skill
-/// execution is suppressed.
+/// The Action Block rule. Hooks UseAction through FFXIVClientStructs' member-function pointer, which tracks game
+/// patches better than a signature. Movement is untouched.
 public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
 {
     private readonly Hook<ActionManager.Delegates.UseAction>? useActionHook;
@@ -34,12 +30,10 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
         }
     }
 
-    /// Fail-closed, same posture as MovementLockService.IsAvailable: if the hook could not be established,
-    /// this never claims to be enforcing anything.
+    /// Fail closed: if the hook couldn't be established, never claim to enforce anything.
     public bool IsAvailable { get; }
 
-    /// collar/restraint-restrictions "Action Block is visible on the Sub's hotbars" - shown only while the
-    /// block is really enforcing, so a greyed-out hotbar never claims a block the hook isn't applying.
+    /// Shown only while the block is really enforcing.
     public HotbarBlockVisuals Visuals { get; } = new();
 
     public void Engage()

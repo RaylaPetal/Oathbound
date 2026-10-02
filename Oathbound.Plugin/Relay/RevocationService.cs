@@ -7,17 +7,12 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// collar/pairing "Unpair and panic publish authenticated revocation" and "Pairing" 's replay/epoch
-/// isolation requirements. This class only ever publishes/checks signed revocations and maintains the
-/// retry outbox - it never performs local teardown itself (PanicHandler/PairingService already did that,
-/// synchronously, before this is ever called) and never re-enables a pairing.
+/// Publishes/checks signed revocations and keeps the retry outbox. Never does local teardown itself, and never re-enables a pairing.
 public sealed class RevocationService
 {
     public event Action? PairingRevoked;
 
-    /// collar/pairing: how a pairing the relay reports as over is ended locally - wired by Plugin to the same
-    /// teardown a verified unpair-notice tell gets (collar release, and restraints unlocked for a Sub-side
-    /// pairing). It can't be a constructor dependency: PairingService itself depends on this class.
+    /// Wired by Plugin to the verified unpair-notice teardown; not a constructor dependency because PairingService depends on this class.
     public Action<PairingState>? EndPairingLocally { get; set; }
     private readonly PluginConfig config;
     private readonly RelayClient relay;
@@ -30,13 +25,7 @@ public sealed class RevocationService
         this.identity = identity;
     }
 
-    /// Best-effort publish of a revocation for the given pairing (captured by the caller *before* it
-    /// cleared its identity fields, since ReleasePeer clears identity but not this pairing's own sequence
-    /// bookkeeping - see PairingService). `pairIdHash`/
-    /// `pairEpoch` are passed explicitly (rather than read from `pairing`) because ReleasePeer clears
-    /// `pairing.PairIdHash` before this runs; `pairing` itself is only used for its own sequence counter and
-    /// delivery-status display, which survive that clearing. On any failure, queues a retry entry rather
-    /// than throwing; callers should treat this as fire-and-forget.
+    /// `pairIdHash`/`pairEpoch` are passed explicitly because ReleasePeer clears them first. Failures queue a retry; fire-and-forget.
     public async Task PublishBestEffortAsync(PairingState pairing, string pairIdHash, int pairEpoch, string reason, CancellationToken ct)
     {
         var sequence = pairing.OutgoingRevocationSequence + 1;
@@ -53,8 +42,7 @@ public sealed class RevocationService
         };
         envelope.Signature = RelayCrypto.SignRaw(identity.GetSigningKey(), EnvelopeCanonical.SerializeExcludingSignature(envelope));
 
-        // The sequence is reserved locally (and persisted) whether or not the publish itself succeeds, so a
-        // retried attempt never reuses a sequence number a peer might already be tracking as consumed.
+        // Reserved and persisted even if the publish fails, so a retry never reuses a sequence the peer may have consumed.
         pairing.OutgoingRevocationSequence = sequence;
         SetDeliveryStatus(pairing, "pending");
         config.Save();
@@ -84,16 +72,10 @@ public sealed class RevocationService
         }
     }
 
-    /// Codes a retry can never succeed by simply trying again - the request itself is wrong (signature
-    /// no longer matches on-file state, malformed, or the relay has permanently rejected it) rather than
-    /// the relay being temporarily unavailable. Task 3.4 "no retry of permanent failures".
+    /// The request itself is wrong, so retrying can never succeed.
     private static readonly HashSet<string> PermanentFailureCodes = ["unauthorized", "invalid_request", "payload_too_large"];
 
-    /// Called periodically (see Plugin.OnFrameworkUpdate, throttled) to retry anything still pending.
-    /// Honors the relay's own Retry-After when it gives one; otherwise backs off exponentially with jitter
-    /// (task 3.4 "jittered exponential backoff"). An entry past its ExpiresAt, or one the relay has
-    /// permanently rejected, is dropped with a visible warning logged - it never restores pairing and never
-    /// blocks anything else.
+    /// Honors Retry-After, else jittered exponential backoff. Expired or permanently rejected entries are dropped with a warning.
     public async Task RetryOutboxAsync(CancellationToken ct)
     {
         if (config.RevocationOutbox.Count == 0) return;
@@ -153,10 +135,7 @@ public sealed class RevocationService
         pairing.LastRevocationDeliveryUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     }
 
-    /// Retry-outbox entries no longer carry a reference to the `PairingState` that created them (the caller
-    /// only had `pairIdHash`/`pairEpoch` by the time a retry entry is queued - see PublishBestEffortAsync).
-    /// If that pairing has since been released, its identity fields (and so this lookup) are gone; the
-    /// status update is then simply skipped - display-only staleness, never a correctness issue.
+    /// If the pairing has since been released, the lookup fails and the display update is skipped.
     private void SetDeliveryStatus(RevocationRetryEntry entry, string status)
     {
         var pairing = config.Pairings.FirstOrDefault(p => p.PairIdHash == entry.PairIdHash && p.PairEpoch == entry.PairEpoch);
@@ -164,14 +143,10 @@ public sealed class RevocationService
             SetDeliveryStatus(pairing, status);
     }
 
-    /// collar/pairing "Peer missed the notification tell" / "Old revocation is replayed after re-pairing".
-    /// Called at login and on a low-frequency bounded schedule (Plugin wires the interval). Only ever ends
-    /// pairing locally; never executes any other command a peer's revocation might (in principle) try to
-    /// smuggle in - there is nothing else to execute, the schema has no room for it.
+    /// Only ever ends a pairing locally; the schema has no room for anything else.
     public async Task CheckForMissedRevocationAsync(CancellationToken ct)
     {
-        // collar/multi-pairing: every active pairing is checked independently - one pairing's revocation
-        // ends only that pairing, never any other this device holds.
+        // Each pairing is checked independently.
         foreach (var pairing in config.Pairings.Where(p => p.IsPaired).ToList())
             await CheckForMissedRevocationAsync(pairing, ct).ConfigureAwait(false);
     }
@@ -204,12 +179,8 @@ public sealed class RevocationService
         }
     }
 
-    /// collar/pairing "Unpairing reaches the other person even when they are offline". The relay keeps every
-    /// revoked pair row forever as a tombstone, so this answers "is my pairing over?" no matter how long this
-    /// client was away - unlike the signed revocations above, which the relay deletes after at most 7 days.
-    /// Asks about each pairing's own exact epoch (a mutual pair shares one pairIdHash across two epochs, so
-    /// "the latest epoch" could be the other direction's). Any error leaves every pairing untouched: a pairing
-    /// is never ended just because the relay couldn't be reached.
+    /// Pair rows are permanent tombstones, so this works however long the client was away (signed revocations expire
+    /// after 7 days). Asks about each pairing's exact epoch. Any error leaves every pairing untouched.
     public async Task CheckPairStatusAsync(CancellationToken ct)
     {
         foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.PairIdHash is not null).ToList())
@@ -221,8 +192,7 @@ public sealed class RevocationService
             }
             catch (RelayException ex)
             {
-                // "unauthorized" also covers a row that doesn't exist - the relay doesn't distinguish, by design -
-                // so it's treated like any other failure: leave the pairing alone.
+                // "unauthorized" also covers a missing row (the relay doesn't distinguish), so leave the pairing alone.
                 Plugin.Log.Information($"Pair status check skipped: {ex.Code}.");
                 continue;
             }
@@ -245,19 +215,13 @@ public sealed class RevocationService
         }
     }
 
-    /// Returns true if pairing is still active after processing this revocation (false means it just ended).
-    /// Task 5.4: rejects wrong-device, wrong-pair, stale-sequence, expired, and old-epoch revocations.
+    /// Returns true if the pairing is still active afterwards.
     private bool ApplyIfValid(RevocationEnvelope revocation, EcPublicKeyJwk peerPublicKey, PairingState pairing)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         if (revocation.PairIdHash != pairing.PairIdHash) return true;
-        // collar/multi-pairing: exact match, not just "not older" - pairIdHash is symmetric over just the
-        // two device key ids (no direction), so the same two devices paired in both directions share one
-        // pairIdHash family; fetching "revocations since IncomingRevocationSequence" for THIS pairing can
-        // come back carrying a DIFFERENT epoch that belongs to the OTHER direction's independent pairing
-        // between the same two devices, not a stale notice for this one. Only this pairing's own exact
-        // epoch can end it.
+        // Exact match: a mutual pair shares one pairIdHash, so another epoch may belong to the other direction.
         if (revocation.PairEpoch != pairing.PairEpoch) return true;
         if (revocation.Sequence <= pairing.IncomingRevocationSequence) return true; // Replay.
         if (revocation.ExpiresAt <= now) return true;

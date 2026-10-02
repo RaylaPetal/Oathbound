@@ -9,14 +9,11 @@ using Pictomancy;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/leash-visual: the neck-to-hand leash line, drawn from UiBuilder.Draw (so Dalamud's own UI hiding
-/// already covers cutscenes, GPose and a hidden UI). Depth-aware through Pictomancy when it initialized;
-/// otherwise a flat projected ImGui line with the same anchors (spec: "falls back to a simpler on-screen
-/// line"). Never sends anything and never touches the leash itself.
+/// The neck-to-hand leash line, drawn from UiBuilder.Draw so Dalamud's UI hiding covers cutscenes and GPose.
+/// Depth-aware via Pictomancy when available, else a flat projected line. Never touches the leash itself.
 public sealed class LeashRenderer : IDisposable
 {
-    /// The curve's lowest point never goes below this height above the lower character's feet (about waist
-    /// height), so a close pair's slack can't dip into the ground.
+    /// Keeps a close pair's slack from dipping into the ground.
     private const float MinClearance = 0.5f;
     private const int Segments = 16;
 
@@ -25,10 +22,9 @@ public sealed class LeashRenderer : IDisposable
 
     private static readonly PctDrawHints Hints = new()
     {
-        // Additive blending (Pictomancy's default) would make a dark line vanish.
+        // Additive blending would make a dark line vanish.
         AlphaBlendMode = AlphaBlendMode.None,
-        // Pictomancy's default OccludedAlpha is 1 (no occlusion); the spec wants the line hidden or
-        // strongly faded behind walls.
+        // The default OccludedAlpha of 1 means no occlusion; fade strongly behind walls.
         DefaultParams = new PctDxParams { OccludedAlpha = 0.15f, OcclusionTolerance = 0.05f },
     };
 
@@ -44,7 +40,7 @@ public sealed class LeashRenderer : IDisposable
         this.state = state;
         try
         {
-            // The VFX renderer is off: we only draw strokes, so its signature scans are pure risk here.
+            // Only strokes are drawn, so the VFX renderer's signature scans are pure risk.
             pictomancy = PctService.Initialize(Plugin.PluginInterface, new PctOptions { EnableVfxRenderer = false });
         }
         catch (Exception ex)
@@ -65,7 +61,7 @@ public sealed class LeashRenderer : IDisposable
         }
         catch (Exception ex)
         {
-            // A game-structure surprise must never take down the draw loop (spec: fails closed).
+            // A game-structure surprise must never take down the draw loop.
             Plugin.Log.Warning(ex, "Leash line drawing failed this frame.");
         }
     }
@@ -85,7 +81,7 @@ public sealed class LeashRenderer : IDisposable
         if (pictomancy is not null)
         {
             using var drawList = PctService.Draw(hints: Hints);
-            // Null in cutscenes / while the screen is faded - the spec wants no line then anyway.
+            // Null in cutscenes or while the screen is faded.
             if (drawList is null) return;
             foreach (var point in samples)
                 drawList.PathLineTo(point);
@@ -96,10 +92,8 @@ public sealed class LeashRenderer : IDisposable
         DrawFlat(Thickness(neck, hand));
     }
 
-    /// A parabola hanging between the anchors: sag is half the "spare" leash (sqrt(L^2 - d^2) / 2), so it
-    /// droops when close and is exactly straight at or beyond the leash length (collar/leash: the engaged
-    /// length, so a long leash hangs slack well before the Sub reaches its end). Capped so the midpoint stays
-    /// MinClearance above the ground.
+    /// Sag is half the spare leash (sqrt(L^2 - d^2) / 2): slack when close, straight at the full length.
+    /// Capped so the midpoint stays MinClearance above the ground.
     private void BuildCurve(Vector3 neck, Vector3 hand, float length, float groundY)
     {
         var distance = Vector3.Distance(neck, hand);
@@ -113,7 +107,7 @@ public sealed class LeashRenderer : IDisposable
         }
     }
 
-    /// Pixel thickness, thinner the farther the camera is from the leash's midpoint.
+    /// Thinner the farther the camera is.
     private static unsafe float Thickness(Vector3 neck, Vector3 hand)
     {
         var camera = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
@@ -128,7 +122,7 @@ public sealed class LeashRenderer : IDisposable
         var drawList = ImGui.GetBackgroundDrawList();
         for (var i = 0; i < Segments; i++)
         {
-            // Skip any segment with an end behind the camera rather than drawing it to a wrapped point.
+            // Skip a segment with an end behind the camera rather than draw it to a wrapped point.
             if (!Plugin.GameGui.WorldToScreen(samples[i], out var a) || !Plugin.GameGui.WorldToScreen(samples[i + 1], out var b))
                 continue;
             drawList.AddLine(a, b, LeashColor, thickness);

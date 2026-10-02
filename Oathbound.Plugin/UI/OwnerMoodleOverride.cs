@@ -7,20 +7,14 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/attached-moodles "Owner can override the attached moodle per command": the Owner-side picker for
-/// the optional `moodle:"..."` option on outfit lock / restraint lock|catalog|wear / leash. The Owner only
-/// knows the Sub's moodles as the `moodle apply "<selector>"` quick commands imported through catalog sync,
-/// so choices come from those - the selector is exactly what the Sub's side resolves. "Sub's default" (null)
-/// sends the command unchanged, byte-for-byte what older Sub clients already understand.
+/// Owner-side picker for the `moodle:"..."` option, choosing from the Sub's imported moodle commands.
+/// "Sub's default" (null) sends the command unchanged.
 public static class OwnerMoodleOverride
 {
     private const string MoodleApplyPrefix = "moodle apply ";
 
-    /// The text actually sent for a command: its own moodle pick when it has one, the saved leash pick for
-    /// the fixed `leash` command, otherwise the command unchanged. Every Owner send surface (module tabs, Sub
-    /// Control, Favorites, the quick-access menu) goes through this, so a moodle always travels with the
-    /// one command it was picked for - never a tab- or window-wide setting.
-    /// The fixed `leash` also always carries the Owner's saved length (collar/leash), before the moodle.
+    /// Every Owner send surface goes through this, so a moodle travels only with the command it was picked for.
+    /// The fixed `leash` also carries the saved length, before the moodle.
     public static string ForSend(PluginConfig config, string command, string? commandMoodle)
     {
         if (!command.Trim().Equals(ControlWords.Leash, StringComparison.OrdinalIgnoreCase))
@@ -29,13 +23,11 @@ public static class OwnerMoodleOverride
         return MoodleOption.Append(withLength, commandMoodle ?? config.QuickCommands.LeashMoodleOverride);
     }
 
-    /// A saved command's full outgoing text. Also where its lock timer (collar/restraint-lock-timer) is added,
-    /// since every send surface for a saved command already comes through here.
+    /// Also where its lock timer is added.
     public static string ForSend(PluginConfig config, QuickCommand cmd) =>
         OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.LockSeconds);
 
-    /// What a favorite sends (Favorites window, header quick-access menu): the same, but with the timer
-    /// snapshotted when it was favorited (QuickCommand.FavoriteLockSeconds) rather than the row's live one.
+    /// Uses the timer snapshotted when favorited.
     public static string ForFavoriteSend(PluginConfig config, QuickCommand cmd) =>
         OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.FavoriteLockSeconds);
 
@@ -50,7 +42,6 @@ public static class OwnerMoodleOverride
             .OrderBy(c => c.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-    /// Whether `command` is one of the commands that carry the option.
     public static bool Accepts(string command)
     {
         var trimmed = command.Trim();
@@ -65,7 +56,7 @@ public static class OwnerMoodleOverride
     public static string Apply(string command, string? chosen) =>
         chosen is not null && Accepts(command) ? MoodleOption.Append(command, chosen) : command;
 
-    /// Draws the picker; `chosen` stays null for "Sub's default".
+    /// `chosen` stays null for "Sub's default".
     public static void Draw(string id, PluginConfig config, ref string? chosen)
     {
         var choices = Choices(config);

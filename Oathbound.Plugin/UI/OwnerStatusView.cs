@@ -5,9 +5,7 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/status-indicators "The Owner can see and clear a stale estimate": the active Sub's estimated
-/// gagged/restrained/leashed state (the same estimate the nameplate icons and leash line use), with the
-/// caveat and a Clear button. Mirrors ToyStatusView.DrawOwner.
+/// The active Sub's estimated state with its caveat and a Clear button.
 public static class OwnerStatusView
 {
     public static void Draw(Plugin plugin)

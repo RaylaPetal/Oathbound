@@ -5,11 +5,8 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// Invisible, always-open host for QuickAccessMenu's popup. The menu is opened from the server info bar entry
-/// (whose click callback can run outside any ImGui frame), so every real popup call has to happen from one
-/// consistent, always-valid window context every frame - this window is that context and draws nothing of its
-/// own. It used to also be the on-screen quick-access button, which was removed in favor of the server info
-/// bar entry.
+/// Invisible, always-open host for QuickAccessMenu's popup: its opener can run outside any ImGui frame, so every
+/// popup call has to come from this one consistent window context.
 public sealed class QuickAccessMenuHost : Window, IDisposable
 {
     private readonly Plugin plugin;

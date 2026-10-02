@@ -4,9 +4,7 @@ using System.IO.Compression;
 
 namespace Oathbound.Plugin.Relay;
 
-/// collar/catalog-sync: gzip, matching protocol/constants.json's `compression` choice. Both ends of this
-/// are always this same plugin (Owner and Sub are two installs of the identical binary), so cross-runtime
-/// gzip-format compatibility is not a concern the way the crypto envelope's cross-runtime shape is.
+/// Both ends are this same plugin, so cross-runtime gzip compatibility isn't a concern.
 public static class RelayCompression
 {
     public static byte[] Compress(byte[] plaintext)
@@ -17,9 +15,7 @@ public static class RelayCompression
         return output.ToArray();
     }
 
-    /// Bounded decompression: refuses to allocate/write past `maxDecompressedBytes`, so a maliciously
-    /// crafted small compressed blob (a decompression bomb) can never force unbounded memory use - task
-    /// 6.4 "decompression-bomb...snapshots leave existing imports untouched."
+    /// Refuses to write past `maxDecompressedBytes`, so a decompression bomb can't exhaust memory.
     public static byte[] Decompress(byte[] compressed, int maxDecompressedBytes)
     {
         using var input = new MemoryStream(compressed);

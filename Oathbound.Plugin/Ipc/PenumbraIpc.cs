@@ -6,26 +6,21 @@ using Penumbra.Api.IpcSubscribers;
 
 namespace Oathbound.Plugin.Ipc;
 
-/// Guarded PoseKit-style Penumbra surface. All writes are temporary and source-scoped.
+/// All writes are temporary and source-scoped.
 public sealed class PenumbraIpc : IDisposable
 {
     private const string Source = "Oathbound";
 
-    /// Penumbra's temporary-settings lock: while Oathbound holds a mod, no other plugin (nor Penumbra's own
-    /// UI) can change or remove its settings - an unlocked (0) setting was routinely overwritten or deleted
-    /// by other plugins (Glamourer resetting temporary settings on a design apply, sync plugins, ...),
-    /// dropping the animation back to vanilla mid-restraint. Positive = a real lock; only this key removes it,
-    /// so everything is released on unload (TemporaryModSettingsCoordinator.Dispose).
+    /// Locked so no other plugin (or Penumbra's UI) can change the held mod's settings; unlocked ones were routinely
+    /// overwritten mid-restraint. Only this key removes the lock, so everything is released on unload.
     private const int LockKey = 0x4F617468; // "Oath"
 
-    /// High enough that the held mod's files win over any other enabled mod replacing the same ones - the
-    /// old priority 0 lost every conflict, so the animation silently came from a different mod or vanilla.
+    /// High enough that the held mod wins file conflicts; priority 0 lost every one.
     private const int ClaimPriority = 1_000_000;
 
     private readonly Luna.EventSubscriber<ModSettingChange, Guid, string, bool> modSettingChanged;
 
-    /// A mod's settings changed in a collection (collection id, mod directory) - including Penumbra dropping
-    /// temporary settings after a mod's structure changed, which even a lock doesn't prevent.
+    /// Includes Penumbra dropping temporary settings after a mod's structure changed, which a lock doesn't prevent.
     public event Action<Guid, string>? SettingChanged;
 
     public PenumbraIpc()
@@ -37,7 +32,7 @@ public sealed class PenumbraIpc : IDisposable
     private readonly GetModList getModList = new(Plugin.PluginInterface);
     private readonly ApiVersion apiVersion = new(Plugin.PluginInterface);
 
-    /// collar/ui-organization dependency status: cheapest read-only gate; any exception means unavailable.
+    /// Any exception means unavailable.
     public bool IsAvailable { get { try { apiVersion.Invoke(); return true; } catch { return false; } } }
     private readonly GetModPath getModPath = new(Plugin.PluginInterface);
     private readonly GetModDirectory getModDirectory = new(Plugin.PluginInterface);
@@ -103,8 +98,7 @@ public sealed class PenumbraIpc : IDisposable
         try { var (_, settings) = getCurrentModSettings.Invoke(collection, directory); return settings is { } s ? (s.Item1, s.Item3) : (false, null); }
         catch { return (false, null); }
     }
-    /// True when `directory`'s effective settings in `collection` are still Oathbound's own temporary claim -
-    /// temporary, enabled, at the claim priority, with exactly `selections` - so there is nothing to put back.
+    /// True when the effective settings are still our own claim, so there's nothing to put back.
     public bool IsHeld(Guid collection, string directory, IReadOnlyDictionary<string, IReadOnlyList<string>> selections)
     {
         try

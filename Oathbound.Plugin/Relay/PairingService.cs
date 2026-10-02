@@ -7,28 +7,15 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// A relay invitation this side created and is waiting on (inviter role). Its non-secret reference,
-/// target, and expiry are persisted so a matching acknowledgement can still complete after a restart.
-/// `Direction` is which side of the resulting pairing *this* device will be on (OwnerSide = this device
-/// will command the peer) - required explicitly rather than derived from Role, since a Switch can send an
-/// invite establishing either direction.
+/// Persisted so a matching acknowledgement can still complete after a restart. Direction is explicit because a Switch can invite either way.
 public readonly record struct OutgoingInvitation(string InvitationId, PairingDirection Direction, string Target, long ExpiresAt);
 
-/// What `CreateAndSendInvitationAsync` would silently replace if called right now - surfaced so the UI can
-/// ask for explicit confirmation instead of orphaning an invitation the peer might still accept (see
-/// "Sending a new invite while one is already outstanding" in collar/pairing).
+/// What CreateAndSendInvitationAsync would replace, so the UI can confirm first.
 public readonly record struct OutstandingInvitation(string Target, long ExpiresAt);
 
-/// Mirrors the old `PendingPairingRequest`/`PeerUnpairedNotice` shape ChatCommandListener/CollarWindow/
-/// SettingsWindow already know how to render, but populated from a fetched-and-verified relay invitation
-/// instead of a code match.
 public readonly record struct PendingPairingRequest(string InvitationId, string Name, string World, PluginRole SenderRole, string? TriggerPhrase, long ExpiresAt);
 
-/// collar/pairing's relay-assisted handshake (Relay-assisted pairing binds device proof to verified game
-/// identity). Owns every step of both roles' state machine; ChatCommandListener only recognizes the two
-/// short lifecycle tells (`collarinvite`, `collarpairack`) and a
-/// verified sender, then delegates here. Nothing in this class ever activates a pairing from relay state
-/// alone - see HandleAcknowledgementTellAsync's comment.
+/// The tell-referenced relay pairing state machine, both roles. Nothing here ever activates a pairing from relay state alone.
 public sealed class PairingService
 {
     private readonly PluginConfig config;
@@ -47,24 +34,17 @@ public sealed class PairingService
     public PendingPairingRequest? Pending { get; private set; }
     public event Action? PendingChanged;
 
-    /// Fired once a pairing actually activates (inviter side, after consume succeeds). CollarWindow's
-    /// stale "your peer unpaired" notice is superseded by a freshly-completed pairing - most relevant when
-    /// re-pairing with the same person after they unpaired - but that notice lives in ChatCommandListener,
-    /// not here, so this is an event rather than a direct call.
+    /// Clears ChatCommandListener's stale "your peer unpaired" notice.
     public event Action? PairingActivated;
     public event Action? PairingEnded;
 
-    /// collar/pairing-recovery: runs just before the identity is replaced, while the old key can still sign -
-    /// Plugin wires it to BackupService so the old identity's backup is deleted from the relay.
+    /// Runs before the identity is replaced, while the old key can still sign, so the old backup can be deleted.
     public Func<CancellationToken, Task>? BeforeIdentityReset { get; set; }
 
-    /// Set after CreateAndSendInvitationAsync/AcceptPendingAsync/HandleAcknowledgementTellAsync fail, so
-    /// Settings can show *why* without the caller needing its own try/catch around every button click.
     public string? LastError { get; private set; }
     public event Action? LastErrorChanged;
 
-    /// True from a successful Accept until this side's own activation poll (see AwaitActivationAsync)
-    /// either succeeds or gives up - lets Settings show "waiting for confirmation" instead of looking stuck.
+    /// True from Accept until the activation poll succeeds or gives up.
     public bool AwaitingActivation { get; private set; }
     public event Action? AwaitingActivationChanged;
 
@@ -91,24 +71,14 @@ public sealed class PairingService
         LastErrorChanged?.Invoke();
     }
 
-    /// Query-only: what an immediate call to `CreateAndSendInvitationAsync` would replace, if anything.
-    /// Never mutates state - the UI calls this first so it can ask for explicit confirmation before an
-    /// unconfirmed, unexpired invitation is silently discarded (collar/pairing "Sending a new invite while
-    /// one is already outstanding").
+    /// Never mutates state.
     public OutstandingInvitation? DescribeOutstandingInvitation()
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return outgoingInvitation is { } o && o.ExpiresAt > now ? new OutstandingInvitation(o.Target, o.ExpiresAt) : null;
     }
 
-    /// Inviter side, step 1: create a single-use invitation via the relay and send its reference in one
-    /// tell. One click, one invitation, one tell (task 4.1). Callers should check
-    /// `DescribeOutstandingInvitation()` first and get explicit confirmation before calling through if it
-    /// returns non-null, since this always replaces any prior outgoing invitation without asking.
-    /// `direction` is which side of the resulting pairing this device will be on - OwnerSide for an Owner
-    /// or a Switch inviting a prospective Sub, SubSide for a Sub or a Switch inviting a prospective Owner.
-    /// collar/multi-pairing: holding other active pairings never blocks sending another invitation - only a
-    /// direction this device's Role doesn't support does.
+    /// Always replaces any prior outgoing invitation - check DescribeOutstandingInvitation() first.
     public async Task<bool> CreateAndSendInvitationAsync(string targetTellAddress, PairingDirection direction, CancellationToken ct)
     {
         if (config.Role == PluginRole.Owner && direction != PairingDirection.OwnerSide ||
@@ -117,9 +87,7 @@ public sealed class PairingService
             SetError("The current Role does not support that pairing direction.");
             return false;
         }
-        // A blank trigger phrase means incoming commands can never match once this device becomes the
-        // Sub-side of a pairing (collar/chat-transport's own listener refuses to match an empty trigger) -
-        // refused up front rather than letting pairing "succeed" into a relationship that can never work.
+        // A blank trigger phrase could never match incoming commands, so refuse up front.
         if (direction == PairingDirection.SubSide && string.IsNullOrWhiteSpace(config.TriggerPhrase))
         {
             SetError("Set a trigger phrase in Settings before pairing as Sub - without one, incoming commands can never apply.");
@@ -140,10 +108,7 @@ public sealed class PairingService
                 InviterDeviceKeyId = identity.DeviceKeyId!,
                 InviterPublicKey = identity.GetPublicKeyJwk(),
                 Role = direction == PairingDirection.OwnerSide ? "owner" : "sub",
-                // Empty must become null, not "": the Worker's own envelope reconstruction treats an
-                // empty triggerPhrase as absent (protocol/schemas), so this side's signed canonical form
-                // has to agree or the envelope's self-signature never verifies (collar/pairing bug: Accept
-                // failing with "relay rejected this request" whenever the accepter's trigger phrase is blank).
+                // Empty must become null: the Worker treats an empty triggerPhrase as absent, so the signed canonical form must agree.
                 TriggerPhrase = string.IsNullOrWhiteSpace(config.TriggerPhrase) ? null : config.TriggerPhrase.Trim(),
                 CreatedAt = now,
                 ExpiresAt = now + 900,
@@ -168,15 +133,10 @@ public sealed class PairingService
         }
     }
 
-    /// Receiver side, step 1: a `collarinvite <invitationId>` tell arrived from `senderName`@`senderWorld`
-    /// (already verified by Dalamud's own chat sender field - see ChatCommandListener). Fetches and
-    /// independently verifies the invitation's own signature before ever showing it as a Pending request;
-    /// a copied/forged reference that doesn't verify is silently dropped, never shown.
+    /// The invitation's signature is verified before it's ever shown; a forged reference is silently dropped.
     public async Task HandleInvitationTellAsync(string invitationId, string senderName, string senderWorld, CancellationToken ct)
     {
-        // collar/multi-pairing: holding other active pairings never blocks receiving a new one. Only one
-        // incoming request can be Pending at a time, though (same single-slot pattern as the outgoing side)
-        // - a second invitation arriving before the first is accepted or dismissed is dropped, not queued.
+        // Only one incoming request can be Pending; a second is dropped, not queued.
         if (Pending is not null)
         {
             Plugin.Log.Information("Relay invitation tell ignored: another pairing request is already pending.");
@@ -224,10 +184,7 @@ public sealed class PairingService
         PendingChanged?.Invoke();
     }
 
-    /// Receiver side, step 2: explicit Accept. Publishes a signed acceptance proof, then sends exactly one
-    /// bounded acknowledgement tell back to the inviter - this side does not consider itself paired yet
-    /// (collar/pairing "Relay acceptance lacks matching game identity" is the inviter's problem to solve,
-    /// not this side's; this side's own Pending clears either way once Accept is clicked).
+    /// This side isn't paired yet - the inviter activates after re-verifying the proof.
     public async Task<bool> AcceptPendingAsync(CancellationToken ct)
     {
         if (Pending is not { } request) return false;
@@ -238,23 +195,16 @@ public sealed class PairingService
             return false;
         }
 
-        // collar/multi-pairing: which side of the new pairing this device becomes is the opposite of what
-        // the inviter declared themselves as - derived from the invitation, not from this device's own
-        // Role, since a Switch's own Role doesn't say which direction any one pairing is.
+        // The opposite of what the inviter declared, since a Switch's Role doesn't say which direction this is.
         var direction = request.SenderRole == PluginRole.Owner ? PairingDirection.SubSide : PairingDirection.OwnerSide;
 
-        // See CreateAndSendInvitationAsync's matching check - accepting into a Sub-side pairing is just as
-        // pointless with a blank trigger phrase as sending into one.
         if (direction == PairingDirection.SubSide && string.IsNullOrWhiteSpace(config.TriggerPhrase))
         {
             SetError("Set a trigger phrase in Settings before accepting this - without one, incoming commands can never apply.");
             return false;
         }
 
-        // Pre-generated here (rather than left to PairingState's own default) so a same-moment collar
-        // ForceApply below can record ownership under the exact id this pairing will carry once
-        // ActivateLocally actually adds it to Pairings - that only happens later, once the background
-        // activation poll confirms the inviter's consume.
+        // Pre-generated so the collar applied below records the id this pairing will carry.
         var pairingId = Guid.NewGuid();
 
         try
@@ -269,10 +219,7 @@ public sealed class PairingService
                 AccepterPublicKey = identity.GetPublicKeyJwk(),
                 ProofDigest = proofDigest,
                 Role = direction == PairingDirection.OwnerSide ? "owner" : "sub",
-                // Empty must become null, not "": the Worker's own envelope reconstruction treats an
-                // empty triggerPhrase as absent (protocol/schemas), so this side's signed canonical form
-                // has to agree or the envelope's self-signature never verifies (collar/pairing bug: Accept
-                // failing with "relay rejected this request" whenever the accepter's trigger phrase is blank).
+                // Empty must become null: the Worker treats an empty triggerPhrase as absent, so the signed canonical form must agree.
                 TriggerPhrase = string.IsNullOrWhiteSpace(config.TriggerPhrase) ? null : config.TriggerPhrase.Trim(),
                 CreatedAt = now,
                 ExpiresAt = now + 900,
@@ -284,17 +231,7 @@ public sealed class PairingService
             var ack = composer.ComposePairingAck(request.Name, request.World, request.InvitationId, proofDigest);
             sender.Send(ack);
 
-            // collar/pairing "Accepting a pairing request applies a configured collar": a conditional side
-            // effect of acceptance itself, not a separate command - only when this device is becoming the
-            // Sub-side of the new pairing (collar/collaring only ever applies to this device's own Neck).
-            // Must run on the game's main thread - unlike ChatCommandListener's own synchronous call to this
-            // same method, this call happens after an `await ... ConfigureAwait(false)` above, so by this
-            // point execution has resumed on an arbitrary thread-pool thread. ForceApply -> ApplyAssignedMoodle
-            // -> MoodlesIpc.ApplyStatus touches Dalamud's ObjectTable.LocalPlayer, which throws
-            // "Not on main thread!" off the main thread - confirmed in-game: this exact exception was aborting
-            // the rest of Accept silently (Pending never cleared, the activation poll below never started),
-            // with no feedback to the user beyond a log line, since AcceptPendingAsync is invoked fire-and-
-            // forget from the Accept button.
+            // Must run on the main thread: we're past a ConfigureAwait(false), and the Moodles apply touches LocalPlayer.
             if (direction == PairingDirection.SubSide && config.Permissions.Collar && config.Collar.IsConfigured)
                 await Plugin.Framework.RunOnFrameworkThread(() => collar.ForceApply(pairingId)).ConfigureAwait(false);
 
@@ -302,8 +239,7 @@ public sealed class PairingService
             PendingChanged?.Invoke();
             SetError(null);
 
-            // The accepter never calls consume, so it has no other way to learn the pair epoch the inviter
-            // is about to assign - poll the deterministic pairIdHash (bounded) rather than block Accept on it.
+            // The accepter never calls consume, so it polls to learn the epoch the inviter assigned.
             _ = AwaitActivationAsync(request, direction, pairingId, ct);
             return true;
         }
@@ -314,10 +250,7 @@ public sealed class PairingService
         }
     }
 
-    /// Bounded background poll (accepter side): the inviter typically calls consume within seconds of
-    /// receiving the acknowledgement tell, so this checks every few seconds for up to two minutes before
-    /// giving up and surfacing an error - the accepted invitation itself already recorded this side's
-    /// consent; this is purely "learn what epoch the inviter assigned," not a second consent step.
+    /// Checks every few seconds for up to two minutes. Consent was already given; this only learns the epoch.
     private async Task AwaitActivationAsync(PendingPairingRequest request, PairingDirection direction, Guid pairingId, CancellationToken ct)
     {
         AwaitingActivation = true;
@@ -334,10 +267,7 @@ public sealed class PairingService
                 try
                 {
                     var pair = await relay.FetchPairAsync(pairIdHash, ct).ConfigureAwait(false);
-                    // collar/multi-pairing: fetch-by-hash returns whichever epoch is latest for these two
-                    // devices - if this pair already has another pairing (opposite direction), an early
-                    // poll can land on that prior epoch before the inviter's consume() creates this one.
-                    // That's a race, not a failure - keep polling instead of giving up.
+                    // A poll can land on this pair's other-direction epoch before the inviter's consume - a race, so keep polling.
                     if (ActivateLocally(pair, direction, pairingId, request.Name, request.World, inviterInvitation.InviterDeviceKeyId, inviterInvitation.InviterPublicKey, request.TriggerPhrase))
                     {
                         SetError(null);
@@ -346,7 +276,6 @@ public sealed class PairingService
                 }
                 catch (RelayException ex) when (ex.Code is "unauthorized" or "not_found")
                 {
-                    // Not activated yet (the inviter hasn't called consume) - keep waiting.
                 }
                 await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
             }
@@ -359,7 +288,6 @@ public sealed class PairingService
         }
         catch (OperationCanceledException)
         {
-            // Plugin shutting down or caller cancelled - not an error to surface.
         }
         finally
         {
@@ -368,28 +296,16 @@ public sealed class PairingService
         }
     }
 
-    /// Bounded retry/backoff for a transient relay hiccup while processing an acknowledgement tell (seconds
-    /// to wait after each failed attempt) - mirrors the intent behind AwaitActivationAsync's poll loop on
-    /// the accepter side, which the original relay design called for here too ("[Tell acknowledgement is
-    /// lost] -> allow a bounded resend/recheck") but never implemented. Total worst case (~46s) stays well
-    /// inside the invitation/acceptance's own 15-minute expiry.
+    /// Bounded retries for a transient relay failure (~46 s total, well inside the 15-minute expiry).
     private static readonly int[] AcknowledgementRetryDelaysSeconds = [2, 4, 8, 16, 16];
 
-    /// Inviter side, step 2: a `collarpairack <invitationId> <proofDigest>` tell arrived from a
-    /// server-verified sender. Activates the pairing only when the fetched invitation's acceptance proof
-    /// digest matches exactly what this tell carries - the tell's verified sender is what binds the relay's
-    /// claimed acceptance to an actual character; relay state alone is never sufficient (collar/pairing
-    /// "Relay acceptance lacks matching game identity"). A transient relay failure while fetching or
-    /// consuming is retried a bounded number of times before giving up and surfacing an error - previously
-    /// this failed silently into a log line with no way for the user to ever learn pairing didn't complete.
+    /// Activates only when the fetched acceptance's proof digest matches this tell. The tell's verified sender is what
+    /// binds the relay's claim to a real character; relay state alone is never enough.
     public async Task HandleAcknowledgementTellAsync(string invitationId, string proofDigestHex, string senderName, string senderWorld, CancellationToken ct)
     {
         if (outgoingInvitation is not { } outgoing || outgoing.InvitationId != invitationId)
         {
-            // Not an invitation we created (or already consumed) - ignore, never activate from claims. Logged
-            // (not just silently ignored) since this is otherwise indistinguishable from "the ack never
-            // arrived" from the accepter's perspective - e.g. a second `collarinvite` replaced this one
-            // before the peer's ack for the first arrived.
+            // Logged because, from the accepter's side, this looks the same as a lost ack.
             Plugin.Log.Information($"Relay acknowledgement tell ignored: invitationId {invitationId} does not match the current outstanding invitation ({outgoingInvitation?.InvitationId ?? "none"}).");
             return;
         }
@@ -413,10 +329,7 @@ public sealed class PairingService
                 outgoingInvitation = null;
                 config.PendingRelayOperations.RemoveAll(o => o.Kind == "pair-invite" && o.OperationId == invitationId);
 
-                // Unlike the accepter's own AwaitActivationAsync (which fetches by pairIdHash alone and can
-                // race a still-existing prior epoch between the same two devices), consume() always returns
-                // the envelope for *this exact* invitation - a mismatch here is a genuine protocol violation,
-                // not a race, so it's reported immediately rather than retried.
+                // consume() returns this exact invitation's envelope, so a mismatch is a protocol violation, not a race.
                 if (!ActivateLocally(pair, outgoing.Direction, Guid.NewGuid(), senderName, senderWorld, acceptance.AccepterDeviceKeyId, acceptance.AccepterPublicKey, acceptance.TriggerPhrase))
                     SetError("The relay returned pairing data that did not match the verified devices and roles.");
                 else
@@ -438,13 +351,8 @@ public sealed class PairingService
         }
     }
 
-    /// Returns whether a pairing was actually added. `pairIdHash` alone can't distinguish directions - the
-    /// same two devices pairing a second time (in the opposite direction) computes the *same* pairIdHash as
-    /// their first pairing (collar/multi-pairing: ComputePairIdHash is symmetric over just the two device
-    /// key ids), so a fetch-by-hash can return a *different, still-valid* epoch of the SAME hash whose
-    /// owner/sub don't match the direction currently being activated - not a protocol violation, just a
-    /// race against the inviter's own consume (see AwaitActivationAsync, which retries on `false` rather
-    /// than treating it as terminal).
+    /// Returns whether a pairing was added. pairIdHash is symmetric, so a fetch can return the other direction's epoch;
+    /// callers treat false as "not ready yet".
     internal bool ActivateLocally(PairEnvelope pair, PairingDirection direction, Guid pairingId, string peerName, string peerWorld, string peerDeviceKeyId, EcPublicKeyJwk peerPublicKey, string? peerTriggerPhrase)
     {
         var ownKeyId = identity.DeviceKeyId;
@@ -454,19 +362,9 @@ public sealed class PairingService
             pair.PairIdHash != RelayCrypto.ComputePairIdHash(ownKeyId!, peerDeviceKeyId))
             return false;
 
-        // collar/multi-pairing: re-pairing the same specific peer device in the same direction again
-        // (e.g. a retried/duplicated activation from the race above, or a genuine unpair-then-re-pair)
-        // updates that existing PairingState in place rather than adding a duplicate entry - this also
-        // means its revocation-sequence counters and Id (so anything already pointing at it, like
-        // ActivePairingId or CollarOwningPairingId, stays valid) survive the re-pair.
+        // Re-pairing the same peer device in the same direction updates in place, keeping Id and revocation counters.
         var existing = config.Pairings.FirstOrDefault(p => p.PeerDeviceKeyId == peerDeviceKeyId && p.Direction == direction);
-        // collar/multi-pairing: fetch-by-hash (AwaitActivationAsync's accepter-side poll) returns whichever
-        // epoch is currently latest for these two devices, which can be a *stale* epoch of this exact same
-        // direction if this pair was re-established before and the inviter's consume() for the new epoch
-        // hasn't landed yet - owner/sub keys alone can't tell a genuinely new pairing apart from a replay of
-        // an old one in that case, so a fetched epoch older than what's already on file for this peer+
-        // direction is treated as "not ready yet" (false, keep polling) rather than silently regressing this
-        // side's epoch out of sync with the peer's.
+        // An epoch older than ours for the same peer+direction is a stale fetch, not a new pairing - keep polling.
         if (existing is not null && pair.PairEpoch < existing.PairEpoch)
             return false;
         var pairing = existing ?? new PairingState { Id = pairingId, Direction = direction };
@@ -479,8 +377,7 @@ public sealed class PairingService
         pairing.PeerWorld = peerWorld;
         pairing.PeerTriggerPhrase = peerTriggerPhrase;
         pairing.Paired = true;
-        // The very first pairing this device ever gets becomes active by default; a later one added while
-        // another is already selected leaves that selection alone.
+        // The first pairing becomes active by default.
         if (existing is null)
         {
             config.Pairings.Add(pairing);
@@ -498,19 +395,13 @@ public sealed class PairingService
         pairing.Paired = false;
         config.Save();
         PairingEnded?.Invoke();
-        // collar/collaring: local collar effects only unwind when the ending pairing is this device's
-        // current collar-owning pairing - ending an unrelated pairing never touches the collar.
+        // Ending an unrelated pairing never touches the collar.
         if (config.CollarOwningPairingId == pairing.Id)
             collar.ReleaseOnUnpair();
         PairingActivated?.Invoke();
     }
 
-    /// collar/pairing "User resets the device identity": ends every active pairing first (local teardown
-    /// of each, then a best-effort revocation for each signed with the *old* identity - a revocation signed
-    /// by the new key wouldn't match the deviceKeyId the peer or relay have on file for that pair) before
-    /// the identity itself is replaced. Order matters: every ReleasePeer must complete before
-    /// DeviceIdentityService.ResetIdentity, since a revocation for one pairing can no longer be signed once
-    /// the identity underlying all of them has been swapped.
+    /// Every ReleasePeer must finish before the identity is replaced: revocations must be signed by the old key.
     public async Task ResetDeviceIdentityAsync(CancellationToken ct)
     {
         foreach (var pairing in config.Pairings.Where(p => p.IsPaired).ToList())
@@ -521,9 +412,7 @@ public sealed class PairingService
             if (pairIdHash is not null)
                 await revocation.PublishBestEffortAsync(pairing, pairIdHash, pairEpoch, "identity-reset", ct).ConfigureAwait(false);
 
-            // A retry signed by the retired identity cannot be authenticated after key replacement. The
-            // initial delivery was attempted above; discard any failed old-key entry rather than retaining
-            // a permanently unpublishable outbox item under the new identity.
+            // A retry signed by the retired identity can't be authenticated anymore, so drop it.
             config.RevocationOutbox.RemoveAll(o => o.PairIdHash == pairIdHash && o.PairEpoch == pairEpoch);
         }
         if (BeforeIdentityReset is { } beforeReset)
@@ -531,11 +420,7 @@ public sealed class PairingService
         identity.ResetIdentity();
     }
 
-    /// Deliberate manual release of one specific pairing (any direction, Owner-side or Sub-side - see
-    /// PanicHandler.ReleasePairing, which wraps this with the same local-state revert panic itself does).
-    /// Clears the captured peer identity entirely. Local teardown (clearing config) completes fully before
-    /// the best-effort revocation publish is even attempted, same ordering guarantee as PanicHandler always
-    /// used. Never touches any other pairing this device holds.
+    /// Local teardown completes before the best-effort revocation is attempted. Never touches other pairings.
     public void ReleasePeer(PairingState pairing, bool publishRelayRevocation = true)
     {
         var peerName = pairing.PeerName;

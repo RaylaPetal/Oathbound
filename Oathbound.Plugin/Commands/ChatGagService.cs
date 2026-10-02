@@ -14,16 +14,9 @@ namespace Oathbound.Plugin.Commands;
 
 #pragma warning disable CS0649 // assigned via reflection by Svc.Hook.InitializeFromAttributes, not by the compiler
 
-/// collar/restraints: the Gagged rule's chat-mangling restriction, plus its optional Customize+ preset.
-/// Intercepts outgoing chat at the same point GagSpeak hooks it - `ShellCommandModule.ProcessChatInput`,
-/// called after Enter is pressed but before the message is handed off to the server - and rewrites the
-/// actually-transmitted text to a garbled variant, not just the Sub's local display. This is a materially
-/// different automation surface from anything else in this plugin: it rewrites content the Sub themselves
-/// typed rather than blocking an input or command (see design.md's Risks/Trade-offs and the README's ToS-
-/// disclosure section). Same signature-hook risk/fail-closed posture as MovementLockService: if
-/// ProcessChatInput's signature doesn't resolve on the current game version, IsAvailable stays false and
-/// chat is never touched - the Customize+ preset calls are independently fail-closed via CustomizePlusIpc's
-/// own try/catch, so a missing Customize+ install never blocks the chat-garble restriction itself.
+/// The Gagged rule: rewrites outgoing chat in ShellCommandModule.ProcessChatInput (after Enter, before the server),
+/// plus its optional Customize+ preset. Rewriting text the Sub typed is a heavier automation surface than anything
+/// else here. Fails closed: if the signature doesn't resolve, chat is never touched.
 public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
 {
     private const string SigProcessChatInput = "E8 ?? ?? ?? ?? FE 87 ?? ?? ?? ?? C7 87";
@@ -37,10 +30,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
 
     private bool active;
 
-    /// Every device currently holding a Customize+ preset applied via its Gagged rule, keyed by device id
-    /// (or ad-hoc/catalog runtime id) exactly like RestraintCommand.boundAnimations - lets a device's own
-    /// release revert only its own preset even while another device's Gagged rule (with a different or no
-    /// preset) stays active elsewhere.
+    /// Keyed per device, so releasing one device reverts only its own preset.
     private readonly Dictionary<string, Guid> activeCustomizePresets = new();
 
     private static readonly HashSet<string> ChatChannelCommands = new(StringComparer.OrdinalIgnoreCase)
@@ -72,12 +62,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
 
     public void Release() => active = false;
 
-    /// collar/restraints "Optional Customize+ preset on Gagged": resolves `selector` (the wire-format
-    /// preset id/label, escaped the same way ReadableAnimation escapes animation labels) against the
-    /// Sub's own Customize+ profiles and applies it, tracked per `deviceId` so releasing one device never
-    /// touches another device's separately-configured preset. Never blocks or rolls back the caller's
-    /// device-apply on failure - a missing/renamed profile or unavailable Customize+ install just means the
-    /// preset silently does not apply, per the "Gagged Customize+ degrades gracefully" spec requirement.
+    /// Never blocks or rolls back the device apply; a missing profile or plugin just means no preset.
     public void ApplyCustomizePreset(string deviceId, string? selector)
     {
         if (string.IsNullOrWhiteSpace(selector))
@@ -98,8 +83,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         customizePlusIpc.RevertProfile(profileId);
     }
 
-    /// Mirrors RestraintCommand.ReleaseAllBoundAnimationsForPanic's "drop bookkeeping unconditionally"
-    /// shape - called from there so ForceUnlock and panic teardown both revert every active preset.
+    /// Called from there, so ForceUnlock and panic both revert every preset.
     public void RevertAllCustomizePresetsForPanic()
     {
         foreach (var profileId in activeCustomizePresets.Values)
@@ -117,8 +101,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         if (byName.Name is not null)
             return byName.UniqueId;
 
-        // Same '·'-for-',' escape RestraintCommand.ReadableAnimation applies to animation labels before
-        // they go on the wire - undo it before matching by name, mirroring RestraintCommand.ResolveAnimation.
+        // Undo the middle-dot escape for commas before matching by name.
         if (!selector.Contains('·'))
             return null;
         var unescaped = selector.Replace('·', ',');
@@ -154,14 +137,11 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         processChatInputHook!.Original(uiModule, message, a3);
     }
 
-    /// A simple, self-contained muffled-speech transform: every alphabetic character becomes a syllable
-    /// from a small gag-speak set, punctuation/spacing is preserved so the message still reads as a real
-    /// muffled utterance rather than a wall of one repeated token.
+    /// Each letter becomes a muffled syllable; punctuation and spacing are kept.
     private static readonly string[] Syllables = ["mm", "mph", "hmm", "mmf", "mrph"];
 
-    /// Rewrites speech in every selectable chat channel while retaining the slash command and, for
-    /// tells, its recipient. Non-chat slash commands must pass through unchanged: gagging `/sit`, an
-    /// emote, or an Oathbound command would change behavior rather than muffle speech.
+    /// Rewrites speech in chat channels, keeping the slash command and a tell's recipient. Other slash commands
+    /// pass through unchanged.
     internal static string RewriteOutgoingChat(string text)
     {
         if (string.IsNullOrWhiteSpace(text) || text[0] != '/')
@@ -176,8 +156,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         if (command.Equals("/tell", StringComparison.OrdinalIgnoreCase)
             || command.Equals("/t", StringComparison.OrdinalIgnoreCase))
         {
-            // Player names contain a space. ChatComposer uses Name@World, so the first whitespace
-            // following the world suffix is the unambiguous start of the tell body.
+            // Names contain a space; ChatComposer uses Name@World, so the first whitespace after the world starts the body.
             var worldSeparator = text.IndexOf('@', commandEnd + 1);
             if (worldSeparator < 0)
                 return text;
@@ -229,11 +208,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
            || body.StartsWith("collarpairack ", StringComparison.OrdinalIgnoreCase)
            || body.StartsWith("collarunpair ", StringComparison.OrdinalIgnoreCase);
 
-    /// collar/restraint-restrictions "Gagged toggle chat restriction": text between a pair of `*`
-    /// characters (the FFXIV RP convention for an inline emote/action) passes through unmangled, `*`
-    /// included, so a gagged Sub can still perform an emote inline with garbled speech. Matching is a
-    /// simple left-to-right toggle on each literal `*` - not a "must be closed" parser - so an unmatched
-    /// trailing `*` exempts the rest of the message rather than being treated as an error.
+    /// Text between `*` pairs (inline RP emotes) passes through. A simple toggle, so an unmatched `*` exempts the rest.
     internal static string Garble(string text)
     {
         var sb = new StringBuilder();

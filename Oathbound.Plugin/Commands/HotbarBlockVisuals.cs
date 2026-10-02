@@ -9,25 +9,17 @@ using FFXIVClientStructs.Interop;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/restraint-restrictions "Action Block is visible on the Sub's hotbars": the visual half of
-/// ActionBlockService - enforcement stays in its UseAction detour, this only makes the block visible. Same
-/// approach as GagSpeak's HotbarActionController/AddonHotbar: nothing is drawn, every blockable slot is
-/// swapped in memory (`RaptureHotbarModule.Hotbars`) to a real action the player can never use, so the game
-/// itself renders its greyed icon with the red slash. `Set` never touches `SavedHotbars`, so
-/// `LoadSavedHotbar` restores the exact saved layout, and a crash/relog needs no cleanup at all. The hotbar is
-/// locked (and its lock toggle hidden) while shown so the Sub can't drag a placeholder into another slot -
-/// the one path where the game would write a placeholder into the saved layout.
-///
-/// Every entry point is best-effort and swallows its own failures: a broken visual must never affect the
-/// block itself (fail-closed on the block, fail-open on the visuals).
+/// Shows Action Block on the hotbars; ActionBlockService does the actual blocking. Nothing is drawn: blockable
+/// slots are swapped in memory to an always-unusable action, so the game renders its greyed icon. SavedHotbars is
+/// never touched, so a reload restores the layout and a crash needs no cleanup. The hotbar is locked while shown
+/// so a placeholder can't be dragged into the saved layout. Every entry point swallows its own failures - the
+/// visuals must never affect the block itself.
 public sealed unsafe class HotbarBlockVisuals
 {
-    /// One of GagSpeak's always-unusable override actions (its BoundArms override) - the game renders it
-    /// greyed out with the red slash on every job.
+    /// An always-unusable action the game renders greyed out with a red slash on every job.
     private const uint PlaceholderActionId = 68;
 
-    /// `_ActionBar`'s lock toggle component node (hidden while shown), as used by GagSpeak's AddonHotbar
-    /// (itself from SimpleTweaks).
+    /// `_ActionBar`'s lock toggle node, hidden while shown.
     private const uint LockToggleNodeId = 21;
 
     private bool shown;
@@ -35,8 +27,7 @@ public sealed unsafe class HotbarBlockVisuals
 
     public bool IsShown => shown;
 
-    /// The lock is changed on the next framework tick, never inline: Show/Hide run from inside the chat
-    /// message hook (an Owner's restraint tell), and changing hotbar UI state from there crashed the game.
+    /// Deferred to the next tick: this runs inside the chat hook, and changing hotbar UI state there crashed the game.
     public void Show()
     {
         shown = true;
@@ -61,10 +52,7 @@ public sealed unsafe class HotbarBlockVisuals
         });
     }
 
-    /// collar/restraint-restrictions "Job change while blocked": job, gearset and PvP changes make the game
-    /// reload its hotbars from the saved layout, undoing the swap. Rather than hooking every reload path,
-    /// re-swap whatever blockable slot shows up while shown - cheap (a few hundred slot reads) and
-    /// idempotent, since already-swapped slots hold the placeholder and are skipped.
+    /// Job, gearset and PvP changes reload the saved layout, so re-swap any blockable slot while shown. Idempotent.
     public void OnFrameworkUpdate()
     {
         if (shown)
@@ -184,9 +172,7 @@ public sealed unsafe class HotbarBlockVisuals
         }
     }
 
-    /// Through the game's own "Lock hotbar" UI option rather than firing the `_ActionBar` lock toggle's
-    /// callback: that fake click went through AgentHUD.ReceiveEvent (and every other plugin's callback
-    /// hook) and could crash the game with a native access violation no try/catch can stop.
+    /// Via the "Lock hotbar" option rather than a fake toggle click, which could crash the game.
     private static bool IsLocked() => Plugin.GameConfig.TryGet(UiConfigOption.HotbarLock, out bool locked) && locked;
 
     private static void SetLocked(bool locked) => Plugin.GameConfig.Set(UiConfigOption.HotbarLock, locked);

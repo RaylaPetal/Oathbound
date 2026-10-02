@@ -8,20 +8,13 @@ using Glamourer.Api.Enums;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/outfit: alias-triggered wardrobe changes applied via Glamourer, plus the Owner's "joker"
-/// override (ForceApply/ForceUnlock - see ChatCommandListener's reserved-keyword grammar). A
-/// force-applied outfit locks out the Sub's own alias-triggered Apply/Unlock until the matching
-/// ForceUnlock (or panic) releases it - the Sub set up their aliases, but a forced outfit always wins over
-/// them while it's in effect (SubRuntimeState.OutfitForceLocked, independent of slot locking below).
-/// Locking a design only locks the equipment slots that design itself changes (collar/slot-locking), via
-/// SlotLockManager - never Glamourer's own actor-wide lock. Scanning stays local-only under the chat
-/// transport (collar/gesture's sibling "Catalog shared with paired Owner" requirement was removed for
-/// outfit too, in spirit - see design.md's "Gesture/Wardrobe catalog stays local-scan-only" decision).
+/// Alias-triggered outfit changes plus the Owner's force-apply, which locks out the Sub's own aliases until released.
+/// Locking only locks the slots the design changes.
 public sealed class OutfitCommand
 {
     private const string Owner = "Outfit";
 
-    /// This command's SlotLockManager owner name - Restraints may take over slots it holds.
+    /// Restraints may take over slots this owner holds.
     public const string SlotLockOwner = Owner;
 
     private const string RestraintsSlotLockOwner = "Restraints";
@@ -32,10 +25,10 @@ public sealed class OutfitCommand
     private readonly SubRuntimeState runtimeState;
     private readonly MoodlesCommand moodles;
 
-    /// How many designs the last wardrobe scan found in total, before the allowlist filter.
+    /// Before the allowlist filter.
     public int? LastScanTotalDesigns { get; private set; }
 
-    /// Why the last wardrobe scan couldn't run (Glamourer not loaded / IPC failed), or null if it succeeded.
+    /// Null on success.
     public string? LastScanError { get; private set; }
 
     public OutfitCommand(PluginConfig config, GlamourerIpc glamourer, SlotLockManager slotLocks, SubRuntimeState runtimeState, MoodlesCommand moodles)
@@ -55,10 +48,7 @@ public sealed class OutfitCommand
         return ApplyDesign(alias.DesignId, alias.DesignName, alias.Locked, alias.AttachedMoodle, moodleOverride: null);
     }
 
-    /// Releases whichever slots the currently-locked design claimed, plus the current outfit's attached
-    /// moodle - even when nothing was locked, since an unlocked outfit has no other way to be cleared
-    /// (collar/attached-moodles "Unlock clears an unlocked outfit's moodle"). Never changes the Sub's look.
-    /// The receiver exposes this through the fixed `unlock` vocabulary rather than a mutable alias.
+    /// Also clears the outfit's attached moodle even when nothing was locked. Never changes the look.
     public bool Unlock()
     {
         if (runtimeState.OutfitForceLocked)
@@ -71,14 +61,8 @@ public sealed class OutfitCommand
         return hadLock || hadMoodle;
     }
 
-    /// The Owner's direct override: matches `designName` against the Sub's own scanned+allowlisted
-    /// catalog (case-insensitive) - the Owner never sees design IDs, only whatever name the Sub told them
-    /// out of band. Always locks. `moodleOverride` is the Owner's optional `moodle:"..."` pick
-    /// (collar/attached-moodles), used instead of the Sub's default when allowed. A design name carries no
-    /// moodle of its own - the Sub attaches moodles to outfit aliases - so the default here is the moodle of
-    /// the first alias the Sub made for this same design that has one, if any. `lockOutfit` false is the
-    /// Owner's `outfit wear <name>`: the same apply, but nothing is locked - neither the design's slots nor
-    /// the Sub's own outfit aliases - so the Sub can change it freely afterwards.
+    /// The Owner only knows the design's name. The default moodle comes from the first alias for this design that has one.
+    /// `lockOutfit` false is `outfit wear`: nothing is locked.
     public (bool Success, string? Reason) ForceApply(string designName, string? moodleOverride = null, bool lockOutfit = true)
     {
         var design = config.WardrobeMapping.LocalDesigns.Values
@@ -95,13 +79,8 @@ public sealed class OutfitCommand
         return (true, null);
     }
 
-    /// The only thing that can release a force-applied outfit besides panic. Like Unlock, also clears the
-    /// current outfit's attached moodle whether or not a slot was locked.
-    /// The Owner's `revert all`: releases the outfit (locks and attached moodle), then reverts the whole
-    /// character back to Glamourer automation - like panic, but the collar's own slot lock is never released,
-    /// so lock enforcement puts the collar piece straight back on (and VerifySoon re-checks in case the
-    /// revert's state-change event raced it). Anything else still locked at that point is reasserted the same
-    /// way; the caller releases restraints first so nothing but the collar is left to reassert.
+    /// The Owner's `revert all`. The collar's slot lock is kept, so enforcement (and VerifySoon) puts its piece back.
+    /// The caller releases restraints first so only the collar is left to reassert.
     public bool RevertToBase()
     {
         ForceUnlock();
@@ -120,18 +99,11 @@ public sealed class OutfitCommand
         return hadLock || hadMoodle;
     }
 
-    /// Applies a design's full look via Glamourer, then - if requested - locks exactly the equipment
-    /// slots that design itself changes (`Equipment.*.Apply`, see GlamourerIpc.GetDesignEquipSlots), via
-    /// SlotLockManager. Any slot the design touches that's already locked by a *different* owner (e.g. the
-    /// Sub's collar holding Neck) is skipped rather than refusing the whole apply - immediately restored to
-    /// its already-locked value right after Glamourer applies the design, so that slot never visibly
-    /// changes and stays under its existing owner's lock, while every other slot the design changes still
-    /// applies and locks normally. The design apply itself never locks through Glamourer's own state.
+    /// A slot already locked by another owner (e.g. the collar's Neck) is restored right after the apply, so it never
+    /// visibly changes; every other slot the design changes applies and locks normally.
     private (bool Success, string? Reason) ApplyDesign(Guid designId, string designName, bool locked, AttachedMoodleRef? defaultMoodle, string? moodleOverride)
     {
-        // A new outfit replaces the current one: drop the previous outfit's slot locks first, so an unlocked
-        // outfit applied after a locked one isn't snapped back to the old pieces by lock enforcement, and a
-        // locked one doesn't leave the old design's extra slots locked alongside its own.
+        // Drop the previous outfit's locks first, so enforcement doesn't snap back to the old pieces.
         if (slotLocks.HasLock(Owner))
             slotLocks.Release(Owner);
 
@@ -146,14 +118,12 @@ public sealed class OutfitCommand
             return (false, reason);
         }
 
-        // collar/attached-moodles: the look changed, so this is now the current outfit - its moodle replaces
-        // the previous outfit's (or clears it, if this one carries none).
+        // This one's moodle replaces the previous outfit's, or clears it.
         moodles.HoldAttached(AttachedMoodleLedger.OutfitSource, defaultMoodle, moodleOverride);
 
         foreach (var (slot, conflictOwner) in conflicts)
         {
-            // Restraints supersede outfits: a slot an active restraint covers keeps the restraint's piece,
-            // and this outfit's own piece for it is set aside to come back when the restraint is removed.
+            // A slot an active restraint covers keeps its piece; this outfit's piece is set aside for later.
             if (conflictOwner == RestraintsSlotLockOwner && glamourer.GetEquipSlotValue(slot) is { } designPiece)
                 slotLocks.SetAsideUnder(slot, Owner, new SlotLockValue(designPiece.ItemId, designPiece.Stain, designPiece.Stain2));
             if (slotLocks.GetLockedValue(slot) is { } existingLock)
@@ -180,14 +150,10 @@ public sealed class OutfitCommand
         return (true, $"Skipped {skipped} - already locked by something else.");
     }
 
-    /// Sub-side: rescan the Sub's own Glamourer designs; an empty folder scope includes all designs. Purely
-    /// local - there is no live channel to push the result anywhere; the Sub picks a design here to name
-    /// an alias after in the Wardrobe tab.
+    /// An empty folder scope includes all designs.
     public void Rescan()
     {
-        // collar/catalog-sync "a category whose rescan fails keeps its previously scanned catalog": an
-        // unavailable Glamourer throws from the IPC call, before anything below is touched - caught here
-        // so the scheduled rescan (and the button) report it instead of letting it escape.
+        // An unavailable Glamourer throws here, before anything is touched, so the previous catalog survives.
         IReadOnlyList<GlamourerDesign> allDesigns;
         try
         {
@@ -215,8 +181,6 @@ public sealed class OutfitCommand
     private static bool IsUnderFolder(string fullPath, string folder) =>
         fullPath.StartsWith(folder.TrimEnd('/') + "/", StringComparison.OrdinalIgnoreCase);
 
-    /// collar/catalog-sync: every scanned (allowlist-filtered) design's display name, deduplicated - the
-    /// same plain-name shape Settings' former "Copy names" button produced.
     public IReadOnlyList<string> ExportNames() =>
         config.WardrobeMapping.LocalDesigns.Values.Select(d => d.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 }

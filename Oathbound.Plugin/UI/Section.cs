@@ -5,15 +5,8 @@ using Dalamud.Bindings.ImGui;
 
 namespace Oathbound.Plugin.UI;
 
-/// A labeled group inside a tab - the plugin's one "these controls belong together" primitive, used so every
-/// module and settings page splits into the same kind of bordered, tinted blocks instead of one long run of
-/// controls. `using (Section.Begin("id", "Heading")) { ... }` - early returns inside the `using` still close it.
-///
-/// A real child window (true padding on every side, its own draw list - safe for the rule editor's legacy
-/// Columns - and the purple border Theme.PushWindowStyle sets). These ImGui bindings predate
-/// ImGuiChildFlags.AutoResizeY, so the child is sized to the content height it measured the previous frame -
-/// the same "measure at the end of Draw, apply next frame" approach CollarWindow uses for its own height. A
-/// section's very first frame uses a small default, so it can look clipped for that one frame only.
+/// A labeled, bordered group inside a tab. A real child window, sized from the content height measured last frame
+/// (these bindings predate AutoResizeY), so its very first frame may look clipped.
 public sealed class SectionScope : IDisposable
 {
     private const float FirstFrameHeight = 40f;
@@ -43,15 +36,10 @@ public sealed class SectionScope : IDisposable
             return;
         disposed = true;
 
-        // Only measure a frame whose contents were actually laid out. A section scrolled fully out of view
-        // gets its items skipped by ImGui (BeginChild returns false), so the cursor never advances - measuring
-        // then would record an empty box, shrink it next frame, shorten the whole tab, make ImGui clamp the
-        // parent's scroll position, bring the section back into view, re-measure it at full size... which is
-        // exactly the scroll-jumping/jitter this guard prevents. An off-screen section keeps its last height.
+        // A section scrolled out of view gets its items skipped; measuring then would shrink it and cause scroll jitter.
         if (contentsDrawn)
         {
-            // Cursor Y after the last item already includes that item's trailing ItemSpacing - swap it for the
-            // bottom WindowPadding so the space below the last control matches the space above the first.
+            // Swap the last item's trailing ItemSpacing for the bottom WindowPadding.
             var style = ImGui.GetStyle();
             MeasuredHeights[key] = ImGui.GetCursorPosY() - style.ItemSpacing.Y + style.WindowPadding.Y;
         }
@@ -63,10 +51,7 @@ public sealed class SectionScope : IDisposable
     }
 }
 
-/// A bordered, scrolling list sized to its own content (measured the previous frame, same approach as
-/// SectionScope), capped at `maxHeight` (required inside a Section) or else at whatever room is left in the
-/// window - so a short list isn't
-/// stretched into a mostly-empty box, and a long one never pushes the tab past the window's bottom edge.
+/// A scrolling list sized to its content, capped at `maxHeight` or the room left in the window.
 public sealed class ListScope : IDisposable
 {
     private const float MinHeight = 60f;
@@ -80,9 +65,8 @@ public sealed class ListScope : IDisposable
     {
         var childId = $"##list_{id}";
         key = ImGui.GetID(childId);
-        // An explicit maxHeight is used as-is: inside a Section (itself sized from last frame's content) the
-        // "room left" would just be the list's own previous height, and the two would shrink each other.
-        // Otherwise leave room for the spacing ImGui adds after the child, or the parent gains a scrollbar.
+        // Inside a Section, "room left" is the list's own last height and the two would shrink each other.
+        // Otherwise leave room for the spacing after the child, or the parent gains a scrollbar.
         var cap = Math.Max(MinHeight, maxHeight ?? ImGui.GetContentRegionAvail().Y - ImGui.GetStyle().ItemSpacing.Y);
         var height = MeasuredHeights.TryGetValue(key, out var measured) ? Math.Min(measured, cap) : cap;
         contentsDrawn = ImGui.BeginChild(childId, new Vector2(0, Math.Max(MinHeight, height)), true);
@@ -94,7 +78,7 @@ public sealed class ListScope : IDisposable
             return;
         disposed = true;
 
-        // GetCursorPosY is in content space (scroll-independent), so this is the full list height.
+        // Content space, so this is the full list height.
         if (contentsDrawn)
         {
             var style = ImGui.GetStyle();
@@ -110,7 +94,6 @@ public static class Section
 
     public static ListScope List(string id, float? maxHeight = null) => new(id, maxHeight);
 
-    /// An accent-colored label with a rule under it - a section's title.
     public static void Heading(string text)
     {
         ImGui.PushStyleColor(ImGuiCol.Text, Theme.AccentHover);
@@ -119,7 +102,6 @@ public static class Section
         ImGui.Separator();
     }
 
-    /// A sub-part heading inside a section - same look as Heading, with a little space above it.
     public static void SubHeading(string text)
     {
         ImGui.Spacing();

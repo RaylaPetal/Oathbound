@@ -12,10 +12,7 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// Uniform, non-enumerating error surface matching protocol/schemas/error.schema.json's `code` enum, plus
-/// local-only codes ("not_configured", "network") for failures the relay itself never produces. Every
-/// RelayClient method throws this and nothing else on failure - callers branch on `Code`/`RetryAfterSeconds`
-/// rather than parsing exception messages.
+/// The only exception RelayClient throws. Codes match error.schema.json, plus local "not_configured"/"network".
 public sealed class RelayException : Exception
 {
     public string Code { get; }
@@ -38,7 +35,6 @@ internal sealed class InvitationStatusBody
 {
     [JsonPropertyName("status")] public string Status { get; set; } = "";
 }
-/// collar/pairing-recovery: PUT /v1/backups/{backupId} body (protocol/schemas/backup.schema.json).
 internal sealed class BackupBody
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "backup";
@@ -108,8 +104,7 @@ internal sealed class MailboxConsumeResponseBody
     [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
 }
 
-/// Sub-side: the Owner's current receive key plus the delivery receipt - which push is waiting, which was last
-/// consumed - see worker/src/routes/mailbox.ts `fetchMailboxKey`.
+/// The Owner's current receive key plus the delivery receipt.
 public sealed class CatalogMailboxKeyInfo
 {
     [JsonPropertyName("key")] public CatalogMailboxKeyEnvelope Key { get; set; } = new();
@@ -117,7 +112,6 @@ public sealed class CatalogMailboxKeyInfo
     [JsonPropertyName("lastConsumedSnapshotId")] public int? LastConsumedSnapshotId { get; set; }
 }
 
-/// What the Owner learns from one cheap mailbox check - see worker/src/routes/mailbox.ts `mailboxStatus`.
 public sealed class CatalogMailboxStatus
 {
     [JsonPropertyName("hasKey")] public bool HasKey { get; set; }
@@ -128,21 +122,14 @@ public sealed class CatalogMailboxStatus
     [JsonPropertyName("lastUploadAt")] public long? LastUploadAt { get; set; }
 }
 
-/// The plugin's one HTTP boundary to the Cloudflare relay (collar/relay-service). Every mutating call signs
-/// a request-signing envelope (protocol/constants.json `requestSigning`) with the device identity's own
-/// signing key; read-only fetches are capability-only, matching the Worker's auth model exactly (see
-/// worker/src/lib/auth.ts). Bounded timeout, cancellation-aware, and never retries here - retry/backoff is
-/// the caller's responsibility (Relay/PairingService.cs, Relay/RevocationService.cs) so this stays a thin,
-/// predictable transport.
+/// The plugin's one HTTP boundary to the relay. Mutating calls are signed with the device key; reads are
+/// capability-only. Never retries here - callers own retry/backoff.
 public sealed class RelayClient : IDisposable
 {
     public const string RelayOrigin = "https://oathbound-relay-staging.oathbound.workers.dev";
     private static readonly Uri RelayBaseUri = new(RelayOrigin, UriKind.Absolute);
     private const int MaxJsonResponseBytes = RelayProtocolConstants.CatalogCiphertextMaxBytes * 2;
-    /// Omitting null-valued properties on write is load-bearing, not cosmetic: EnvelopeCanonical treats a
-    /// null property as absent (matching the wire schemas' optional fields), so the literal wire body must
-    /// agree - otherwise the server parses e.g. `"status":null` as a present key, canonicalizes a different
-    /// value than this client signed over, and every request fails signature verification.
+    /// Omitting nulls is load-bearing: the server would canonicalize `"x":null` as a present key and every signature would fail.
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = null, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
     private readonly HttpClient http;
@@ -180,8 +167,7 @@ public sealed class RelayClient : IDisposable
 
     public Task<PairEnvelope> ConsumeInvitationAsync(string invitationId, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Post, $"/v1/invitations/{invitationId}/consume", null, ct);
-    /// collar/pairing: the inviter withdraws a code invitation - "cancelled" if unused, "rejected" if it was
-    /// already accepted (the inviter declined that character).
+    /// "cancelled" if unused, "rejected" if it was already accepted.
     public async Task<string> CancelInvitationAsync(string invitationId, CancellationToken ct) =>
         (await SendSignedAsync<InvitationStatusBody>(HttpMethod.Post, $"/v1/invitations/{invitationId}/cancel", null, ct).ConfigureAwait(false)).Status;
 
@@ -189,11 +175,10 @@ public sealed class RelayClient : IDisposable
 
     public Task<PairEnvelope> FetchPairAsync(string pairIdHash, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}", null, ct);
-    /// collar/pairing "Unpairing reaches the other person": one exact pairing's row, so a mutual pair (same
-    /// hash, other direction, other epoch) is never mistaken for this one.
+    /// One exact pairing's row, so a mutual pair's other epoch is never mistaken for it.
     public Task<PairEnvelope> FetchPairAtEpochAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}?epoch={pairEpoch}", null, ct);
-    // ---- Backups (collar/pairing-recovery) ----
+    // ---- Backups ----
     public Task PutBackupAsync(string backupId, string nonce, string ciphertext, CancellationToken ct) =>
         SendSignedAsync<BackupStatusBody>(HttpMethod.Put, $"/v1/backups/{backupId}", new BackupBody { Nonce = nonce, Ciphertext = ciphertext }, ct);
     public Task<StoredBackup> FetchBackupAsync(string backupId, CancellationToken ct) =>
@@ -233,9 +218,8 @@ public sealed class RelayClient : IDisposable
     }
 
     // ---- Catalog mailbox (automatic sync) ----
-    // All signed POSTs. `not_found` means different things per route: from Fetch/Upload it is "the Owner has
-    // never published a receive key"; from Status (which otherwise always answers) it can only mean a relay
-    // that predates the mailbox - callers treat that as "automatic sync unsupported", not an error.
+    // `not_found` from Fetch/Upload means no receive key was published; from Status it means a relay without the
+    // mailbox, which callers treat as "automatic sync unsupported".
 
     public Task<CatalogMailboxKeyEnvelope> PublishMailboxKeyAsync(CatalogMailboxKeyEnvelope key, CancellationToken ct) =>
         SendSignedAsync<CatalogMailboxKeyEnvelope>(HttpMethod.Post, "/v1/catalog/mailbox/key",
@@ -270,8 +254,7 @@ public sealed class RelayClient : IDisposable
         var bodyJson = body is null ? "{}" : JsonSerializer.Serialize(body, body.GetType(), JsonOptions);
         if (Encoding.UTF8.GetByteCount(bodyJson) > MaxJsonResponseBytes)
             throw new RelayException("payload_too_large", null, "Relay request exceeded the local payload limit.");
-        // The Worker treats an absent/empty body as {} (worker/src/lib/auth.ts), never as JSON null - the
-        // digest must be computed over the same canonical value the server will reconstruct.
+        // The Worker treats an absent body as {}, so the digest must be computed over the same value.
         var bodyCanonical = body is null ? CanonicalJson.Serialize(new Dictionary<string, object?>()) : EnvelopeCanonical.SerializeFull(body);
         var bodyDigest = RelayCrypto.Sha256Hex(bodyCanonical);
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -290,8 +273,7 @@ public sealed class RelayClient : IDisposable
         return await SendAsync<TResponse>(request, ct).ConfigureAwait(false);
     }
 
-    /// Read-only fetches: the capability id in the path is itself the proof of possession, so these need no
-    /// signature at all (see worker/src/routes/invitations.ts `fetchInvitation`).
+    /// The capability id in the path is the proof of possession, so no signature.
     private async Task<TResponse> SendUnsignedAsync<TResponse>(HttpMethod method, string path, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(method, new Uri(RelayBaseUri, path));

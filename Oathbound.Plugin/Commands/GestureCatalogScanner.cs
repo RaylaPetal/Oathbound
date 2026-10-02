@@ -20,8 +20,7 @@ public sealed record PenumbraOptionScanEntry(string Id, string ModDirectory, str
 public sealed record PenumbraModScanEntry(string Id, string ModDirectory, string ModName,
     Dictionary<string, List<string>> SavedSelections, bool ModEnabled, IReadOnlySet<uint> ChangedItemIds);
 
-/// PoseKit-equivalent reader for Penumbra's real option manifests. It preserves author-facing option
-/// names instead of flattening an entire mod to GetChangedItems labels.
+/// Reads Penumbra's option manifests directly, keeping author-facing option names.
 public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
 {
     private sealed record ModMetaDto(DefaultDataDto? DefaultData, List<GroupDto>? Groups);
@@ -109,11 +108,7 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
                 for (var optionOrder = 0; optionOrder < group.Options.Count; optionOrder++)
                 {
                     var option = group.Options[optionOrder];
-                    // Not `.ToDictionary(g => g.Name, ...)` - real mods can have two option groups that
-                    // share the same displayed name (an empty/missing name in a group's own JSON, or
-                    // just author choice), which would throw here exactly like the same-shaped bug in
-                    // GestureCommand.Rescan's own dictionary build. Last-one-wins on a name collision
-                    // instead of crashing the whole scan.
+                    // Not ToDictionary: groups can share a display name. Last one wins instead of crashing the scan.
                     var selections = new Dictionary<string, List<string>>();
                     foreach (var g in groups.Where(g => !g.Implicit))
                         selections[g.Name] = g == group ? SelectionFor(g, option.Name) : g.Selected.ToList();
@@ -189,14 +184,8 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
     private sealed record Option(string Name, IEnumerable<string> Paths);
     private sealed record Group(string Name, bool Multi, bool Implicit, List<Option> Options, HashSet<string> Selected);
 
-    /// Reads the mod's own on-disk meta.json directly - Penumbra's mod-meta file format (schema version
-    /// 4): a single JSON file per mod holding "DefaultData": {"Files": {gamePath: redirect}} for the
-    /// mod's always-active files, plus "Groups": [{"Type": "Single"|"Multi", "Name": ..., "Options":
-    /// [{"Name": ..., "Files": {gamePath: redirect}}]}] for its option groups, in manifest order. Older
-    /// Penumbra versions split this across a separate default_mod.json plus one group_*.json per group;
-    /// Penumbra migrates existing mods to the single meta.json in place (renaming the old files to
-    /// .bak), so only the current format needs reading - see PoseKit's PenumbraPoseScanner, confirmed
-    /// against a real installed mod, for the same fix applied there first.
+    /// Reads the mod's meta.json (schema 4): DefaultData plus Groups in manifest order. Penumbra migrates older
+    /// split-file mods to this format in place, so only it needs reading.
     private static List<Group> ReadGroups(string modPath, string modName, Dictionary<string, List<string>>? current)
     {
         var groups = new List<Group>();
@@ -247,20 +236,17 @@ internal static partial class GestureTriggerResolver
             }
             var baseGroundSit = path.EndsWith("/jmn.pap", StringComparison.OrdinalIgnoreCase);
             if (baseGroundSit) Add(new GestureTrigger { Kind = GestureTriggerKind.Pose, EmoteModeId = 1, CPoseState = 0 });
-            // collar/gesture: `Length: > 0` (not just `is { }`) - some emotes resolve via Lookup with a
-            // valid row reference but blank TextCommand text (see BuildIndex), which would otherwise
-            // catalog an unplayable "/ motion"-style trigger that always fails when played.
+            // `Length: > 0`: some emotes resolve with blank command text, which would catalog an unplayable trigger.
             else if (path.EndsWith(".pap", StringComparison.OrdinalIgnoreCase) && Lookup(path[..^4]) is { Length: > 0 } cmd)
                 Add(new GestureTrigger { Kind = GestureTriggerKind.SlashCommand, SlashCommand = cmd });
         }
         return result;
     }
 
-    // Standing idles live under bt_common: the default one (/cpose 0) is resident/idle.pap, the others are
-    // emote/poseNN_loop/_start.pap. Weapon-stance folders (bt_2sw_emp etc.) are battle idles, not /cpose ones.
+    // Standing idles live under bt_common; weapon-stance folders are battle idles, not /cpose ones.
     private static readonly Regex StandingIdlePose = new(@"/bt_common/emote/pose(\d+)_(loop|start)\.pap$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// The /cpose standing idle an option replaces, or null. When it replaces several, the lowest wins.
+    /// Null if none. When it replaces several, the lowest wins.
     public static byte? DetectStandingIdle(IEnumerable<string> paths)
     {
         byte? result = null;

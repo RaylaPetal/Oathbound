@@ -7,10 +7,8 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Safety;
 
-/// collar/status-indicators + collar/leash-visual: one answer per character for both renderers. The local
-/// player gets the Sub's actual live state; any other player gets the estimate of the Owner-side pairing
-/// whose peer name and home world match them. A Switch naturally gets both. Read-only - nothing here ever
-/// sends anything or changes state.
+/// One answer per character for icons and leash line: the local player's live state, or the estimate of the
+/// Owner-side pairing whose peer matches. Read-only.
 public sealed class StatusIndicatorState
 {
     private readonly PluginConfig config;
@@ -34,7 +32,7 @@ public sealed class StatusIndicatorState
     {
         if (Plugin.ObjectTable.LocalPlayer is { } me && me.Address == character.Address)
         {
-            // collar/leash-travel: still leashed while waiting for or traveling to the Owner (no hand end then).
+            // Still leashed while waiting for or traveling to the Owner.
             var leashed = runtimeState.MovementLockActive && follow.IsLeashed;
             return new CharacterStatus(
                 restrictionRules.IsActive(RestraintRuleKind.Gagged),
@@ -43,8 +41,7 @@ public sealed class StatusIndicatorState
                 leashed ? follow.FollowedObjectId : 0);
         }
 
-        // Called per visible nameplate every frame: match the cheap name first, and only resolve the home
-        // world (a sheet lookup) for a character that already shares a paired Sub's name.
+        // Runs per nameplate every frame, so match the cheap name first and only then resolve the home world.
         var name = character.Name.TextValue;
         PairingState? pairing = null;
         string? world = null;
@@ -62,10 +59,7 @@ public sealed class StatusIndicatorState
         return new CharacterStatus(estimate.Gagged, estimate.Restrained, estimate.Leashed, estimate.Leashed ? localId : 0);
     }
 
-    /// collar/leash-visual: every (Sub, Owner) pair whose leash this client should draw, with both
-    /// characters present in the current area, and the leash length to draw it at (collar/leash). Sub side
-    /// from live state (the length after the Sub's own limit); Owner side from each Owner-side pairing's
-    /// estimate (the length it sent). A pair whose other end isn't in the object table is simply not yielded.
+    /// Pairs to draw, with both characters present. Sub side uses the live length; Owner side the length it sent.
     public IEnumerable<(IPlayerCharacter Sub, IPlayerCharacter Owner, float Length)> LeashedPairs()
     {
         if (Plugin.ObjectTable.LocalPlayer is not { } me) yield break;
@@ -95,13 +89,13 @@ public sealed class StatusIndicatorState
     }
 }
 
-/// `LeashPeerObjectId` is the character holding the leash's hand end (the Owner), or 0 when not leashed.
+/// The Owner holding the hand end, or 0 when not leashed.
 public readonly record struct CharacterStatus(bool Gagged, bool Restrained, bool Leashed, ulong LeashPeerObjectId)
 {
     public static readonly CharacterStatus None = new(false, false, false, 0);
 
     public bool Any => Gagged || Restrained || Leashed;
 
-    /// Small bitmask for change detection (collar/status-indicators: redraw nameplates only on a change).
+    /// Nameplates are only redrawn when this changes.
     public int Bits => (Gagged ? 1 : 0) | (Restrained ? 2 : 0) | (Leashed ? 4 : 0);
 }

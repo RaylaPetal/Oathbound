@@ -8,30 +8,19 @@ using Oathbound.Plugin.Relay;
 
 namespace Oathbound.Plugin.Commands;
 
-/// One entry in the Aliases export section: the bare alias word plus a human-readable summary of what it
-/// does - see AliasBook's doc comment for why the Owner is deliberately shown this, unlike the live wire
-/// tell (which only ever carries the bare alias word). A plain mutable class, matching GestureExportEntry's
-/// own shape, rather than a record - plays safest with System.Text.Json's default (de)serialization.
+/// One Aliases export entry: the bare alias word plus a readable summary for the Owner. Only the bare word ever crosses chat.
 public class AliasExportEntry
 {
     public string Alias { get; set; } = "";
     public string Description { get; set; } = "";
 
-    /// collar/catalog-sync "Import skips commands that duplicate an existing quick command": the design
-    /// id, gesture id, or Moodles status name this alias applies - only ever set for a single-action
-    /// Outfit/Gesture/Moodle alias (never Title, Restraint, or a multi-action bundle), so import-time
-    /// dedup can recognize "this alias and that plain scanned entry are the same target" without parsing
-    /// the human-readable Description. Null on an older export predating this field.
+    /// The design/gesture/moodle a single-action alias applies, for import-time dedup. Null on older exports.
     public string? Target { get; set; }
 
-    /// collar/catalog-sync "shared presets are copies": the self-contained Owner command this preset
-    /// stands for (SharedPresetCommands) - what the Owner's imported copy actually sends, so it keeps working
-    /// after the Sub deletes the preset. `Alias` stays as the recognizable label. Null on an export from an
-    /// older Sub, where the Owner falls back to sending the bare alias word as before; an older Owner
-    /// ignores it the same way.
+    /// The self-contained command the Owner's copy sends, so it keeps working after the Sub deletes the preset.
+    /// Null on an older export, where the Owner sends the bare alias word.
     public string? Command { get; set; }
 
-    /// The preset's attached moodle name, imported as the Owner's per-command moodle pick for the copy.
     public string? Moodle { get; set; }
 
     public AliasExportEntry() { }
@@ -43,28 +32,15 @@ public class AliasExportEntry
     }
 }
 
-/// The per-category added-command counts from a single ParseImport call, plus an overall error when the
-/// file wasn't recognizable as a Collar export at all (as opposed to a recognized-but-partially-empty one,
-/// which still returns zero-valued counts with Error null). Wardrobe/Gesture/Moodles/Restraints each fold
-/// together that category's scanned-name adds and its single-action-alias adds, since both now land in the
-/// same Owner quick-command list (collar/catalog-sync's "Owner imports alias names as one-off quick
-/// commands", reworked to route by category). Bundles covers only genuinely multi-action Custom Triggers
-/// (plus a single-action Chat trigger, which has no matching category list of its own).
+/// Error is set only when the file isn't a recognizable export at all.
 public readonly record struct CatalogImportResult(int Title, int Wardrobe, int Gesture, int Moodles, int Restraints, int Bundles, int Duplicates, string? Error)
 {
     public int TotalAdded => Title + Wardrobe + Gesture + Moodles + Restraints + Bundles;
 }
 
-/// collar/catalog-sync: the outcome of a single relay snapshot's atomic apply (see
-/// CatalogSyncService.ApplyRelaySnapshot) - Added/Updated/Removed span every category together, since the
-/// Owner-facing status only ever needs to say "your Sub's catalog changed," not break it down by category.
 public readonly record struct CatalogSnapshotResult(int Added, int Updated, int Removed, int Duplicates, string? Error);
 
-/// collar/catalog-sync: composes each category's existing export output into one sectioned text file, and
-/// splits an imported file back into each category's quick-command list, using the same matching/dedup
-/// behavior each category's own individual import already had (moved here from CollarWindow so the
-/// unified flow has one implementation instead of three copies). Does not replace or change any category's
-/// own scan/apply logic - only the scan-trigger/export/import UX is unified (design.md's Non-Goals).
+/// Builds the sectioned catalog export and splits an imported one back into each category's quick-command list.
 public sealed class CatalogSyncService
 {
     private const string TitleAliasesHeader = "## TITLE_ALIASES";
@@ -77,11 +53,7 @@ public sealed class CatalogSyncService
     private const string RestraintsHeader = "## RESTRAINTS";
     private const string RestraintsAliasesHeader = "## RESTRAINTS_ALIASES";
 
-    /// Kept under its original header name for backward compatibility - an export from before this change
-    /// mixed every single- and multi-action alias/trigger here, and an old file's "## ALIASES" section
-    /// still parses today, landing entirely in the Custom Trigger Bundle list (design.md's "Risks" and
-    /// tasks.md 2.5). Going forward this section only ever receives genuinely multi-action Custom Triggers
-    /// (plus a single-action Chat trigger - see ExportBundleEntries).
+    /// Header name kept for compatibility: an older export's flat alias section still parses into the bundle list.
     private const string BundlesHeader = "## ALIASES";
 
     private const string AliasExportPrefix = "COLLAR-ALIAS-V1|";
@@ -109,21 +81,9 @@ public sealed class CatalogSyncService
         this.catalogStore = catalogStore;
     }
 
-    /// collar/catalog-sync "Automatic import replaces one peer snapshot atomically". Unlike ParseImport
-    /// (manual file import, purely additive/dedup, never removes anything), a relay snapshot from a given
-    /// pair is a *replacement* of that pair's own previously-imported entries: anything from this pair not
-    /// present in the new snapshot is removed, anything present is added or updated, and a stable-identity
-    /// match (Target, or Label when a category has no Target) carries forward IsFavorite and
-    /// presentation-only fields from the entry it replaces. Manual entries and other pairs' imports are
-    /// never touched. Nothing is mutated until every category has been parsed successfully and reconciled
-    /// in memory; config.Save() is called at most once, at the very end - a parse failure partway through
-    /// leaves the prior snapshot completely intact (task 6.4/6.5).
-    /// collar/catalog-sync "sharing again replaces the previous share": a Sub's export file imported while
-    /// paired as their Owner is treated exactly like a relay refresh from that pairing - this Sub's
-    /// previously imported copies are replaced with the file's set (removed ones go away), and the Owner's
-    /// own commands are never touched. Null when that doesn't apply (no active Owner-side pairing with a
-    /// relay pair id, or not a complete current export) - the caller then falls back to ParseImport's
-    /// add-only import.
+    /// Replaces this pair's previously imported entries (adds, updates, removes); manual entries and other pairs'
+    /// imports are never touched. Nothing is mutated until every category parses, and Save runs once at the end.
+    /// Null when it doesn't apply, and the caller falls back to ParseImport's add-only import.
     public CatalogSnapshotResult? TryApplyFileAsPairSnapshot(string exportText, PairingState? pairing)
     {
         if (pairing is not { Direction: PairingDirection.OwnerSide, PairIdHash: { Length: > 0 } pairIdHash })
@@ -147,9 +107,7 @@ public sealed class CatalogSyncService
 
         var quick = config.QuickCommands;
 
-        // Cross-source duplicate prevention still applies (a Sub's alias can't collide with a manual entry
-        // or another pair's import), but this pair's *own* prior entries are excluded from that check -
-        // they're about to be replaced, not compared against their own successors.
+        // This pair's own prior entries are about to be replaced, so they're excluded from the duplicate check.
         var usedCommandsExcludingThisPair = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var cmd in quick.Titles.Concat(quick.Outfits).Concat(quick.Gestures).Concat(quick.Moodles).Concat(quick.Restraints).Concat(quick.Aliases))
             if (cmd.SourcePairIdHash != sourcePairIdHash)
@@ -247,11 +205,8 @@ public sealed class CatalogSyncService
         to.RestraintCatalogId ??= from.RestraintCatalogId;
     }
 
-    /// Matches by stable identity (Target when the category has one, else Label) against the entries this
-    /// pair previously contributed to `existing`, so a matched entry keeps its favorite flag and any
-    /// presentation-only fields the Owner can't get back from the Sub's export alone (restraint rules,
-    /// gesture grouping). Everything from another source (manual, another pair) passes through untouched;
-    /// everything previously from this pair that has no match in `incoming` is dropped (removed).
+    /// Matches by Target (else Label) so a replaced entry keeps its favorite flag and Owner-side fields.
+    /// Entries from other sources pass through; this pair's unmatched entries are dropped.
     private static List<QuickCommand> ReconcileCategory(
         List<QuickCommand> existing,
         List<QuickCommand> incoming,
@@ -274,7 +229,7 @@ public sealed class CatalogSyncService
             if (match is not null)
             {
                 incomingEntry.IsFavorite = match.IsFavorite;
-                // collar/restraint-lock-timer: the Owner's own timer picks aren't part of the Sub's export.
+                // The Owner's own timer picks aren't part of the Sub's export.
                 incomingEntry.LockSeconds = match.LockSeconds;
                 incomingEntry.FavoriteLockSeconds = match.FavoriteLockSeconds;
                 carryForwardExtra?.Invoke(match, incomingEntry);
@@ -296,12 +251,7 @@ public sealed class CatalogSyncService
         return result;
     }
 
-    /// collar/catalog-sync "explicit legacy-import associate/reset path" (task 6.6): a legacy imported
-    /// entry (SourcePairIdHash null, Source Imported - i.e. from before relay sync existed, or from a
-    /// manual file import) is never touched by ApplyRelaySnapshot's reconciliation. Associating it with a
-    /// pair lets the *next* relay snapshot from that pair reconcile it normally (update or remove);
-    /// resetting drops every such legacy-imported entry outright. Both are explicit, Owner-initiated
-    /// actions - never automatic, so adopting relay sync can never silently delete unscoped legacy imports.
+    /// Explicit and Owner-initiated only, so adopting relay sync never silently deletes legacy imports.
     public int AssociateLegacyImportsWithPair(string sourcePairIdHash)
     {
         var quick = config.QuickCommands;
@@ -328,10 +278,7 @@ public sealed class CatalogSyncService
         return count;
     }
 
-    /// Every category's header is always emitted, even with zero body lines - an empty category is
-    /// explicitly represented rather than omitted (collar/catalog-sync's "empty category still
-    /// represented" requirement), so a re-export after clearing a category can't be misread on import as
-    /// "section absent, leave existing quick commands alone."
+    /// Every header is emitted even when empty, so a cleared category isn't misread as "section absent".
     public string BuildExport()
     {
         var sb = new StringBuilder();
@@ -371,12 +318,6 @@ public sealed class CatalogSyncService
             sb.Append(line).Append('\n');
     }
 
-    /// collar/catalog-sync "Exporting every catalog to one file": a category's own alias definitions plus
-    /// any Custom Trigger that bundles exactly one action of that same category, deduplicated by alias
-    /// word - each carries a human-readable summary of what it does alongside the bare word, so an Owner
-    /// importing this file knows what they're actually sending (see AliasBook's doc comment for why this
-    /// is a deliberate choice, not an oversight - the live wire tell during real commanding still only
-    /// ever carries the bare alias word, unaffected by this).
     private IReadOnlyList<AliasExportEntry> ExportCategoryAliasEntries(CustomTriggerActionKind kind, IEnumerable<AliasExportEntry> categoryDefinitions) =>
         DedupSort(categoryDefinitions.Concat(SingleActionTriggerEntries(kind)));
 
@@ -384,13 +325,10 @@ public sealed class CatalogSyncService
         config.Aliases.CustomTriggers
             .Where(t => t.Actions.Count == 1 && t.Actions[0].Kind == kind)
             .Select(t => new AliasExportEntry(t.Alias, DescribeCustomTrigger(t), TargetForSingleAction(t.Actions[0])) { Command = SharedPresetCommands.CustomTrigger(t, config) })
-            // A trigger that can't be copied (an action too long for one message, or its restraint is gone) isn't shared.
+            // A trigger that can't be copied (too long for one message, or its restraint is gone) isn't shared.
             .Where(e => e.Command is not null);
 
-    /// collar/catalog-sync "Import skips commands that duplicate an existing quick command": only Outfit/
-    /// Gesture/Moodle carry a target identity the Owner's import can match on - Title (free text) and
-    /// Restraint (Sub-captured, not scan-derived) fall through to null, same as their own alias
-    /// definitions never populate a `Target` on export.
+    /// Only Outfit/Gesture/Moodle have a target the Owner's import can match on.
     private static string? TargetForSingleAction(CustomTriggerAction action) => action.Kind switch
     {
         CustomTriggerActionKind.Outfit => action.OutfitDesignName,
@@ -399,12 +337,8 @@ public sealed class CatalogSyncService
         _ => null,
     };
 
-    /// Follow's fixed engage/release words and the singleton Clear-title/Unlock-outfit/Clear-moodle
-    /// aliases are deliberately excluded from every section above - the Owner already has dedicated fixed
-    /// quick-command rows for all of those, so exporting them would be redundant. Custom Triggers that
-    /// bundle two or more actions have no single matching category, so they - along with a single-action
-    /// Chat trigger, since Chat has no Owner-side category list of its own - are the only entries left in
-    /// the Custom Trigger Bundle section.
+    /// Follow words and the singleton clear/unlock aliases are excluded: the Owner has fixed rows for them.
+    /// Multi-action triggers and single-action Chat triggers are all that's left here.
     private IReadOnlyList<AliasExportEntry> ExportBundleEntries() =>
         DedupSort(config.Aliases.CustomTriggers
             .Where(t => t.Actions.Count >= 2 || (t.Actions.Count == 1 && t.Actions[0].Kind == CustomTriggerActionKind.Chat))
@@ -422,9 +356,7 @@ public sealed class CatalogSyncService
     private static string DescribeOutfitAlias(OutfitAliasDefinition a) => $"Outfit: {a.DesignName}{(a.Locked ? " (locks its slots)" : "")}";
     private static string DescribeGestureAlias(GestureAliasDefinition a) => $"Gesture: {(a.AnimationName.Length > 0 ? a.AnimationName : a.EmoteName)}";
 
-    /// The Sub's rules-only restraints, shared into the restraint section. Configured mod restraints aren't listed here: they already travel as full definitions in the
-    /// RESTRAINTS section. Each rules-only restraint is shared as a self-contained copy
-    /// (`restraint wear - - "<name>" rules:...`) with its moodle as the Owner's pick.
+    /// The Sub's rules-only restraints, shared as self-contained `restraint wear` copies. Mod restraints travel in the RESTRAINTS section.
     private IEnumerable<AliasExportEntry> RestraintWordEntries() =>
         config.RestraintMapping.Devices.Values
             .Where(d => d.Name.Trim().Length > 0 && d.Rules.Count > 0)
@@ -439,10 +371,7 @@ public sealed class CatalogSyncService
     private static string EncodeAliasEntry(AliasExportEntry entry) =>
         AliasExportPrefix + Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(entry)));
 
-    /// Fails closed (returns false) on anything that isn't a well-formed encoded alias line - an older/
-    /// hand-edited export's bare-word Aliases lines (this format's predecessor) no longer parse, so they're
-    /// silently skipped rather than imported with a fabricated description, matching `ImportGestureLines`'s
-    /// own "unparseable line is skipped, not fatal" behavior.
+    /// Fails closed: an unparseable line is skipped, not imported with a made-up description.
     private static bool TryParseAliasEntry(string line, out AliasExportEntry entry)
     {
         entry = new AliasExportEntry();
@@ -464,11 +393,7 @@ public sealed class CatalogSyncService
         }
     }
 
-    /// Populates every category's quick-command list from its corresponding section. A section header
-    /// present with zero body lines leaves that category's list untouched (nothing to add). A section
-    /// entirely absent from the file (not a well-formed Collar export, or an older/hand-edited one) is
-    /// likewise skipped rather than erroring the whole import - only a file with none of the ten
-    /// recognized headers at all is rejected outright.
+    /// Header present but empty leaves that list untouched; a file with none of the known headers is rejected.
     public CatalogImportResult ParseImport(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -488,11 +413,7 @@ public sealed class CatalogSyncService
         var stagedGestureCatalog = new Dictionary<string, GestureExportEntry>(config.GestureMapping.ImportedPeerCatalog);
         var stagedRestraintCatalog = new Dictionary<string, RestraintCatalogExportEntry>(config.RestraintMapping.ImportedPeerCatalog);
 
-        // collar/catalog-sync "Import skips commands that duplicate an existing quick command": seeded
-        // once, before any category import runs, from every command already saved anywhere - not just the
-        // category currently being populated - so a shared alias word is caught regardless of import
-        // order, and each import call below adds to it as it goes so a duplicate introduced earlier in
-        // this same file is caught too.
+        // Seeded from every saved command, and grown as categories import, so duplicates are caught across categories and within this file.
         var usedCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var cmd in quick.Titles.Concat(quick.Outfits).Concat(quick.Gestures).Concat(quick.Moodles).Concat(quick.Restraints).Concat(quick.Aliases))
             usedCommands.Add(cmd.Command);
@@ -538,10 +459,7 @@ public sealed class CatalogSyncService
         var restraintCatalogRefreshed = sections.TryGetValue(RestraintsHeader, out var r) &&
             r.Any(line => line.StartsWith("OATHBOUND-RESTRAINT-V1|", StringComparison.Ordinal) ||
                           line.StartsWith("OATHBOUND-RESTRAINT-CONFIG-V1|", StringComparison.Ordinal));
-        // Mirrors gestureCatalogRefreshed's Clear() above - without it, re-importing (e.g. from the Sync
-        // tab's "Import commands") only ever adds to stagedRestraintCatalog, never removing entries the
-        // new export no longer carries, so a mod whose stable id changed (or was simply re-scanned) shows
-        // up as a second, stale row alongside the current one instead of replacing it.
+        // Without this Clear(), a re-import keeps stale rows for mods that changed id.
         if (restraintCatalogRefreshed)
             stagedRestraintCatalog.Clear();
         var restraintsAdded = sections.TryGetValue(RestraintsHeader, out r)
@@ -551,9 +469,7 @@ public sealed class CatalogSyncService
             ? ImportAliasLines(ra, stagedRestraints, usedCommands, ref duplicates)
             : 0;
 
-        // Also the landing spot for an older export's flat "## ALIASES" section, which mixed single- and
-        // multi-action entries together - those all land here unchanged, never split out retroactively
-        // into a single category's list (tasks.md 2.5's backward-compatibility requirement).
+        // Also where an older export's flat "## ALIASES" section lands, unsplit.
         var bundlesAdded = sections.TryGetValue(BundlesHeader, out var b)
             ? ImportAliasLines(b, stagedAliases, usedCommands, ref duplicates)
             : 0;
@@ -594,9 +510,7 @@ public sealed class CatalogSyncService
     private static List<QuickCommand> CloneQuickList(List<QuickCommand> source) =>
         JsonSerializer.Deserialize<List<QuickCommand>>(JsonSerializer.Serialize(source)) ?? new List<QuickCommand>();
 
-    /// Splits on the ten known "## " headers; a line before the first recognized header, or under an
-    /// unrecognized header, is ignored rather than treated as an error - tolerant of a hand-edited or
-    /// future-versioned file that still carries the sections this version understands.
+    /// Lines before the first known header, or under an unknown one, are ignored.
     private static Dictionary<string, List<string>> SplitSections(string text)
     {
         var result = new Dictionary<string, List<string>>();
@@ -620,9 +534,7 @@ public sealed class CatalogSyncService
         return result;
     }
 
-    /// Relay snapshots are produced by this version's BuildExport, so unlike tolerant manual imports they
-    /// must be complete and every structured line must parse. This prevents a truncated/corrupt response
-    /// from being interpreted as intentional category deletion during replacement reconciliation.
+    /// Relay snapshots must be complete, or a truncated response would be read as deleting categories.
     private static bool ValidateRelaySnapshot(Dictionary<string, List<string>> sections, out string? error)
     {
         foreach (var header in KnownHeaders)
@@ -685,15 +597,7 @@ public sealed class CatalogSyncService
         return true;
     }
 
-    /// Same matching/dedup and line-sanity guards `ImportQuickCommands` used to apply per-button - skips
-    /// an individual malformed line instead of aborting the whole category (task 2.3's "malformed line is
-    /// skipped, not fatal" behavior - a deliberate improvement over the old clipboard importer's
-    /// abort-on-first-bad-line, since a file can legitimately mix well-formed entries across categories).
-    /// `usedCommands` is the shared, whole-import command set (collar/catalog-sync's cross-category
-    /// duplicate check); `targetSelector`, when non-null, normalizes the scanned name into the same
-    /// identity space a same-category alias's exported `Target` uses (e.g. markup-stripped for Moodles),
-    /// enabling the same-target check - passing null (Restraints) opts a category out of that check
-    /// entirely, matching "Import skips commands that duplicate an existing quick command"'s exclusions.
+    /// Skips a malformed line instead of aborting the category. A null `targetSelector` opts out of the same-target check.
     private int ImportPlainNames(IEnumerable<string> lines, List<QuickCommand> target, Func<string, string> toCommand, HashSet<string> usedCommands, Func<string, string>? targetSelector, ref int duplicates)
     {
         var added = 0;
@@ -722,17 +626,7 @@ public sealed class CatalogSyncService
         return added;
     }
 
-    /// collar/catalog-sync: unlike the other categories' `ImportPlainNames`, `Label` and `Command` diverge
-    /// here - `Command` stays the bare alias word (what's actually sent, trigger-phrase-prefixed, in the
-    /// wire tell), while `Label` carries the alias word plus its description, so the Owner sees what
-    /// they're about to send without changing what actually gets sent. Category-agnostic on purpose - an
-    /// alias only ever resolves against the Sub's own dictionary by its bare word, regardless of which
-    /// category list the Owner's copy of it lives in, so this same helper backs Title/Outfit/Gesture/
-    /// Restraint/Moodle single-action aliases and the Custom Trigger Bundle list alike.
-    /// `entry.Target` is only ever non-null for a single-action Outfit/Gesture/Moodle alias (see
-    /// `TargetForSingleAction`/the per-category export calls in `BuildExport`) - for every other category
-    /// this always compiles to "no target to compare," so the same-target check below is inert there
-    /// without needing an explicit per-category opt-out.
+    /// Command stays the bare alias word (what's sent); Label adds the description for display.
     private static int ImportAliasLines(IEnumerable<string> lines, List<QuickCommand> target, HashSet<string> usedCommands, ref int duplicates)
     {
         var added = 0;
@@ -741,10 +635,7 @@ public sealed class CatalogSyncService
             if (!TryParseAliasEntry(line, out var entry))
                 continue;
 
-            // collar/catalog-sync "shared presets are copies": a current Sub sends the self-contained command
-            // the preset stands for - that's what the copy sends, so it keeps working after the Sub deletes
-            // the preset. Deduped only on the exact command, not the target, so e.g. an outfit alias with its
-            // own moodle or lock choice isn't swallowed by the plain design-name entry for the same design.
+            // Deduped only on the exact command, so an alias with its own moodle/lock isn't swallowed by the plain entry.
             if (entry.Command is { Length: > 0 } copyCommand)
             {
                 if (usedCommands.Contains(copyCommand))
@@ -757,8 +648,7 @@ public sealed class CatalogSyncService
                     Label = $"{entry.Alias} — {entry.Description}",
                     Command = copyCommand,
                     Source = ImportSource.Imported,
-                    // No Target: a copy is identified by its own label on re-sync, not by the design/
-                    // animation it applies (which a plain catalog entry may share).
+                    // No Target: a copy is identified by its own label on re-sync.
                     MoodleOverride = entry.Moodle,
                 });
                 usedCommands.Add(copyCommand);
@@ -794,8 +684,7 @@ public sealed class CatalogSyncService
 
             importedCatalog[entry.Id] = entry;
 
-            // Triggerless entries are exported for restraint enable-only selection, but are not ordinary
-            // Gesture commands: without a pose/emote there is nothing for the Gesture category to play.
+            // Triggerless entries are only for restraint selection; there's nothing for Gesture to play.
             if (entry.Trigger is null)
                 continue;
 
@@ -809,7 +698,7 @@ public sealed class CatalogSyncService
 
             target.Add(new QuickCommand
             {
-                // What the Owner reads (collar/animation-labels); identity is Target = entry.Id, never this text.
+                // Display only; identity is Target = entry.Id.
                 Label = entry.DisplayLabel,
                 Command = command,
                 GestureModName = entry.ModName,
@@ -839,10 +728,7 @@ public sealed class CatalogSyncService
             {
                 var command = RestraintCommand.BuildCatalogLockCommand(configured.CatalogId, configured.Name,
                     configured.ItemId!.Value, configured.Rules);
-                // Dedup/reconcile by the configured entry's own stable Id, not its CatalogId - a Sub can
-                // configure the same mod more than once with different restriction rules (collar/restraints
-                // "create a mod restraint for the same mod"), and each such entry must import as its own
-                // quick command rather than only the first one surviving.
+                // By the configured entry's Id, not CatalogId: the same mod can be configured more than once.
                 if (target.Any(x => x.Target == configured.Id) || usedCommands.Contains(command))
                 {
                     duplicates++;
@@ -868,8 +754,7 @@ public sealed class CatalogSyncService
                 importedCatalog[entry.Id] = entry;
                 continue;
             }
-            // Legacy name-only restraint catalog entries are intentionally retired. The runtime parser
-            // remains tolerant of old saved commands, but new imports never recreate that UI model.
+            // Legacy name-only restraint entries are retired; old saved commands still parse.
             continue;
         }
         return added;

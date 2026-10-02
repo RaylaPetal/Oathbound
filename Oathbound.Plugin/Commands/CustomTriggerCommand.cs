@@ -11,12 +11,8 @@ using ECommons.Automation;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/custom-triggers: applies a Custom Trigger's bundled actions in sequence, dispatching each to its
-/// own category's existing apply method and checking that category's own permission (and, for Restraints/
-/// Gesture, the existing ToS acknowledgement; for Chat, the new dedicated permission/acknowledgement pair)
-/// immediately before calling it - never bypassing a check that action would already require if triggered
-/// on its own (design.md's "orchestrator, not a reimplementation" decision). An action whose permission
-/// isn't met is skipped, not treated as an error - the rest of the bundle's permitted actions still apply.
+/// Applies a Custom Trigger's actions in order through each category's own apply path and permission check.
+/// An action whose permission isn't met is skipped; the rest still apply.
 public sealed class CustomTriggerCommand
 {
     private readonly PluginConfig config;
@@ -36,8 +32,7 @@ public sealed class CustomTriggerCommand
         this.restraints = restraints;
     }
 
-    /// `restraintLock` (collar/restraint-lock-timer) only reaches the restraint action's Force* call - every
-    /// other action kind ignores it.
+    /// Only the restraint action uses `restraintLock`.
     public LocalTestResult Apply(List<CustomTriggerAction> actions, RestraintLock restraintLock = default)
     {
         var applied = new List<string>();
@@ -57,12 +52,7 @@ public sealed class CustomTriggerCommand
 
                 case CustomTriggerActionKind.Outfit:
                     if (!config.Permissions.Outfit) { skipped.Add("outfit (permission)"); break; }
-                    // A Sub-defined trigger (via ResolveAlias) always carries a real DesignId captured
-                    // from this same client's own WardrobeMapping, so it goes through Apply exactly like a
-                    // plain outfit alias. An Owner-authored ad-hoc `customtrigger cast` bundle only ever
-                    // has the design name (the Owner has no access to the Sub's WardrobeMapping ids), so it
-                    // falls back to the same name-based ForceApply an Owner's plain `outfit lock <name>`
-                    // override already uses - this is the fix for that gap, not the original Group 4 design.
+                    // An Owner's ad-hoc bundle only has the design name, so it falls back to the name-based ForceApply.
                     var (outfitOk, _) = action.OutfitDesignId != Guid.Empty
                         ? outfit.Apply(new OutfitAliasDefinition { DesignId = action.OutfitDesignId, DesignName = action.OutfitDesignName, Locked = true })
                         : outfit.ForceApply(action.OutfitDesignName);
@@ -77,10 +67,7 @@ public sealed class CustomTriggerCommand
 
                 case CustomTriggerActionKind.Gesture:
                     if (!(config.Permissions.Gesture && config.TosAcknowledged)) { skipped.Add("gesture (permission/acknowledgement)"); break; }
-                    // Same real-id-vs-name-only split as Outfit/Restraint above: `GestureAliasDefinition`'s
-                    // own name-fallback additionally requires a ModDirectory match this action doesn't
-                    // carry, so a no-id Owner ad-hoc action goes through the plain name/label match
-                    // `ForceApply` already uses for a `gesture <name>` override instead.
+                    // An Owner's ad-hoc action has no id, so it uses ForceApply's plain name match.
                     var gestureOk = action.GestureId.Length > 0
                         ? gesture.Apply(new GestureAliasDefinition { GestureId = action.GestureId, AnimationName = action.GestureAnimationName })
                         : gesture.ForceApply(action.GestureAnimationName);
@@ -97,8 +84,7 @@ public sealed class CustomTriggerCommand
                     if (!config.Permissions.Moodles) { skipped.Add("moodle (permission)"); break; }
                     if (moodles.Apply(new MoodlesAliasDefinition { StatusId = action.MoodleStatusId, StatusName = action.MoodleStatusName }))
                     {
-                        // Held under the same per-status "manual" ledger source Apply itself uses, so revert can
-                        // release exactly this status and nothing else.
+                        // Held under the "manual" ledger source so revert releases exactly this status.
                         if ((Guid.TryParse(action.MoodleStatusId, out var statusId) || moodles.TryResolveStatusId(action.MoodleStatusName, out statusId))
                             && !effects.MoodleStatusIds.Contains(statusId))
                             effects.MoodleStatusIds.Add(statusId);
@@ -110,14 +96,10 @@ public sealed class CustomTriggerCommand
 
                 case CustomTriggerActionKind.Restraint:
                     if (!(config.Permissions.Restraints && config.TosAcknowledged)) { skipped.Add("restraint (permission/acknowledgement)"); break; }
-                    // Which devices this action added, whatever path it takes - revert releases exactly these.
+                    // Which devices this action added - revert releases exactly these.
                     var activeBefore = restraints.ActiveDeviceIds.ToHashSet();
-                    // Both branches are apply-only because the bundle itself arrived as an Owner command.
-                    // In particular, do not route stable IDs through the Sub self-service Toggle method:
-                    // Toggle is rejected by an Owner force-lock and made multi-restraint bundles depend on
-                    // unrelated prior runtime state.
-                    // A self-contained action (a shared copy) carries its own rules - applied as-is, with no
-                    // lookup of the Sub's restraints, so it still works after the original was deleted.
+                    // Apply-only: the bundle is an Owner command, so never route through the Sub's Toggle (refused while force-locked).
+                    // A self-contained copy carries its own rules and needs no lookup.
                     var restraintOk = action.RestraintRules is { } inlineRules
                         ? action.RestraintRulesOnly
                             ? restraints.ForceApplyAdHoc(action.RestraintSlot, action.RestraintItemId == 0 ? null : action.RestraintItemId, action.RestraintDeviceName, inlineRules, restraintLock: restraintLock)
@@ -160,11 +142,7 @@ public sealed class CustomTriggerCommand
             : LocalTestResult.Fail($"Nothing applied{skippedSuffix}");
     }
 
-    /// collar/custom-triggers "Revert custom triggers" (`customtrigger revert`): undoes what Custom Triggers
-    /// applied since the last revert, and nothing else - the title and outfit they set, a playing animation,
-    /// the moodles they added, and the restraint devices they put on. Leash, toy, collar, and anything applied
-    /// by its own command are untouched (that's "revert all"). A sent chat message can't be undone. Each step
-    /// is isolated so one failing IPC never stops the rest.
+    /// Undoes only what Custom Triggers applied since the last revert. Sent chat can't be undone.
     public LocalTestResult RevertEffects()
     {
         var effects = config.CustomTriggerEffects;
@@ -184,7 +162,7 @@ public sealed class CustomTriggerCommand
             }
         }
 
-        // Restraints first, like revert all: releasing their slot lock can hand a slot back to the outfit.
+        // Restraints first: releasing their slot lock can hand a slot back to the outfit.
         Step("restraints", effects.RestraintDeviceIds.Count > 0, () => restraints.ReleaseDevices(effects.RestraintDeviceIds));
         Step("outfit", effects.Outfit, () => outfit.RevertToBase());
         Step("title", effects.Title, title.ForceClear);
@@ -200,22 +178,15 @@ public sealed class CustomTriggerCommand
         return failed.Count == 0 ? LocalTestResult.Ok(summary) : LocalTestResult.Fail($"{summary} Failed: {string.Join(", ", failed)}.");
     }
 
-    /// Called when those effects are already gone another way (revert all, panic), so a later revert never
-    /// undoes something applied afterwards by a plain command.
+    /// The effects are already gone (revert all, panic), so a later revert never undoes something newer.
     public void ForgetEffects()
     {
         config.CustomTriggerEffects = new CustomTriggerEffectsState();
         config.Save();
     }
 
-    /// design.md "customtrigger cast wire shape": mirrors `RestraintCommand.BuildWearCommand`'s quoted-label
-    /// + token-list structure. Each non-chat action is one `kind=value` segment joined by ';'; any free-text
-    /// field (title text, and every category's own name) is base64-encoded so it can't collide with the '|'/
-    /// ';'/'=' delimiters - ids (guids, gesture/moodle/restraint ids) are left raw since they're plugin-
-    /// generated and never contain those characters. The chat action, if present, is always last and its raw
-    /// text consumes the remainder of the line (deliberately not delimited - see design.md's "pragmatic, not
-    /// fully general" note). At most one action per kind is supported in this ad-hoc wire encoding (the
-    /// Sub-alias path has no such limit, since it stores the action list directly rather than encoding it).
+    /// Each non-chat action is one `kind=value` segment joined by ';'. Free text is base64 so it can't collide with the
+    /// delimiters. A chat action is always last and takes the rest of the line. At most one action per kind.
     public static string BuildCastCommand(string label, List<CustomTriggerAction> actions)
     {
         var segments = new List<string>();
@@ -226,10 +197,7 @@ public sealed class CustomTriggerCommand
             switch (action.Kind)
             {
                 case CustomTriggerActionKind.Title:
-                    // design.md "customtrigger cast bundle's title= segment": glow is an optional trailing
-                    // 4th part, appended only when actually set - an action with no glow still encodes as
-                    // exactly 3 parts, so an old Sub's strict `parts.Length != 3` check still accepts it;
-                    // only a glow-styled Title action requires both sides to be on this version or newer.
+                    // Glow is an optional 4th part, so a glow-less action still parses on an older Sub's strict 3-part check.
                     var titleSegment = $"title={EncodeText(action.TitleText)}|{(action.TitleIsPrefix ? 1 : 0)}|{FormatColor(action.TitleColor)}";
                     if (action.TitleGlow is { } glow)
                         titleSegment += $"|{FormatColor(glow)}";
@@ -247,9 +215,7 @@ public sealed class CustomTriggerCommand
                 case CustomTriggerActionKind.Restraint:
                     if (action.RestraintRules is { } rules)
                     {
-                        // Self-contained: a third part carries the rules, and a rules-only restraint uses a
-                        // `wear:` reference instead of a device id - nothing on the Sub's side is looked up.
-                        // An older Sub's strict 2-part check rejects this whole bundle (fails closed).
+                        // Self-contained: the rules travel inline. An older Sub's strict 2-part check rejects the bundle (fails closed).
                         var reference = action.RestraintRulesOnly
                             ? $"wear:{action.RestraintSlot?.ToString() ?? "-"}:{(action.RestraintItemId == 0 ? "-" : action.RestraintItemId.ToString())}"
                             : $"catalog:{action.RestraintCatalogId}:{action.RestraintItemId}";
@@ -272,10 +238,7 @@ public sealed class CustomTriggerCommand
         return $"customtrigger cast \"{label}\" {string.Join(';', segments)}";
     }
 
-    /// Parses the remainder of a `customtrigger cast ...` command (after the "cast " prefix) into a label
-    /// and action list. Fails closed (returns false) on any malformed segment, unknown kind, or a bundle
-    /// that ends up with zero actions - an empty ad-hoc trigger is meaningless, same rationale as
-    /// `RestraintCommand.TryParseWearCommand` requiring at least one rule.
+    /// Fails closed on any malformed segment, unknown kind, or an empty bundle.
     public static bool TryParseCastCommand(string remainder, out string label, out List<CustomTriggerAction> actions)
     {
         label = "";
@@ -314,8 +277,7 @@ public sealed class CustomTriggerCommand
                 switch (kind.ToLowerInvariant())
                 {
                     case "title":
-                        // design.md: parts.Length 3 is the legacy (no glow) shape; 4 carries an optional
-                        // glow as its last part, empty when the encoder had no glow to send.
+                        // 3 parts is the legacy shape; a 4th carries an optional glow.
                         if ((parts.Length != 3 && parts.Length != 4) || !TryDecodeText(parts[0], out var titleText) || titleText.Length == 0)
                             return false;
                         if (!int.TryParse(parts[1], out var prefixFlag))
@@ -338,9 +300,7 @@ public sealed class CustomTriggerCommand
                         actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Outfit, OutfitDesignId = designId, OutfitDesignName = designName });
                         break;
 
-                    // Gesture/moodle/restraint ids may be empty: the Owner's bundle editor only knows names
-                    // (it has no access to the Sub's catalogs), and Apply already falls back to a name
-                    // match when the id is empty.
+                    // Ids may be empty: the Owner's editor only knows names, and Apply falls back to a name match.
                     case "gesture":
                         if (parts.Length != 2 || !TryDecodeText(parts[1], out var animName) || animName.Length == 0)
                             return false;
@@ -360,7 +320,6 @@ public sealed class CustomTriggerCommand
                         {
                             if (parts[0].Length == 0)
                                 return false;
-                            // Self-contained restraint (see BuildCastCommand): its rules travel inline.
                             if (!TryDecodeText(parts[2], out var ruleTokens))
                                 return false;
                             var inlineRules = RestraintCommand.DecodeRuleTokens(ruleTokens);
@@ -416,12 +375,7 @@ public sealed class CustomTriggerCommand
 
     private const string CastPrefix = "customtrigger cast ";
 
-    /// Splits a full `customtrigger cast` command into one single-action `cast` command per action, each
-    /// carrying the same label and its original segment text unchanged - used when the whole bundle won't
-    /// fit in one chat message (see ChatComposer.ComposeAll). Every Sub version that understands the bundle
-    /// also understands a one-action bundle, and the Sub applies actions one at a time anyway, so sending
-    /// them as separate tells changes nothing on the receiving side. Null when `command` isn't a valid cast
-    /// command.
+    /// Splits a bundle too long for one message into one single-action `cast` per action. Null if not a cast command.
     public static List<string>? SplitCastCommand(string command)
     {
         const string categoryWord = "customtrigger ";
@@ -430,8 +384,7 @@ public sealed class CustomTriggerCommand
         if (!trimmed.StartsWith(categoryWord, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        // collar/restraint-lock-timer: a timed bundle reads `customtrigger lockfor:N cast ...` - every part
-        // carries the same option, so whichever part holds the restraint still locks with the timer.
+        // Every part carries the lock option, so whichever part holds the restraint still locks.
         var afterCategory = LockTimerOption.Strip(trimmed[categoryWord.Length..], out var restraintLock).TrimStart();
         if (!afterCategory.StartsWith(castWord, StringComparison.OrdinalIgnoreCase))
             return null;
@@ -448,7 +401,6 @@ public sealed class CustomTriggerCommand
         return parts.Select(part => LockTimerOption.Insert(part, restraintLock)).ToList();
     }
 
-    /// The chat action, if present, is always last and consumes the rest of the line (see BuildCastCommand).
     private static void SplitChatTail(string tail, out string beforeChat, out string? chatText)
     {
         chatText = null;
@@ -471,10 +423,7 @@ public sealed class CustomTriggerCommand
         }
     }
 
-    /// One-line human-readable summary of a single bundled action - shared by the Sub-side UI's own draft
-    /// list (`CollarWindow.SummarizeCustomTriggerAction`) and `CatalogSyncService`'s Aliases export
-    /// description, so both places describe a Custom Trigger's contents identically rather than each
-    /// re-deriving their own text.
+    /// Shared by the Sub's UI and the catalog export so both describe a trigger identically.
     public static string Summarize(CustomTriggerAction a) => CommandPresentation.Action(a);
 
     private static string EncodeText(string text) => Convert.ToBase64String(Encoding.UTF8.GetBytes(text));

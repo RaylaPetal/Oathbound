@@ -6,17 +6,13 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.UI;
 
-/// collar/restraint-lock-timer "Owner chooses the lock mode per command": the Owner-side picker for the
-/// optional `lockfor:<seconds>` option on restraint lock|catalog|wear and on `customtrigger cast` bundles
-/// that contain a restraint. Same shape as OwnerMoodleOverride - the choice (QuickCommand.LockSeconds) is
-/// saved with the command and applied at send time, and Permanent (null) sends the command unchanged.
+/// Owner-side picker for the `lockfor:<seconds>` option, saved per command. Permanent (null) sends the command unchanged.
 public static class OwnerLockOption
 {
     private const string CastPrefix = "customtrigger cast ";
     private static readonly string[] ModeNames = ["Permanent", "Timed"];
     private const int DefaultTimedMinutes = 30;
 
-    /// Whether `command` is one of the commands that carry the option.
     public static bool Accepts(string command)
     {
         var trimmed = command.Trim();
@@ -25,7 +21,7 @@ public static class OwnerLockOption
             || trimmed.StartsWith("restraint wear ", StringComparison.OrdinalIgnoreCase))
             return true;
 
-        // A bundle with no restraint action never carries the option - it would lock nothing.
+        // A bundle with no restraint action would lock nothing.
         return trimmed.StartsWith(CastPrefix, StringComparison.OrdinalIgnoreCase)
             && CustomTriggerCommand.TryParseCastCommand(trimmed[CastPrefix.Length..], out _, out var actions)
             && actions.Any(a => a.Kind == CustomTriggerActionKind.Restraint);
@@ -36,7 +32,7 @@ public static class OwnerLockOption
             ? LockTimerOption.Insert(command, RestraintLock.FromSeconds(lockSeconds))
             : command;
 
-    /// Short row suffix for a favorite's snapshotted timer, or null when it's Permanent / doesn't apply.
+    /// Null when Permanent or not applicable.
     public static string? DescribeFavorite(QuickCommand cmd) =>
         cmd.FavoriteLockSeconds is { } seconds && Accepts(cmd.Command)
             ? $"locks {RestraintLock.Format(RestraintLock.FromSeconds(seconds).Duration!.Value)}"
@@ -46,8 +42,7 @@ public static class OwnerLockOption
 
     private const float InlineFieldWidth = 100f;
 
-    /// How much row width DrawInline takes (with its leading SameLine spacing), so a caller can shorten a
-    /// label drawn before it instead of pushing the picker off the window's edge.
+    /// So a caller can shorten the label before it instead of pushing the picker off the window.
     public static float InlineWidth(QuickCommand cmd)
     {
         var spacing = ImGui.GetStyle().ItemSpacing.X;
@@ -57,8 +52,7 @@ public static class OwnerLockOption
         return width;
     }
 
-    /// Compact one-line picker drawn on the same row as a Send / Enable & lock button: an unlabeled
-    /// Permanent/Timed combo, plus a minutes field when Timed. Saves straight onto `cmd.LockSeconds`.
+    /// Saves straight onto `cmd.LockSeconds`.
     public static void DrawInline(string id, QuickCommand cmd, PluginConfig config)
     {
         var mode = cmd.LockSeconds is null ? 0 : 1;
@@ -88,7 +82,7 @@ public static class OwnerLockOption
         ImGui.TextDisabled("min");
     }
 
-    /// Draws the picker; `lockSeconds` stays null for Permanent. Returns true when the value changed.
+    /// Returns true when the value changed.
     public static bool Draw(string id, ref int? lockSeconds)
     {
         var before = lockSeconds;

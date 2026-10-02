@@ -8,20 +8,14 @@ using FFXIVClientStructs.Havok.Animation.Rig;
 
 namespace Oathbound.Plugin.Safety;
 
-/// collar/leash-visual: read-only world-space bone positions for a drawn Human character, ported from
-/// PoseKit's BoneReader (the same skeleton-transform x Havok model-space-pose math, verified in game there
-/// via `/posekit bones`). Only partial skeleton 0 (the body) is read - `j_kubi` and `j_te_l`/`j_te_r` all
-/// live there. Every pointer walk is null-checked and returns false instead, so a patch-moved layout or an
-/// unusual model means "draw no leash", never a guessed end point (spec: "Fails closed on game changes").
+/// World-space bone positions for a drawn character (skeleton transform x Havok model-space pose). Only the body
+/// skeleton is read. Every pointer walk is null-checked, so a moved layout means no leash, never a guessed point.
 public static unsafe class BoneLocator
 {
     public const string Neck = "j_kubi";
     public const string RightHand = "j_te_r";
 
-    /// Bone index by name, per Havok skeleton resource - the name scan is the only expensive part, and a
-    /// resource is shared by every character using it, so this stays small. Keyed by pointer; a freed and
-    /// reused resource address could in theory map to a different skeleton, which is why every hit is
-    /// re-checked against the bone's actual name before use.
+    /// Keyed by pointer; a reused address could map to another skeleton, so every hit is re-checked by name.
     private static readonly Dictionary<(nint Skeleton, string Bone), int> IndexCache = new();
 
     public static bool TryGetWorld(ICharacter character, string boneName, out Vector3 world)
@@ -59,7 +53,7 @@ public static unsafe class BoneLocator
         var modelSpace = pose->AccessBoneModelSpace(index, hkaPose.PropagateOrNot.DontPropagate);
         if (modelSpace == null) return false;
 
-        // Copy to System.Numerics types; mixing vector types makes operators ambiguous.
+        // Mixing vector types makes operators ambiguous.
         var transform = skeleton->Transform;
         var position = new Vector3(transform.Position.X, transform.Position.Y, transform.Position.Z);
         var rotation = new Quaternion(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z, transform.Rotation.W);
@@ -69,6 +63,6 @@ public static unsafe class BoneLocator
         return true;
     }
 
-    /// Dropped on territory change so the cache can't grow across a long session of zoning.
+    /// Cleared on territory change so it can't grow across a long session.
     public static void ClearCache() => IndexCache.Clear();
 }

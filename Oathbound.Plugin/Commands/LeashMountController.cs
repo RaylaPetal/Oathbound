@@ -10,10 +10,8 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/leash-mounts: the leash's mount sub-state (design D1). Ticked by FollowCommand while the leash is
-/// attached to a present Owner; it rides pillion behind the Owner when they share a party and the Owner's mount
-/// has a spare seat, otherwise mounts the Sub with Mount Roulette, takes off and lands with the Owner, and
-/// mirrors the Owner's dismount. Never dismounts the Sub on Reset - a released leash leaves a flying Sub flying.
+/// The leash's mount handling: pillion behind the Owner when in a party with a spare seat, otherwise Mount
+/// Roulette, taking off and landing with the Owner. Never dismounts the Sub on Reset.
 public sealed class LeashMountController
 {
     private enum Phase { OnFoot, TryPillion, Pillion, TryMount, Mounted, Dismounting }
@@ -27,7 +25,7 @@ public sealed class LeashMountController
     private static readonly TimeSpan DismountTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ActionRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan HeightHold = TimeSpan.FromSeconds(1);
-    /// design Risks: fallback "the Owner is flying" signal when the game's own flag can't be read for them.
+    /// Fallback "Owner is flying" signal when the game's flag can't be read for them.
     private const float FlyingHeight = 3f;
 
     private readonly PluginConfig config;
@@ -35,9 +33,9 @@ public sealed class LeashMountController
     private Phase phase;
     private DateTime phaseStartedAt;
     private DateTime lastActionAt;
-    /// spec "Sub's own dismount is respected": set until the Owner is seen unmounted.
+    /// The Sub dismounted themselves; set until the Owner is seen unmounted.
     private bool optedOut;
-    /// spec "Mount alongside the Owner": mounting failed here - game follow until the Owner dismounts.
+    /// Game follow until the Owner dismounts.
     private bool mountFailed;
     private DateTime? ownerHighSince;
 
@@ -46,19 +44,18 @@ public sealed class LeashMountController
         this.config = config;
     }
 
-    /// spec "Mounted following needs the automation acknowledgement".
+    /// Mounted following needs the automation acknowledgement.
     public bool AutomationAllowed => config.TosAcknowledged;
 
-    /// Mounting or seating is in progress - moving would cancel the mount cast, so the leash holds still.
+    /// Moving would cancel the mount cast.
     public bool HoldStill => phase is Phase.TryPillion or Phase.TryMount;
 
-    /// Riding pillion: the game moves the Sub with the Owner, so the leash neither clamps nor pulls.
+    /// The game moves the Sub with the Owner, so the leash neither clamps nor pulls.
     public bool IsPillion => phase == Phase.Pillion;
 
-    /// The Sub should descend: the Owner landed or dismounted while the Sub is still in the air.
+    /// The Owner landed or dismounted while the Sub is still in the air.
     public bool Descend { get; private set; }
 
-    /// Whether this controller is carrying the Sub along a mounted Owner (spec "Game follow only as a fallback").
     public bool HandlesOwnerMount => AutomationAllowed && !optedOut && !mountFailed;
 
     public void Reset()
@@ -111,7 +108,7 @@ public sealed class LeashMountController
 
             case Phase.Pillion:
                 if (pillion) break;
-                // The game drops the passenger when the Owner dismounts; leaving the seat otherwise was the Sub's choice.
+                // The game drops the passenger when the Owner dismounts; leaving otherwise was the Sub's choice.
                 if (ownerMounted) optedOut = true;
                 Enter(Phase.OnFoot, now);
                 break;
@@ -146,7 +143,7 @@ public sealed class LeashMountController
                 break;
 
             case Phase.Dismounting:
-                // spec "Mirror the Owner's dismount": land first, never drop from the air.
+                // Land first, never drop from the air.
                 if (!subMounted || now - phaseStartedAt > DismountTimeout) Enter(Phase.OnFoot, now);
                 else if (subFlying) Descend = true;
                 else if (now - lastActionAt > ActionRetry) UseGeneralAction(DismountAction, now);
@@ -172,7 +169,7 @@ public sealed class LeashMountController
         phaseStartedAt = now;
     }
 
-    /// design D2: pillion only works within a party (confirmed in game), on a mount with a spare seat.
+    /// Pillion only works within a party, on a mount with a spare seat.
     private static unsafe bool CanRidePillion(IGameObject owner)
     {
         if (!Plugin.PartyList.Any(m => string.Equals(m.Name.TextValue, owner.Name.TextValue, StringComparison.OrdinalIgnoreCase)))
@@ -189,9 +186,8 @@ public sealed class LeashMountController
         return character != null && character->IsMounted();
     }
 
-    /// The game's own flag when it reads true; otherwise (design Risks) mounted and clearly above a grounded Sub
-    /// for a moment. Once both fly, only the flag can say the Owner landed - without it the Sub stays airborne
-    /// until the Owner dismounts.
+    /// The game's flag when true, otherwise mounted and clearly above a grounded Sub. Once both fly, only the flag
+    /// can say the Owner landed.
     private unsafe bool IsOwnerFlying(IGameObject owner, IPlayerCharacter player, bool subFlying, DateTime now)
     {
         var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)owner.Address;

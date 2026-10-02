@@ -2,8 +2,7 @@ using ECommons.GameHelpers;
 
 namespace Oathbound.Plugin.UI;
 
-/// A display-only snapshot rebuilt for every rendered frame. Nothing here is persisted or cached, so
-/// logout, zoning, and character changes cannot leak the previous character into the header.
+/// Rebuilt every frame and never cached, so a character change can't leak into the header.
 internal readonly record struct CharacterHeaderModel(string? Name, string? HomeWorld, string? FreeCompany)
 {
     public bool IsAvailable => !string.IsNullOrWhiteSpace(Name);

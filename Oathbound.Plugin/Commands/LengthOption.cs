@@ -3,10 +3,8 @@ using System.Globalization;
 
 namespace Oathbound.Plugin.Commands;
 
-/// collar/leash "Leash length": the optional `length:<yalms>` option on `leash`. It sits right before any
-/// `moodle:"..."` option (which is always last), so the receiver strips the moodle first, then this. A
-/// malformed or out-of-range value is left in place, so the exact `leash` match after it fails and the
-/// command is refused - the same fail-closed shape as MoodleOption.
+/// The optional `length:<yalms>` on `leash`, right before any moodle option. A malformed or out-of-range value is
+/// left in place so the command is refused.
 public static class LengthOption
 {
     private const string Token = "length:";
@@ -15,7 +13,7 @@ public static class LengthOption
     public const int MaxYalms = 15;
     public const int DefaultYalms = 3;
 
-    /// Returns `text` without a trailing valid `length:N`, and N (null when there is none or it is invalid).
+    /// N is null when there's none or it's invalid.
     public static string Strip(string text, out int? yalms)
     {
         yalms = null;

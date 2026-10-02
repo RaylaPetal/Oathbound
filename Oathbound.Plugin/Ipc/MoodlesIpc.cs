@@ -11,11 +11,8 @@ public readonly record struct MoodlesStatus(Guid Id, string Name);
 public enum MoodlesScanStatus { Success, Unavailable, Failed }
 public readonly record struct MoodlesScanResult(MoodlesScanStatus Status, IReadOnlyList<MoodlesStatus> Statuses, string? Error = null);
 
-/// Exact consumer-side mirror of kawaii/Moodles' current IPCProcessor surface. Reads individual registered
-/// statuses (buffs/debuffs) via `GetRegisteredMoodlesV2` rather than bundled presets via
-/// `GetPresetsInfoListV2` - collar/moodles wants the Owner commanding a single status, not a preset. Status
-/// enumeration is local-library-wide and takes no character argument. Player operations take GUID first,
-/// then the actual IPlayerCharacter (not a character-name string).
+/// Mirrors Moodles' IPC surface. Reads individual statuses, not presets. Player operations take the status GUID,
+/// then the IPlayerCharacter.
 public sealed class MoodlesIpc
 {
     private readonly ICallGateSubscriber<List<(Guid ID, uint IconID, string FullPath, string Title)>> getRegisteredMoodles;
@@ -23,8 +20,7 @@ public sealed class MoodlesIpc
     private readonly ICallGateSubscriber<IPlayerCharacter, object> clearStatusManagerByPlayer;
     private readonly ICallGateSubscriber<Guid, IPlayerCharacter, object> removeMoodleByPlayer;
 
-    /// collar/ui-organization dependency status: probes the same read-only status list the catalog scan uses
-    /// (the one contract this wrapper already depends on); any exception means unavailable.
+    /// Probes the status list the catalog scan uses; any exception means unavailable.
     public bool IsAvailable { get { try { getRegisteredMoodles.InvokeFunc(); return true; } catch { return false; } } }
 
     public MoodlesIpc()
@@ -62,8 +58,7 @@ public sealed class MoodlesIpc
         catch (Exception ex) { Plugin.Log.Error(ex, "Failed to apply a Moodles status."); return false; }
     }
 
-    /// collar/attached-moodles: removes exactly one status, leaving every other moodle on the Sub alone -
-    /// never falls back to ClearStatus, since wiping everything is precisely what this exists to avoid.
+    /// Never falls back to ClearStatus - removing just this one status is the point.
     public bool RemoveStatus(Guid statusId)
     {
         var player = Player.Object;

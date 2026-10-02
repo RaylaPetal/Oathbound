@@ -6,16 +6,8 @@ using Oathbound.Plugin.Relay;
 
 namespace Oathbound.Plugin.Safety;
 
-/// The always-available panic/safeword. Reverts every local restriction/effect this device currently has
-/// applied - unconditional whole-actor Glamourer revert, then dropping every tracked lock except the
-/// collar's (design.md: "Panic keeps a single, unconditional whole-actor revert"; collar/collaring "Panic
-/// leaves the collar on" - only the owning Owner's `collar unlock` or unpairing removes the collar). Per
-/// product decision, panic also no longer ends any pairing. Panic is a
-/// pure "clear my current state" safety valve: every relationship this device holds stays exactly as
-/// paired as it was before. Ending a specific pairing is now a separate, deliberate action
-/// (`ReleasePairing`, exposed from Settings) - see that method for the "AND remove restrictions" +
-/// peer-notification behavior a deliberate unpair still needs. Each step is isolated in its own try/catch
-/// so one failure (an IPC call throwing, a send failing) never stops the rest of the sequence from running.
+/// The safeword: reverts every local restriction/effect except a locked collar. Never ends a pairing.
+/// Each step is isolated so one failure never stops the rest.
 public sealed class PanicHandler
 {
     private readonly PairingService pairing;
@@ -53,10 +45,7 @@ public sealed class PanicHandler
         this.follow = follow;
     }
 
-    /// Reverts every local restriction/effect - does not touch any pairing. Every relationship this device
-    /// holds remains exactly as paired as it was before.
-    /// collar/custom-triggers: extra resets that must happen with every local revert, wired by Plugin (the
-    /// Custom Trigger effects record - panic already removed those effects).
+    /// Extra resets that must run with every local revert.
     public Action? AfterLocalRevert { get; set; }
 
     public void Panic()
@@ -65,18 +54,10 @@ public sealed class PanicHandler
         Plugin.Log.Information("Panic triggered: outfit reverted, title cleared, leash and movement lock released, all slot locks except the collar's and all restriction rules released. Every pairing and the collar remain.");
     }
 
-    /// Deliberate, explicit unpair of exactly one pairing (Settings' "select a pairing, then Unpair" - any
-    /// direction, Owner-side or Sub-side alike). Ends that one pairing - clearing its peer identity, best-
-    /// effort notifying that peer over tell (collar/pairing "Panic notifies the peer, best-effort", now
-    /// reused for a deliberate unpair instead of panic) and publishing a revocation - and, in the same
-    /// action, reverts every local restriction/effect exactly as panic does, since there is no reliable way
-    /// to attribute outfit/title/movement-lock/restraint state to the one pairing that applied it. Every
-    /// *other* pairing this device holds is untouched by either half of this action.
+    /// Ends one pairing and reverts local state like panic, since applied state can't be attributed to a pairing.
     public void ReleasePairing(PairingState target)
     {
         RunStep("unpair", () => pairing.ReleasePeer(target));
-        // collar/leash: a leash to this pairing's Owner ends with the pairing (nobody left to tell); a leash
-        // to a different Owner still ends with the local revert, and that Owner is told.
         RevertLocalState(follow.LeashedPairingId == target.Id ? LeashEnd.PairingEnded : LeashEnd.Other);
     }
 
@@ -84,15 +65,11 @@ public sealed class PanicHandler
     {
         if (AfterLocalRevert is { } after)
             RunStep("forget custom trigger effects", after);
-        // collar/leash "Sub tells the Owner when the leash comes off": released explicitly, with the reason,
-        // first - so a leash journey it stops can't report itself as a travel failure, and FollowCommand's
-        // own MovementLockActive safety net never has to guess why.
+        // First, so a leash journey it stops isn't reported as a travel failure.
         RunStep("release leash", () => follow.Release(leashReason));
-        // collar/collaring "Panic leaves the collar on": the full revert takes the collar piece off too, but
-        // its lock is kept, so enforcement puts it straight back - the same as the Owner's revert all.
+        // The collar's lock is kept, so enforcement puts the collar piece back after this revert.
         RunStep("revert outfit", () => glamourer.RevertToAutomationFull());
         RunStep("release slot locks except the collar", () => slotLocks.ReleaseAllForPanic(keepOwner: CollarCommand.Owner));
-        // collar/attached-moodles: every moodle goes except the collar's own, which keeps being re-asserted.
         RunStep("clear all moodles except the collar's", () => moodleLedger.ClearAllExceptCollar());
 
         RunStep("clear title", () =>
@@ -101,16 +78,14 @@ public sealed class PanicHandler
                 honorific.ClearTitle();
         });
 
-        // Before the lock release: MovementLockService.ReleaseAll alone would leave vnavmesh still walking
-        // the Sub toward their Owner with nothing holding them (collar/teleport, design.md D10).
+        // Before the lock release, or vnavmesh would keep walking the Sub with nothing holding them.
         RunStep("stop teleport", () => teleport.Stop("panic"));
         RunStep("release movement lock", movementLock.ReleaseAll);
         RunStep("release restriction rules", restrictionRules.ReleaseAllForPanic);
-        // Releasing the Action Block rule above already hides these - repeated directly so a failure in that
-        // step can never leave the Sub's hotbars greyed out after panic.
+        // Repeated directly so a failed rule release can never leave the hotbars greyed out.
         RunStep("restore hotbars", hotbarVisuals.Hide);
         RunStep("release restraint bound animations", restraints.ReleaseAllBoundAnimationsForPanic);
-        // Oathbound locks the mods it holds, so the Sub can't turn them off from Penumbra - panic must.
+        // Oathbound locks the mods it holds, so only panic can turn them off.
         RunStep("release gesture animation", gesture.ResetActiveTemporary);
         RunStep("stop toy control", toyControl.ReleaseAllForPanic);
         RunStep("suspend toy triggers", () => runtimeState.ToyTriggersSuspended = true);

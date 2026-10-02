@@ -10,27 +10,23 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// What one Sub-side publish attempt came to - drives the scheduler's retry timing (CatalogAutoSync).
+/// Drives CatalogAutoSync's retry timing.
 public enum MailboxPublishOutcome
 {
-    /// Uploaded (or confirmed already delivered, nothing to do).
+    /// Uploaded, or already delivered.
     Published,
-    /// Nothing to publish to yet: the Owner hasn't published a receive key (older Owner plugin, or not
-    /// checked in since pairing), or this device's catalog sync permission is off. Retried on the next
-    /// change or hourly pass, never surfaced as an error.
+    /// No Owner receive key yet, or sync permission off. Retried later, never surfaced as an error.
     NotReady,
-    /// The relay said to wait (per-pair minimum interval / quota) - retry after RetryAfterSeconds.
+    /// Retry after RetryAfterSeconds.
     RateLimited,
-    /// Anything else (network, relay error, verification failure, too large) - retried on the hourly pass.
+    /// Retried on the hourly pass.
     Failed,
 }
 
 public readonly record struct MailboxPublishResult(MailboxPublishOutcome Outcome, int RetryAfterSeconds = 0);
 
-/// collar/catalog-sync automatic sync over the per-pair relay mailbox (see the change's design.md): the Sub
-/// pushes an encrypted snapshot whenever its catalog changes, the Owner collects it on its own hourly
-/// schedule. Neither side ever sends a chat message on this path. Timing (debounce, hourly schedules,
-/// login) lives in CatalogAutoSync; this class is only the relay/crypto work for one pairing at a time.
+/// Automatic sync over the per-pair relay mailbox: the Sub pushes on change, the Owner collects hourly.
+/// No chat on this path. Timing lives in CatalogAutoSync; this is only the relay/crypto work.
 public sealed class CatalogMailboxService
 {
     private static readonly byte[] ReceiveKeyEntropy = "oathbound-mailbox-receive-key-v1"u8.ToArray();
@@ -53,22 +49,18 @@ public sealed class CatalogMailboxService
         this.catalogSync = catalogSync;
     }
 
-    /// Owner-side UI state: a newer snapshot was found and is being retrieved/imported right now.
     public bool IsSyncing(Guid pairingId) { lock (gate) return importing.Contains(pairingId); }
 
     public bool IsChecking(Guid pairingId) { lock (gate) return checksInFlight.Contains(pairingId); }
 
     // ---- Sub side ----
 
-    /// Publishes `exportText` (already built on the framework thread, digest `digest`) to this Sub-side
-    /// pairing's mailbox, if it isn't already there. `force` skips the "digest unchanged" shortcut - used by
-    /// the hourly delivery check, which only asks the relay whether the last push actually arrived.
+    /// `force` skips the "digest unchanged" shortcut, for the hourly delivery check.
     public async Task<MailboxPublishResult> PublishAsync(PairingState pairing, string exportText, string digest, CancellationToken ct)
     {
         if (pairing is not { Direction: PairingDirection.SubSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash } ||
             pairing.PeerDeviceKeyId is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
             return new(MailboxPublishOutcome.NotReady);
-        // collar/catalog-sync "Catalog sync permission is off": nothing leaves this device.
         if (!config.Permissions.RelayCatalogSync)
             return new(MailboxPublishOutcome.NotReady);
 
@@ -80,7 +72,7 @@ public sealed class CatalogMailboxService
             identity.EnsureIdentity();
             var peerPublicKey = new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = pairing.PeerPublicKeyX, Y = pairing.PeerPublicKeyY };
 
-            // Two passes at most: the second only if the Owner rotated its key between our fetch and upload.
+            // The second pass only if the Owner rotated its key between our fetch and upload.
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 CatalogMailboxKeyInfo info;
@@ -97,13 +89,12 @@ public sealed class CatalogMailboxService
                 if (key.PairIdHash != pairIdHash || key.PairEpoch != pairing.PairEpoch || key.OwnerDeviceKeyId != pairing.PeerDeviceKeyId ||
                     !RelayCrypto.VerifyRaw(peerPublicKey, key.Signature ?? "", EnvelopeCanonical.SerializeExcludingSignature(key)))
                 {
-                    // collar/catalog-sync "Forged receive key": never encrypt to a key the paired Owner didn't sign.
+                    // Never encrypt to a key the paired Owner didn't sign.
                     Plugin.Log.Warning($"Catalog mailbox for {pairing.PeerName}: receive key did not verify against the paired Owner - not publishing.");
                     return new(MailboxPublishOutcome.Failed);
                 }
 
-                // Already delivered? Same catalog as last time, and the relay confirms that push is waiting or
-                // was consumed - nothing to do. Otherwise (changed, or the push never arrived) publish.
+                // Same catalog as last time and the relay confirms delivery: nothing to do.
                 var delivered = pairing.LastPublishedMailboxSnapshotId > 0 &&
                     (info.WaitingSnapshotId >= pairing.LastPublishedMailboxSnapshotId || info.LastConsumedSnapshotId >= pairing.LastPublishedMailboxSnapshotId);
                 if (digest == pairing.LastPublishedCatalogDigest && delivered)
@@ -175,13 +166,11 @@ public sealed class CatalogMailboxService
                 SenderEphemeralPublicKey = RelayCrypto.ExportPublicKeyJwk(subEphemeral),
             };
 
-            // Size is checked before a snapshot id is spent, so a too-large catalog never burns through the
-            // pair's monotonic sequence on each retry. GCM output is always input + 16-byte tag, so this is
-            // exact without encrypting first (and each key/nonce pair is only ever used for one encryption).
+            // Checked before a snapshot id is spent. GCM output is always input + 16 bytes, so this is exact.
             if (compressed.Length + 16 > RelayProtocolConstants.CatalogCiphertextMaxBytes)
                 throw new InvalidDataException("Catalog exceeds the encrypted upload limit and was not published.");
 
-            // The id is bound into the AAD, so it's settled before the one and only encryption.
+            // The id is bound into the AAD, so it's settled before the one encryption.
             envelope.SnapshotId = ++pairing.NextOutgoingSnapshotId;
             config.Save();
             ciphertext = RelayCrypto.AesGcmEncrypt(aesKey, nonceBytes, compressed, CatalogPushAad.Build(envelope));
@@ -194,7 +183,7 @@ public sealed class CatalogMailboxService
         }
         finally
         {
-            // Best-effort scrub, same caveat as the request flow's upload.
+            // Best-effort scrub.
             Array.Clear(compressed);
             if (ciphertext is not null) Array.Clear(ciphertext);
         }
@@ -202,9 +191,7 @@ public sealed class CatalogMailboxService
 
     // ---- Owner side ----
 
-    /// One Owner-side mailbox check for `pairing`: make sure a receive key is published, look at what's
-    /// waiting, and if it's newer than what's imported, retrieve/verify/decrypt/import it and rotate the key.
-    /// Records the outcome on the pairing for the Sync tab's up-to-date indicator. Never throws.
+    /// Publishes a receive key if needed, and imports a newer snapshot (then rotates the key). Never throws.
     public async Task CheckAsync(PairingState pairing, CancellationToken ct)
     {
         if (pairing is not { Direction: PairingDirection.OwnerSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash })
@@ -227,9 +214,7 @@ public sealed class CatalogMailboxService
                 return;
             }
 
-            // First check after upgrading/pairing, a new pair epoch, or a local key we can no longer use: publish
-            // a fresh key. (Replacing it discards anything encrypted to the old one; the Sub's delivery check
-            // republishes that within the hour.)
+            // Replacing the key discards anything encrypted to the old one; the Sub's delivery check republishes it.
             if (!status.HasKey || status.ReceiveKeyId != pairing.MailboxReceiveKeyId || !HasUsableReceiveKey(pairing))
             {
                 await PublishFreshKeyAsync(pairing, ct).ConfigureAwait(false);
@@ -257,7 +242,6 @@ public sealed class CatalogMailboxService
         }
         catch (OperationCanceledException)
         {
-            // Logout / shutdown - not a failure worth recording.
         }
         catch (Exception ex)
         {
@@ -274,7 +258,7 @@ public sealed class CatalogMailboxService
         }
     }
 
-    /// Returns null on success, or the reason the snapshot was not imported (the prior catalog is untouched).
+    /// Null on success; otherwise the prior catalog is untouched.
     private async Task<string?> RetrieveAndImportAsync(PairingState pairing, int snapshotId, CancellationToken ct)
     {
         lock (gate) importing.Add(pairing.Id);
@@ -284,8 +268,7 @@ public sealed class CatalogMailboxService
         using var ownerReceive = receiveKey;
         var usedKeyId = pairing.MailboxReceiveKeyId!;
 
-        // Rotation is atomic with the pickup on the relay; persist the next key the moment the relay has it,
-        // before any local verification, so a bad snapshot can't leave this device holding a stale key.
+        // Rotation is atomic with the pickup on the relay, so persist the next key before any local verification.
         using var nextKey = RelayCrypto.GenerateEphemeralKeyPair();
         var nextEnvelope = BuildSignedKeyEnvelope(pairing, nextKey, RelayCrypto.RandomReceiveKeyId());
         var (envelope, ciphertext) = await relay.ConsumeMailboxSnapshotAsync(pairing.PairIdHash!, pairing.PairEpoch, snapshotId, nextEnvelope, ct).ConfigureAwait(false);
@@ -295,7 +278,7 @@ public sealed class CatalogMailboxService
         if (!TryDecryptPush(pairing, envelope, ciphertext, ownerReceive, usedKeyId, out var exportText, out var error))
             return error;
 
-        // Imports touch the same quick-command lists the UI draws from, so apply on the framework thread.
+        // Imports touch the lists the UI draws from, so apply on the framework thread.
         var result = await Plugin.Framework.RunOnFrameworkThread(() => catalogSync.ApplyRelaySnapshot(exportText!, envelope.PairIdHash)).ConfigureAwait(false);
         if (result.Error is not null)
             return result.Error;
@@ -317,11 +300,9 @@ public sealed class CatalogMailboxService
         return null;
     }
 
-    /// The most recent successful automatic import's counts, for the Sync tab.
     public (Guid PairingId, CatalogSnapshotResult Result)? LastAutoImport { get; private set; }
 
-    /// Every check collar/catalog-sync's "Owner checks the mailbox about hourly and imports automatically"
-    /// lists, mirroring the request flow's ImportSnapshot, before a single byte is decrypted into the catalog.
+    /// Every check passes before a single byte is decrypted into the catalog.
     private bool TryDecryptPush(PairingState pairing, CatalogPushEnvelope envelope, byte[] ciphertext, RelayEcKeyPair ownerReceive, string usedKeyId, out string? exportText, out string? error)
     {
         exportText = null;
@@ -387,7 +368,7 @@ public sealed class CatalogMailboxService
         return envelope;
     }
 
-    /// Replaces the pairing's receive key - the previous private scalar is overwritten, so it's gone for good.
+    /// The previous private scalar is overwritten and gone for good.
     private static void StoreReceiveKey(PairingState pairing, CatalogMailboxKeyEnvelope envelope, RelayEcKeyPair key)
     {
         var privateD = RelayCrypto.ExportPrivateD(key);

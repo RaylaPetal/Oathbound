@@ -8,24 +8,13 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// collar/catalog-sync automatic sync - all the *when*, driven from Plugin.OnFrameworkUpdate (so everything
-/// here that reads or rescans the catalog runs on the framework thread; only the relay work itself goes to
-/// the thread pool, via CatalogMailboxService):
-///
-///   Sub   - rescans Glamourer/Penumbra/Moodles at login and ~hourly (if AutoRescanCatalogs), one category
-///           per tick so it's never one long frame;
-///         - after any save, once things have been quiet for ChangeQuietPeriod, digests the export and
-///           publishes it to each Sub-side pairing whose last published digest differs;
-///         - ~hourly (and shortly after login), asks the relay whether its last push actually reached the
-///           Owner and republishes it if not, even if nothing changed.
-///   Owner - checks each Owner-side pairing's mailbox shortly after login and ~hourly, plus on demand.
-///
-/// Every schedule gets 0-5 minutes of jitter so many clients never hit the relay on the same clock edge.
+/// When automatic sync runs, driven from the framework tick (only relay work goes to the thread pool).
+/// Sub: rescans at login and ~hourly (one category per tick); publishes after saves go quiet; hourly checks that
+/// the last push arrived. Owner: checks each mailbox after login, ~hourly and on demand. Every schedule has 0-5 min jitter.
 public sealed class CatalogAutoSync
 {
     private static readonly TimeSpan ChangeQuietPeriod = TimeSpan.FromSeconds(60);
-    /// Upper bound on the debounce: if unrelated saves keep landing inside every quiet window, a pending
-    /// change still goes out this long after it first appeared.
+    /// A pending change still goes out this long after it appeared, even if saves keep landing.
     private static readonly TimeSpan ChangeMaxWait = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan Hourly = TimeSpan.FromSeconds(RelayProtocolConstants.CatalogMailboxOwnerPollIntervalSeconds);
     private static readonly TimeSpan OnDemandMinimumGap = TimeSpan.FromSeconds(60);
@@ -39,14 +28,13 @@ public sealed class CatalogAutoSync
     private DateTime nextRescanUtc;
     private int rescanStage = -1;
 
-    // Written from the thread pool (config.Save() inside a publish/check raises Changed), read on the framework thread.
+    // Written from the thread pool, read on the framework thread.
     private int catalogDirty;
     private long lastChangeTicks;
     private long dirtySinceTicks;
     private DateTime nextDeliveryCheckUtc;
 
-    /// Sub-side, per pairing: don't retry before this time for the digest that failed (a genuinely new digest
-    /// is still tried right away - only the same content is held back).
+    /// Holds back only the same digest that failed; a new digest is tried right away.
     private readonly ConcurrentDictionary<Guid, (DateTime NotBefore, string Digest)> subRetry = new();
     private readonly ConcurrentDictionary<Guid, DateTime> nextOwnerCheckUtc = new();
 
@@ -65,8 +53,7 @@ public sealed class CatalogAutoSync
 
     public void Dispose() => config.Changed -= MarkDirty;
 
-    /// collar/catalog-sync "at login": rescan, publish anything pending, and check the Owner mailboxes soon
-    /// after login (a short delay lets Penumbra/Glamourer/Moodles finish coming up first).
+    /// A short delay lets the other plugins finish loading first.
     public void OnLogin() => ScheduleStartup();
 
     private void ScheduleStartup()
@@ -111,8 +98,7 @@ public sealed class CatalogAutoSync
             rescanStage = 0;
         }
 
-        // One category per tick. Each rescan already leaves its catalog untouched when its source plugin is
-        // unavailable; the catch is only so one category's unexpected failure can't stop the others.
+        // The catch only stops one category's unexpected failure from blocking the others.
         try
         {
             rescanSteps[rescanStage]();
@@ -139,8 +125,7 @@ public sealed class CatalogAutoSync
         if (changeReady) Interlocked.Exchange(ref catalogDirty, 0);
         if (deliveryDue) nextDeliveryCheckUtc = now + Hourly + Jitter();
 
-        // collar/catalog-sync "Catalog sync permission is off": nothing is built or sent. Turning it back on
-        // saves the config, which marks the catalog dirty and publishes on the next quiet period.
+        // Turning it back on saves the config, which marks the catalog dirty.
         if (!config.Permissions.RelayCatalogSync) return;
         var subPairings = config.Pairings
             .Where(p => p is { Direction: PairingDirection.SubSide, IsPaired: true, PairIdHash.Length: > 0 })
@@ -159,8 +144,7 @@ public sealed class CatalogAutoSync
             var held = subRetry.TryGetValue(pairing.Id, out var retry) && now < retry.NotBefore;
             if (deliveryDue)
             {
-                // The hourly pass asks the relay even when the digest is unchanged (did the last push arrive?),
-                // but still respects an explicit "wait" from the relay for this same content.
+                // The hourly pass still respects a relay "wait" for the same content.
                 if (held && retry.Digest == digest) continue;
             }
             else
@@ -190,16 +174,14 @@ public sealed class CatalogAutoSync
                     MarkDirtyAt(now.AddSeconds(result.RetryAfterSeconds + 1) - ChangeQuietPeriod);
                     break;
                 default:
-                    // Not ready (no Owner key yet) or failed: the hourly delivery pass retries; a newer change
-                    // (different digest) is still tried as soon as it settles.
+                    // The hourly pass retries; a newer change is still tried as soon as it settles.
                     subRetry[pairing.Id] = (now + Hourly, digest);
                     break;
             }
         }, TaskScheduler.Default));
     }
 
-    /// Marks the catalog dirty as if the last change happened at `changeUtc`, so the quiet period elapses at
-    /// a chosen moment - used to come back right after a relay-requested wait.
+    /// Used to come back right after a relay-requested wait.
     private void MarkDirtyAt(DateTime changeUtc)
     {
         Interlocked.Exchange(ref lastChangeTicks, changeUtc.Ticks);
@@ -222,9 +204,7 @@ public sealed class CatalogAutoSync
         }
     }
 
-    /// collar/catalog-sync: the Sync tab opening (`force` false - skipped if the last successful check was
-    /// under a minute ago) and the "Check now" button (`force` true - no cooldown). Either way it also pushes
-    /// the next scheduled check a full hour out, since this one just happened.
+    /// `force` skips the one-minute cooldown. Either way the next scheduled check moves a full hour out.
     public void RequestOwnerCheck(PairingState pairing, bool force)
     {
         if (pairing is not { Direction: PairingDirection.OwnerSide, IsPaired: true, PairIdHash.Length: > 0 } || mailbox.IsChecking(pairing.Id))
