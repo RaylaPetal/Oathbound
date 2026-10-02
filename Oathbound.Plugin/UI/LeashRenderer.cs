@@ -23,8 +23,22 @@ public sealed class LeashRenderer : IDisposable
     private const long GapSnapMs = 500;
     private const float MinVisibleExtent = 0.01f;
 
-    // Bright red. ImGui packs colors as ABGR.
-    private static readonly uint LeashColor = ImGui.GetColorU32(new Vector4(0.95f, 0.08f, 0.10f, 1f));
+    // Body volumes as fractions of torso length (neck to waist), so they fit every race and height.
+    private const float NeckRadius = 0.11f;
+    private const float ChestRadius = 0.32f;
+    private const float WaistRadius = 0.34f;
+    private const float HeadRadius = 0.24f;
+    private const float HipRadius = 0.20f;
+    private const float KneeRadius = 0.14f;
+    private const float AnkleRadius = 0.10f;
+    /// Clear of the skin rather than touching it, since the line has width on screen.
+    private const float BodyMargin = 0.02f;
+    private const int ClearancePasses = 3;
+    /// Keeps a bent-around point from ending up under the floor.
+    private const float MinPointClearance = 0.05f;
+
+    // Deep crimson. ImGui packs colors as ABGR.
+    private static readonly uint LeashColor = ImGui.GetColorU32(new Vector4(0.68f, 0.07f, 0.10f, 1f));
 
     private static readonly PctDrawHints Hints = new()
     {
@@ -33,6 +47,9 @@ public sealed class LeashRenderer : IDisposable
         // The default OccludedAlpha of 1 means no occlusion; fade strongly behind walls.
         DefaultParams = new PctDxParams { OccludedAlpha = 0.15f, OcclusionTolerance = 0.05f },
     };
+
+    /// A tapered capsule: radius goes from RadiusA at A to RadiusB at B. A sphere when A == B.
+    private readonly record struct Capsule(Vector3 A, Vector3 B, float RadiusA, float RadiusB);
 
     private sealed class Entry
     {
@@ -53,6 +70,10 @@ public sealed class LeashRenderer : IDisposable
     private readonly HashSet<(ulong, ulong)> warnedPairs = new();
     private readonly Vector3[] samples = new Vector3[Segments + 1];
     private readonly Vector3[] visible = new Vector3[Segments + 1];
+    private readonly Vector3[] smoothed = new Vector3[Segments + 1];
+    /// Head, neck-to-chest, chest-to-waist and a thigh and shin per leg, for each of the two characters.
+    private readonly Capsule[] capsules = new Capsule[14];
+    private int capsuleCount;
     private readonly Dictionary<Guid, Entry> entries = new();
     private readonly HashSet<Guid> seen = new();
     private readonly HashSet<Guid> instantEnds = new();
@@ -178,15 +199,26 @@ public sealed class LeashRenderer : IDisposable
     private void DrawPair(ICharacter sub, ICharacter owner, float length, float extent)
     {
         if (extent < MinVisibleExtent) return;
-        if (!BoneLocator.TryGetWorld(sub, BoneLocator.Neck, out var neck) ||
-            !BoneLocator.TryGetWorld(owner, BoneLocator.RightHand, out var hand))
+        if (!BoneLocator.TryGetPose(sub, out var subPose) || !subPose.TryGetWorld(BoneLocator.Neck, out var neck) ||
+            !BoneLocator.TryGetPose(owner, out var ownerPose) || !ownerPose.TryGetWorld(BoneLocator.RightHand, out var hand))
         {
             if (warnedPairs.Add((sub.GameObjectId, owner.GameObjectId)))
                 Plugin.Log.Warning($"Leash line: couldn't find the neck/hand bone for this pair - not drawing it.");
             return;
         }
 
-        BuildCurve(neck, hand, length, MathF.Min(sub.Position.Y, owner.Position.Y));
+        capsuleCount = 0;
+        var subTorso = AddBody(subPose);
+        AddBody(ownerPose);
+
+        // The neck bone sits inside the neck; start from its surface on the Owner's side.
+        var toHand = new Vector3(hand.X - neck.X, 0f, hand.Z - neck.Z);
+        if (subTorso > 0f && toHand.LengthSquared() > 1e-6f)
+            neck += Vector3.Normalize(toHand) * (subTorso * NeckRadius);
+
+        var groundY = MathF.Min(sub.Position.Y, owner.Position.Y);
+        BuildCurve(neck, hand, length, groundY);
+        KeepClearOfBodies(hand - neck, groundY);
         var count = VisibleFromHand(extent);
 
         if (pictomancy is not null)
@@ -216,6 +248,85 @@ public sealed class LeashRenderer : IDisposable
             var t = i / (float)Segments;
             samples[i] = Vector3.Lerp(neck, hand, t) - Vector3.UnitY * (sag * 4f * t * (1f - t));
         }
+    }
+
+    /// Adds the character's body volumes and returns its torso length, or 0 when the torso can't be measured, in which
+    /// case its body is skipped and the line is simply drawn without clearance there.
+    private float AddBody(BoneLocator.Pose pose)
+    {
+        if (!pose.TryGetWorld(BoneLocator.Neck, out var neck) || !pose.TryGetWorld(BoneLocator.Waist, out var waist))
+            return 0f;
+        var torso = Vector3.Distance(neck, waist);
+        if (torso < 0.05f) return 0f;
+
+        if (pose.TryGetWorld(BoneLocator.UpperChest, out var chest))
+        {
+            capsules[capsuleCount++] = new Capsule(neck, chest, torso * NeckRadius, torso * ChestRadius);
+            capsules[capsuleCount++] = new Capsule(chest, waist, torso * ChestRadius, torso * WaistRadius);
+        }
+        else
+        {
+            capsules[capsuleCount++] = new Capsule(neck, waist, torso * NeckRadius, torso * WaistRadius);
+        }
+        if (pose.TryGetWorld(BoneLocator.Head, out var head))
+            capsules[capsuleCount++] = new Capsule(head, head, torso * HeadRadius, torso * HeadRadius);
+        AddLeg(pose, BoneLocator.LeftLeg, torso);
+        AddLeg(pose, BoneLocator.RightLeg, torso);
+        return torso;
+    }
+
+    private void AddLeg(BoneLocator.Pose pose, BoneLocator.LegBones leg, float torso)
+    {
+        if (!pose.TryGetWorld(leg.Hip, out var hip) || !pose.TryGetWorld(leg.Knee, out var knee))
+            return;
+        capsules[capsuleCount++] = new Capsule(hip, knee, torso * HipRadius, torso * KneeRadius);
+        if (pose.TryGetWorld(leg.Ankle, out var ankle))
+            capsules[capsuleCount++] = new Capsule(knee, ankle, torso * KneeRadius, torso * AnkleRadius);
+    }
+
+    /// Pushes the curve's inner points out of every body volume, smoothing between passes so it drapes around a body
+    /// instead of kinking. The two ends stay where they are.
+    private void KeepClearOfBodies(Vector3 span, float groundY)
+    {
+        if (capsuleCount == 0) return;
+        // For a point right on a bone axis, where there's no outward direction to push along.
+        var fallback = new Vector3(span.X, 0f, span.Z);
+        fallback = fallback.LengthSquared() > 1e-6f ? Vector3.Normalize(fallback) : Vector3.UnitX;
+
+        for (var pass = 0; pass < ClearancePasses; pass++)
+        {
+            for (var i = 1; i < Segments; i++)
+                for (var c = 0; c < capsuleCount; c++)
+                    samples[i] = PushOut(samples[i], capsules[c], fallback);
+
+            smoothed[0] = samples[0];
+            smoothed[Segments] = samples[Segments];
+            for (var i = 1; i < Segments; i++)
+                smoothed[i] = 0.25f * samples[i - 1] + 0.5f * samples[i] + 0.25f * samples[i + 1];
+            Array.Copy(smoothed, samples, Segments + 1);
+        }
+
+        // Last, so smoothing can't pull a point back inside.
+        for (var i = 1; i < Segments; i++)
+        {
+            for (var c = 0; c < capsuleCount; c++)
+                samples[i] = PushOut(samples[i], capsules[c], fallback);
+            samples[i].Y = MathF.Max(samples[i].Y, groundY + MinPointClearance);
+        }
+    }
+
+    private static Vector3 PushOut(Vector3 point, Capsule capsule, Vector3 fallback)
+    {
+        var axis = capsule.B - capsule.A;
+        var lengthSquared = axis.LengthSquared();
+        var t = lengthSquared > 1e-8f ? Math.Clamp(Vector3.Dot(point - capsule.A, axis) / lengthSquared, 0f, 1f) : 0f;
+        var closest = capsule.A + axis * t;
+        var radius = float.Lerp(capsule.RadiusA, capsule.RadiusB, t) + BodyMargin;
+        var offset = point - closest;
+        var distanceSquared = offset.LengthSquared();
+        if (distanceSquared >= radius * radius) return point;
+        var direction = distanceSquared > 1e-8f ? offset / MathF.Sqrt(distanceSquared) : fallback;
+        return closest + direction * radius;
     }
 
     /// The hand-side part of the curve covering `extent` of it, with the leading end interpolated within its
