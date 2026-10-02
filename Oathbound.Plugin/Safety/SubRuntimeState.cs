@@ -43,8 +43,8 @@ public sealed class SubRuntimeState
     }
 
     /// collar/collaring: set when CollarCommand.ForceApply locks the Sub's configured collar at pairing
-    /// acceptance. Released by CollarCommand.ForceUnlock (the Owner's `collar unlock` override) or
-    /// unconditionally by panic.
+    /// acceptance. Released only by CollarCommand.ForceUnlock (the Owner's `collar unlock` override) or
+    /// ReleaseOnUnpair - never by panic (collar/collaring "Panic leaves the collar on"), so Reset() leaves it.
     public bool CollarForceLocked
     {
         get => config.CollarForceLocked;
@@ -110,9 +110,9 @@ public sealed class SubRuntimeState
         TitleForceLocked = false;
         TitleForceText = null;
         OutfitForceLocked = false;
-        CollarForceLocked = false;
         RestraintsForceLocked = false;
         ToyControlForceLocked = false;
         // ToyTriggersSuspended is deliberately NOT cleared here - see its own doc comment above.
+        // CollarForceLocked neither: the collar outlives panic (collar/collaring).
     }
 }

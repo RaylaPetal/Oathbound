@@ -6,9 +6,11 @@ using Oathbound.Plugin.Config;
 namespace Oathbound.Plugin.Commands;
 
 /// collar/status-indicators: the Owner's estimate of each commanded Sub's gagged/restrained/leashed state,
-/// built only from the commands this client itself sent - same shape as OwnerToyStatusTracker, for the same
-/// reason: nothing about the Sub's state ever travels back over the wire. So this can't see the Sub's panic,
-/// the Sub's own alias releases, or a command the Sub's client refused; the UI says so and offers Clear.
+/// built from the commands this client itself sent - same shape as OwnerToyStatusTracker, for the same
+/// reason: almost nothing about the Sub's state travels back over the wire. The one exception is the leash:
+/// the Sub's client sends a leash-off notice when its leash ends on its side (collar/leash), which
+/// ChatCommandListener applies through MarkUnleashed. Otherwise this can't see the Sub's panic, the Sub's own
+/// alias releases, or a command the Sub's client refused; the UI says so and offers Clear.
 /// In-memory only - it starts empty on every load, and never sends anything.
 public sealed class OwnerStatusEstimateTracker : IDisposable
 {
@@ -45,11 +47,15 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
     /// The Owner's manual "Clear estimate" (spec: "The Owner can see and clear a stale estimate").
     public void Clear(Guid pairingId) => estimates.Remove(pairingId);
 
-    /// collar/leash-travel "Owner's client skips places the leash can't follow": the Sub's leash will time out.
-    public void MarkUnleashed(Guid pairingId)
+    /// collar/leash-travel "Owner's client skips places the leash can't follow" (the Sub's leash will time
+    /// out) and collar/leash's leash-off notice (the Sub's leash already ended). Returns whether the estimate
+    /// showed the Sub leashed until now.
+    public bool MarkUnleashed(Guid pairingId)
     {
-        if (estimates.TryGetValue(pairingId, out var estimate))
-            estimate.Leashed = false;
+        if (!estimates.TryGetValue(pairingId, out var estimate) || !estimate.Leashed)
+            return false;
+        estimate.Leashed = false;
+        return true;
     }
 
     private void OnSent(string text)

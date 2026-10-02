@@ -13,7 +13,8 @@ namespace Oathbound.Plugin.Commands;
 /// SlotLockManager (collar/slot-locking) - never Glamourer's own actor-wide lock.
 public sealed class CollarCommand
 {
-    private const string Owner = "Collar";
+    /// The SlotLockManager owner name - PanicHandler keeps this owner's lock through panic.
+    public const string Owner = "Collar";
 
     /// How often the assigned collar Moodle is re-applied while the collar is locked (design.md's
     /// timer-based reassertion, not a Moodles change-notification event - see design.md's Decisions for
@@ -143,10 +144,10 @@ public sealed class CollarCommand
         return true;
     }
 
-    /// Called when a pairing ends for any reason other than panic - the Sub's own release or a verified
-    /// peer notice (PairingService.ReleasePeer / EndFromVerifiedPeerNotice) - collar/collaring "Unpairing
-    /// releases the collar and clears the assigned Moodle". Releases the Neck-slot lock if one is held, and
-    /// clears the assigned Moodle (if any) unconditionally rather than gating on the lock, since the Moodle
+    /// Called when the collar-owning pairing ends - the Sub's own release or a verified peer notice
+    /// (PairingService.ReleasePeer / EndFromVerifiedPeerNotice) - collar/collaring "Only the owning Owner or
+    /// unpairing removes the collar". Panic never comes through here: the collar outlives it. Releases the
+    /// Neck-slot lock if one is held, and clears the assigned Moodle (if any) unconditionally rather than gating on the lock, since the Moodle
     /// can now be actively reasserting while paired but unlocked. A no-op on both fronts when there's
     /// nothing to release.
     public void ReleaseOnUnpair()
@@ -157,21 +158,6 @@ public sealed class CollarCommand
             runtimeState.CollarForceLocked = false;
         }
 
-        config.CollarOwningPairingId = null;
-        config.Save();
-
-        if (config.Collar.HasMoodleAssigned)
-            moodles.Ledger.Release(AttachedMoodleLedger.CollarSource);
-    }
-
-    /// Panic's own release path (called from PanicHandler, not from `slotLocks.ReleaseAllForPanic` which
-    /// only knows about slots, not Moodles) - clears the assigned Moodle and stops its re-assertion,
-    /// unconditionally, the same as the collar's own Neck-slot lock always releases on panic. Gated only on
-    /// whether a Moodle is assigned, not on `CollarForceLocked` - the Moodle now reasserts independently of
-    /// the Neck-slot lock (while paired), so a paired-but-unlocked Sub can still have it actively applied
-    /// and must have it cleared on panic too. A no-op when no Moodle is assigned.
-    public void PanicRelease()
-    {
         config.CollarOwningPairingId = null;
         config.Save();
 

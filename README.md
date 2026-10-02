@@ -93,14 +93,17 @@ Sync tab shows whether it's up to date.
   acknowledgement before you can turn them on, and custom chat messages and toy control each need their
   own.
 - **Your safeword.** `/oathboundpanic` instantly removes everything that's been applied to you:
-  outfit, collar, title, moodles, restraints, leash, animations and toys. You can also bind it to a
-  hotkey. If you set a safeword, type it after the command (`/oathboundpanic red`); if you don't,
+  outfit, title, moodles, restraints, leash, animations and toys. Your collar is the one thing it leaves
+  on: a locked collar (and its moodle) comes off only when the Owner who collared you sends **Collar
+  unlock**, or when that pairing ends. If you were leashed, your plugin tells your Owner's that the leash
+  came off because you used your safeword. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/oathboundpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
   partner even if they're offline: their pairing ends the next time they log in, however long that takes.
 - **Only the two of you see the icons and the leash line.** They're drawn by your own clients - nobody
-  else sees them, and nothing extra is sent. The Sub's own view is exact; the Owner's is an estimate built
-  from the commands they sent, so it can't see a panic or the Sub's own releases (Sub Control has a
-  **Clear estimate** button for that). Either of you can turn them off in Settings -> In-world visuals.
+  else sees them, and drawing them sends nothing. The Sub's own view is exact; the Owner's is an estimate
+  built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
+  Sub's plugin tells the Owner's. For everything else the estimate can't see a panic or the Sub's own
+  releases (Sub Control has a **Clear estimate** button for that). Either of you can turn them off in Settings -> In-world visuals.
 - **Test before you pair.** Settings has a **Test an Owner command** box that lets a Sub try any command
   on themselves without sending anything.
 
@@ -167,6 +170,9 @@ further, and you should decide for yourself before turning them on:
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
   When your Owner walks farther away than the leash length, the leash steers your character after them
   (or uses the game's own follow if that gets stuck), with your own movement ignored until you're back in range.
+  If you're stuck running in place for 5 seconds, the leash goes slack: you get your own movement back to
+  walk around whatever caught you, and it tightens again once you're back within its length (or tries
+  pulling again after 15 seconds).
   If your Owner teleports or changes area while you're leashed, their plugin automatically tells yours where
   they went, and (if you've allowed **Teleport**) your character travels to them the same way Teleport does.
   If you haven't, or they go somewhere you can't follow (a house, an inn room, a duty), the leash comes off.
@@ -188,9 +194,13 @@ further, and you should decide for yourself before turning them on:
 
 Every command the Owner sends is one deliberate click that sends one tell, with one exception: while a Sub
 is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
-area, so the Sub can follow. Apart from that and a chat reply you set up yourself in Reactions, the plugin
-never auto-replies to chat. The only other tells it sends on its own are ones tied directly to something you
-just did, like confirming a pairing you accepted.
+area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
+side (their safeword, a trip that couldn't happen, the 2-minute wait running out, or a leash their plugin
+couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
+leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
+from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
+other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing
+you accepted.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.

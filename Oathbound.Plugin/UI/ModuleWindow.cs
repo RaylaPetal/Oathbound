@@ -2117,7 +2117,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Equip the item you want in your Neck slot (any way you like), then capture it here. Applied and locked automatically the moment you accept a pairing - not from this tab.");
 
         if (locked)
-            IconGlyph.WrappedColored(Theme.Danger, "Locked - applied at pairing. Only /oathboundpanic (your safeword) or your Owner's \"collar unlock\" releases it.");
+            IconGlyph.WrappedColored(Theme.Danger, "Locked - applied at pairing. Only your Owner's \"collar unlock\" or ending that pairing releases it. Your safeword leaves the collar on.");
 
         using var disabled = ImRaii.Disabled(locked);
 
@@ -2146,7 +2146,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             var collarMoodleLabel = config.Collar.MoodleStatusName is { } assignedMoodleName ? MoodlesTextFormat.StripMarkup(assignedMoodleName) : "(none assigned)";
             ImGui.TextUnformatted($"Moodle: {collarMoodleLabel}");
-            IconGlyph.HelpMarker("Optional. Applied alongside your collar item when it locks, and periodically re-asserted for as long as the collar stays locked - removing it through Moodles' own UI won't make it stick. Cleared only by /oathboundpanic or your Owner's \"collar unlock\", the same as the collar item itself.");
+            IconGlyph.HelpMarker("Optional. Applied alongside your collar item when it locks, and periodically re-asserted for as long as the collar stays locked - removing it through Moodles' own UI won't make it stick. Your safeword leaves it on; it's cleared only when the pairing that collared you ends.");
 
             var collarMoodleStatuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
             // collar/ui-organization "Partly dependent features are disabled inline": assigning needs Moodles;
@@ -2453,7 +2453,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("(Re-)attaches your Sub's configured collar item and locks it - the same thing that happens automatically at pairing, triggered manually. Use this to re-lock after \"Collar unlock,\" or to apply it for the first time if it wasn't configured/enabled yet when pairing was accepted.");
 
         DrawFixedQuickRow("Collar unlock", "collar unlock", canSend, FixedActionIds.CollarUnlock);
-        IconGlyph.HelpMarker("Releases your Sub's locked collar without them needing to panic - it stays equipped, just no longer locked.");
+        IconGlyph.HelpMarker("Releases your Sub's locked collar - it stays equipped, just no longer locked. Your Sub's safeword doesn't unlock it; only this or ending the pairing does.");
     }
 
     private void DrawMoodlesQuickSection(bool canSend)

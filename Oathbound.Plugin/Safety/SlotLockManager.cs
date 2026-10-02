@@ -212,12 +212,22 @@ public sealed class SlotLockManager : IDisposable
 
     /// Panic's own release: drops every tracked lock without touching Glamourer at all, since
     /// PanicHandler already performs its own unconditional whole-actor revert - see design.md's "Panic
-    /// keeps a single, unconditional whole-actor revert."
-    public void ReleaseAllForPanic()
+    /// keeps a single, unconditional whole-actor revert." `keepOwner`'s locks survive (collar/collaring
+    /// "Panic leaves the collar on"): one set aside under an owner being dropped (a restraint over the
+    /// collar) becomes the showing lock again, and VerifySoon puts its piece back after the revert, the
+    /// same way OutfitCommand.RevertToBase relies on enforcement for the collar.
+    public void ReleaseAllForPanic(string? keepOwner = null)
     {
+        var kept = locks.Where(kv => kv.Value.Owner == keepOwner)
+            .Concat(suspended.Where(kv => kv.Value.Owner == keepOwner))
+            .ToList();
         locks.Clear();
         suspended.Clear();
+        foreach (var (slot, entry) in kept)
+            locks[slot] = entry;
         Persist();
+        if (locks.Count > 0)
+            VerifySoon();
     }
 
     private void OnLocalPlayerStateChanged() => Enforce(logReapplied: false);

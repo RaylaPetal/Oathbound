@@ -144,6 +144,7 @@ public sealed class Plugin : IDalamudPlugin
     public StatusIndicatorState StatusIndicators { get; }
     private readonly LeashRenderer leashRenderer;
     private readonly LeashTravelWatcher leashTravelWatcher;
+    private readonly LeashOffNotifier leashOffNotifier;
     private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
@@ -222,6 +223,7 @@ public sealed class Plugin : IDalamudPlugin
         OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
         OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
+        leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators);
         statusIconRenderer = new StatusIconRenderer(Configuration, StatusIndicators);
@@ -240,9 +242,9 @@ public sealed class Plugin : IDalamudPlugin
         CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
-        ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand);
+        ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
 
-        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, CollarCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
+        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
 
         ModuleWindow = new ModuleWindow(this);
@@ -302,7 +304,7 @@ public sealed class Plugin : IDalamudPlugin
         });
         CommandManager.AddHandler(PanicCommandName, new CommandInfo(OnPanicCommand)
         {
-            HelpMessage = "Immediately unpair and revert all collar state. Append your safeword if one is configured in Settings, e.g. /oathboundpanic red.",
+            HelpMessage = "Your safeword: immediately remove everything applied to you except a locked collar (your pairings stay). Append your safeword if one is configured in Settings, e.g. /oathboundpanic red.",
         });
         CommandManager.AddHandler(LegacyPanicCommandName, new CommandInfo(OnPanicCommand)
         {
@@ -397,6 +399,7 @@ public sealed class Plugin : IDalamudPlugin
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
         OwnerStatusEstimates.Dispose();
+        leashOffNotifier.Dispose();
         leashRenderer.Dispose();
         statusIconRenderer.Dispose();
 

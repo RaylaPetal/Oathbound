@@ -114,6 +114,15 @@ public sealed class ChatComposer
     public string ComposeCatalogPermissionDenied(string name, string world, string requestId) =>
         $"/tell {name}@{world} collarcatalogdenied {requestId}";
 
+    /// collar/leash "Sub tells the Owner when the leash comes off": the Sub's automatic notice to the Owner
+    /// its leash was attached to, so that Owner's client stops showing the Sub as leashed (and stops sending
+    /// `leash travel`). Carries only the keyword and one reason word - see LeashOffNotifier.
+    public string ComposeLeashOffNotice(string name, string world, LeashEnd reason) =>
+        $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOffWord} {reason.ToNoticeWord()}";
+
+    public const string LeashOffNoticeKeyword = "collarleash";
+    public const string LeashOffWord = "off";
+
     /// collar/pairing "Panic notifies the peer, best-effort": the automatic notification tell sent from
     /// PanicHandler as a direct consequence of the panic action itself. Like ComposePairingAck, the target
     /// is already known (the peer identity cached at the moment panic ran), so this composes a full

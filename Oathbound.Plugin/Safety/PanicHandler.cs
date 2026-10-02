@@ -7,9 +7,10 @@ using Oathbound.Plugin.Relay;
 namespace Oathbound.Plugin.Safety;
 
 /// The always-available panic/safeword. Reverts every local restriction/effect this device currently has
-/// applied - unconditional whole-actor Glamourer revert, then simply dropping every tracked lock, since
-/// nothing needs preserving when everything is being reverted anyway (design.md: "Panic keeps a single,
-/// unconditional whole-actor revert") - but, per product decision, no longer ends any pairing. Panic is a
+/// applied - unconditional whole-actor Glamourer revert, then dropping every tracked lock except the
+/// collar's (design.md: "Panic keeps a single, unconditional whole-actor revert"; collar/collaring "Panic
+/// leaves the collar on" - only the owning Owner's `collar unlock` or unpairing removes the collar). Per
+/// product decision, panic also no longer ends any pairing. Panic is a
 /// pure "clear my current state" safety valve: every relationship this device holds stays exactly as
 /// paired as it was before. Ending a specific pairing is now a separate, deliberate action
 /// (`ReleasePairing`, exposed from Settings) - see that method for the "AND remove restrictions" +
@@ -26,14 +27,14 @@ public sealed class PanicHandler
     private readonly RestraintCommand restraints;
     private readonly ToyControlCommand toyControl;
     private readonly SubRuntimeState runtimeState;
-    private readonly CollarCommand collar;
+    private readonly FollowCommand follow;
     private readonly HotbarBlockVisuals hotbarVisuals;
     private readonly AttachedMoodleLedger moodleLedger;
     private readonly GestureCommand gesture;
     private readonly ReactionService reactions;
     private readonly TeleportCommand teleport;
 
-    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, CollarCommand collar, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture, ReactionService reactions, TeleportCommand teleport)
+    public PanicHandler(PairingService pairing, GlamourerIpc glamourer, SlotLockManager slotLocks, HonorificIpc honorific, MovementLockService movementLock, RestrictionRuleManager restrictionRules, RestraintCommand restraints, ToyControlCommand toyControl, SubRuntimeState runtimeState, FollowCommand follow, HotbarBlockVisuals hotbarVisuals, AttachedMoodleLedger moodleLedger, GestureCommand gesture, ReactionService reactions, TeleportCommand teleport)
     {
         this.hotbarVisuals = hotbarVisuals;
         this.moodleLedger = moodleLedger;
@@ -49,7 +50,7 @@ public sealed class PanicHandler
         this.restraints = restraints;
         this.toyControl = toyControl;
         this.runtimeState = runtimeState;
-        this.collar = collar;
+        this.follow = follow;
     }
 
     /// Reverts every local restriction/effect - does not touch any pairing. Every relationship this device
@@ -60,8 +61,8 @@ public sealed class PanicHandler
 
     public void Panic()
     {
-        RevertLocalState();
-        Plugin.Log.Information("Panic triggered: outfit/collar reverted, title cleared, movement lock released, all slot locks and restriction rules released. Every pairing remains active.");
+        RevertLocalState(LeashEnd.Panic);
+        Plugin.Log.Information("Panic triggered: outfit reverted, title cleared, leash and movement lock released, all slot locks except the collar's and all restriction rules released. Every pairing and the collar remain.");
     }
 
     /// Deliberate, explicit unpair of exactly one pairing (Settings' "select a pairing, then Unpair" - any
@@ -74,18 +75,25 @@ public sealed class PanicHandler
     public void ReleasePairing(PairingState target)
     {
         RunStep("unpair", () => pairing.ReleasePeer(target));
-        RevertLocalState();
+        // collar/leash: a leash to this pairing's Owner ends with the pairing (nobody left to tell); a leash
+        // to a different Owner still ends with the local revert, and that Owner is told.
+        RevertLocalState(follow.LeashedPairingId == target.Id ? LeashEnd.PairingEnded : LeashEnd.Other);
     }
 
-    private void RevertLocalState()
+    private void RevertLocalState(LeashEnd leashReason)
     {
         if (AfterLocalRevert is { } after)
             RunStep("forget custom trigger effects", after);
-        RunStep("revert outfit/collar", () => glamourer.RevertToAutomationFull());
-        RunStep("release slot locks", slotLocks.ReleaseAllForPanic);
-        RunStep("clear collar moodle", collar.PanicRelease);
-        // collar/attached-moodles "Panic clears everything": every moodle goes, attached or not.
-        RunStep("clear all moodles", moodleLedger.ClearAllForPanic);
+        // collar/leash "Sub tells the Owner when the leash comes off": released explicitly, with the reason,
+        // first - so a leash journey it stops can't report itself as a travel failure, and FollowCommand's
+        // own MovementLockActive safety net never has to guess why.
+        RunStep("release leash", () => follow.Release(leashReason));
+        // collar/collaring "Panic leaves the collar on": the full revert takes the collar piece off too, but
+        // its lock is kept, so enforcement puts it straight back - the same as the Owner's revert all.
+        RunStep("revert outfit", () => glamourer.RevertToAutomationFull());
+        RunStep("release slot locks except the collar", () => slotLocks.ReleaseAllForPanic(keepOwner: CollarCommand.Owner));
+        // collar/attached-moodles: every moodle goes except the collar's own, which keeps being re-asserted.
+        RunStep("clear all moodles except the collar's", () => moodleLedger.ClearAllExceptCollar());
 
         RunStep("clear title", () =>
         {

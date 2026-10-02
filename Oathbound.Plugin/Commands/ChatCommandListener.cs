@@ -20,7 +20,8 @@ public readonly record struct PeerUnpairedNotice(PluginRole PeerRole);
 ///  - a relay invitation reference (`collarinvite`) and its acknowledgement (`collarpairack`) - both roles
 ///    listen, both only ever hand off to PairingService, which owns the actual relay verification and
 ///    Pending state (collar/pairing);
-///  - a panic/unpair notification (`collarunpair`); and
+///  - a panic/unpair notification (`collarunpair`);
+///  - a Sub's leash-off notice (`collarleash off <reason>`, Owner side - collar/leash); and
 ///  - ongoing alias-trigger tells (Sub role only), matched by the sender name+world an accepted relay
 ///    pairing captured.
 public sealed class ChatCommandListener : IDisposable
@@ -30,6 +31,7 @@ public sealed class ChatCommandListener : IDisposable
     private const string UnpairNoticeKeyword = "collarunpair";
     private const string CatalogRequestKeyword = "collarcatalogreq";
     private const string CatalogPermissionDeniedKeyword = "collarcatalogdenied";
+    private const string LeashOffNoticeKeyword = ChatComposer.LeashOffNoticeKeyword;
 
     /// collar/chat-transport "Trigger-phrase command delivery over a selectable channel": every channel
     /// type an ongoing alias-trigger message can arrive on. Pairing lifecycle messages (invite/ack/unpair/
@@ -63,6 +65,12 @@ public sealed class ChatCommandListener : IDisposable
     private readonly ToyControlCommand toyControl;
     private readonly CustomTriggerCommand customTriggers;
     private readonly TeleportCommand teleport;
+    private readonly LeashOffNotifier leashOffNotifier;
+    private readonly OwnerStatusEstimateTracker estimates;
+
+    /// True while TestIncomingCommand runs: a local test stands the active pairing in as sender, but must never
+    /// send a leash-off notice to it.
+    private bool isLocalTest;
 
     private readonly Dictionary<Guid, PeerUnpairedNotice> peerUnpairedNotices = new();
     public IReadOnlyDictionary<Guid, PeerUnpairedNotice> PeerUnpairedNotices => peerUnpairedNotices;
@@ -76,7 +84,7 @@ public sealed class ChatCommandListener : IDisposable
             PeerUnpairedNoticeChanged?.Invoke();
     }
 
-    public ChatCommandListener(PluginConfig config, PairingService pairing, CatalogSyncRelayService catalogSyncRelay, TitleCommand title, OutfitCommand outfit, GestureCommand gesture, FollowCommand follow, CollarCommand collar, MoodlesCommand moodles, RestraintCommand restraints, ToyControlCommand toyControl, CustomTriggerCommand customTriggers, TeleportCommand teleport)
+    public ChatCommandListener(PluginConfig config, PairingService pairing, CatalogSyncRelayService catalogSyncRelay, TitleCommand title, OutfitCommand outfit, GestureCommand gesture, FollowCommand follow, CollarCommand collar, MoodlesCommand moodles, RestraintCommand restraints, ToyControlCommand toyControl, CustomTriggerCommand customTriggers, TeleportCommand teleport, LeashOffNotifier leashOffNotifier, OwnerStatusEstimateTracker estimates)
     {
         this.config = config;
         this.pairing = pairing;
@@ -91,6 +99,8 @@ public sealed class ChatCommandListener : IDisposable
         this.toyControl = toyControl;
         this.customTriggers = customTriggers;
         this.teleport = teleport;
+        this.leashOffNotifier = leashOffNotifier;
+        this.estimates = estimates;
 
         Plugin.ChatGui.ChatMessage += OnChatMessage;
     }
@@ -116,6 +126,8 @@ public sealed class ChatCommandListener : IDisposable
             if (TryHandleCatalogRequestMessage(text, message.Sender))
                 return;
             if (TryHandleCatalogPermissionDeniedMessage(text, message.Sender))
+                return;
+            if (TryHandleLeashOffNoticeMessage(text, message.Sender))
                 return;
         }
 
@@ -190,12 +202,17 @@ public sealed class ChatCommandListener : IDisposable
         {
             // No real sender to resolve in a local test - the active pairing (if any) stands in, matching
             // what a real tell from that peer would use.
+            isLocalTest = true;
             return Resolve(alias, config.GetActivePairing());
         }
         catch (Exception ex)
         {
             Plugin.Log.Error(ex, $"Local command test for \"{alias}\" threw an exception.");
             return LocalTestResult.Fail($"Threw an exception: {ex.Message}");
+        }
+        finally
+        {
+            isLocalTest = false;
         }
     }
 
@@ -324,6 +341,34 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
+    /// collar/leash "Owner's client stops treating a released Sub as leashed": a "collarleash off <reason>"
+    /// tell from a Sub whose leash ended on their side. Only a verified sender this device holds an active
+    /// Owner-side pairing with counts; anyone else is silently ignored, the same fail-closed shape as the
+    /// catalog-denied notice. The Owner is only told when their estimate actually showed the Sub leashed.
+    private bool TryHandleLeashOffNoticeMessage(string text, SeString sender)
+    {
+        if (!text.StartsWith(LeashOffNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var (word, rest) = SplitFirstToken(text[LeashOffNoticeKeyword.Length..].Trim());
+        if (!word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
+            return true;
+        var (name, world) = ExtractNameAndWorld(sender);
+        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
+            return true;
+
+        var reason = LeashEndExtensions.FromNoticeWord(SplitFirstToken(rest).First);
+        if (!estimates.MarkUnleashed(ownerPairing.Id))
+            return true;
+        Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+        {
+            Title = "Leash came off",
+            Content = $"{ownerPairing.PeerName}'s leash came off: {reason.ToOwnerText()}",
+            Type = Dalamud.Interface.ImGuiNotification.NotificationType.Info,
+        });
+        return true;
+    }
+
     private static bool TryParseRole(string token, out PluginRole role)
     {
         switch (token.ToLowerInvariant())
@@ -382,7 +427,11 @@ public sealed class ChatCommandListener : IDisposable
             case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
                 // collar/leash-travel (design D4): `leash travel <teleport payload>`. Bare `leash [options]` falls
                 // through to ResolveAlias's fixed-word handling as before.
-                return permissions.Follow ? HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing) : LocalTestResult.Fail("Follow permission is not enabled.");
+                if (permissions.Follow)
+                    return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
+                if (follow.LeashedPairingId != sourcePairing?.Id)
+                    NotifyNotLeashed(sourcePairing);
+                return LocalTestResult.Fail("Follow permission is not enabled.");
             case "teleport":
                 // Deliberately no outer permission gate here either, unlike the categories above - unlike
                 // them, every one of Teleport's guards (permission, ToS acknowledgement, duty, combat,
@@ -401,8 +450,8 @@ public sealed class ChatCommandListener : IDisposable
     /// in one tell - restraints (gear, rules, bound animations, their moodles), outfit (unlocked, then the
     /// whole character reverted to Glamourer automation), title, leash, playing animation, toy, an in-progress
     /// teleport journey, and every moodle. Each category only if the Sub's own permission for it is on, same as each individual command.
-    /// Never touches the collar (its slot lock, piece and moodle all stay) or any pairing - unlike panic,
-    /// which is the Sub's own safeword and does clear the collar. Each step is isolated, so one failing (an
+    /// Never touches the collar (its slot lock, piece and moodle all stay) or any pairing - the same as
+    /// panic, the Sub's own safeword (collar/collaring). Each step is isolated, so one failing (an
     /// IPC plugin not loaded) never stops the rest.
     private LocalTestResult HandleForceRevert(string rest)
     {
@@ -432,7 +481,7 @@ public sealed class ChatCommandListener : IDisposable
         Step("restraints", permissions.Restraints, () => restraints.ForceUnlock());
         Step("outfit", permissions.Outfit, () => outfit.RevertToBase());
         Step("title", permissions.Title, title.ForceClear);
-        Step("leash", permissions.Follow, follow.Release);
+        Step("leash", permissions.Follow, () => follow.Release(LeashEnd.OwnerRevertAll));
         Step("animation", permissions.Gesture, gesture.ResetActiveTemporary);
         Step("toy", permissions.ToyControl, () => toyControl.ForceStop());
         Step("teleport", permissions.Teleport && teleport.IsInProgress, () => teleport.Stop("Owner sent Revert all"));
@@ -730,10 +779,28 @@ public sealed class ChatCommandListener : IDisposable
         if (!TeleportTarget.TryParse(payload, out var destination))
             return LocalTestResult.Fail($"Unrecognized \"leash travel\" payload \"{payload}\".");
 
+        var wasLeashedToSender = sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id;
         var (success, reason) = follow.TravelTo(destination, sourcePairing);
+        // collar/leash-travel: the sender's client still thinks this Sub is leashed to them - say it isn't,
+        // once per `leash travel`. (A leash that did belong to them and failed to travel already sent its
+        // own `travel` notice from the release.)
+        if (!success && !wasLeashedToSender)
+            NotifyNotLeashed(sourcePairing);
         return success
             ? LocalTestResult.Ok($"Leash travel: following your Owner to \"{destination.World}\".")
             : LocalTestResult.Fail(reason ?? "Leash travel failed.");
+    }
+
+    private void NotifyLeashRefused(PairingState? sourcePairing)
+    {
+        if (!isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+            leashOffNotifier.NotifyRefused(sourcePairing);
+    }
+
+    private void NotifyNotLeashed(PairingState? sourcePairing)
+    {
+        if (!isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+            leashOffNotifier.NotifyNotLeashed(sourcePairing);
     }
 
     private static PairingState? SingleOrDefaultIfUnambiguous(IEnumerable<PairingState> candidates)
@@ -782,18 +849,26 @@ public sealed class ChatCommandListener : IDisposable
         var leashRest = LengthOption.Strip(MoodleOption.Strip(alias, out var leashMoodle), out var leashLength);
         if (Matches(leashRest, ControlWords.Leash))
         {
+            // collar/leash "Sub tells the Owner when the leash comes off": a refused leash is reported back too,
+            // so the Owner's client doesn't show (or travel with) a leash that never engaged.
             if (!permissions.Follow)
+            {
+                NotifyLeashRefused(sourcePairing);
                 return LocalTestResult.Fail("Follow permission is not enabled.");
-            return follow.Engage(sourcePairing?.PeerName, leashLength ?? LengthOption.DefaultYalms, leashMoodle)
-                ? LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).")
-                : LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.");
+            }
+            if (follow.Engage(sourcePairing, leashLength ?? LengthOption.DefaultYalms, leashMoodle))
+                return LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).");
+            NotifyLeashRefused(sourcePairing);
+            return LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.");
         }
 
         if (Matches(alias, ControlWords.Unleash))
         {
             if (!permissions.Follow)
                 return LocalTestResult.Fail("Follow permission is not enabled.");
-            follow.Release();
+            // An unleash from a different Owner than the one holding the leash still releases it, but the
+            // holding Owner's client didn't send it - they're told.
+            follow.Release(sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id ? LeashEnd.OwnerUnleash : LeashEnd.Other);
             return LocalTestResult.Ok($"\"{alias}\" matched leash-release.");
         }
 

@@ -228,7 +228,7 @@ public class CollarWindow : Window, IDisposable
             using (ImRaii.Disabled(invitationExpired))
                 if (ImGui.Button("Accept"))
                     Plugin.FireAndForget(plugin.PairingService.AcceptPendingAsync(System.Threading.CancellationToken.None));
-            IconGlyph.HelpMarker("Trusts this sender as your paired peer from now on. Either direction can be ended any time from Settings' Unpair section - panic no longer does this, it only reverts your current outfit/title/collar/movement-lock state.");
+            IconGlyph.HelpMarker("Trusts this sender as your paired peer from now on. Either direction can be ended any time from Settings' Unpair section - panic no longer does this, it only reverts your current outfit/title/movement-lock/restraint state (a locked collar stays on).");
             ImGui.SameLine();
             if (ImGui.Button("Reject"))
                 plugin.PairingService.DismissPending();

@@ -5,6 +5,7 @@ using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Interface.ImGuiNotification;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Safety;
 using ECommons.Automation;
@@ -16,12 +17,14 @@ namespace Oathbound.Plugin.Commands;
 /// movement is removed; past it they're steered along the Owner's breadcrumb trail, falling back to the
 /// game's own follow when that gets stuck or someone is mounted (design.md D2-D5). collar/leash-travel adds
 /// Waiting (the Owner left the area) and Traveling (a leash journey to the Owner is running). collar/leash-mounts
-/// adds pillion / mounting alongside / flying through LeashMountController.
+/// adds pillion / mounting alongside / flying through LeashMountController. Slack is the stuck fallback: the
+/// Sub barely moved for a while despite being pulled or following, so they get their own steering back until
+/// they're within the leash again (collar/leash "The leash goes slack when the Sub is stuck").
 public sealed class FollowCommand
 {
     private const string Owner = "Follow";
 
-    private enum LeashState { Released, Free, Pulling, Following, Waiting, Traveling }
+    private enum LeashState { Released, Free, Pulling, Following, Slack, Waiting, Traveling }
 
     /// collar/leash-travel "The leash waits when the Owner leaves".
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromMinutes(2);
@@ -36,6 +39,13 @@ public sealed class FollowCommand
     // design D4: a pull that hasn't closed the gap by StuckProgress yalms in StuckWindow falls back to follow.
     private static readonly TimeSpan StuckWindow = TimeSpan.FromSeconds(3);
     private const float StuckProgress = 0.5f;
+
+    // collar/leash "The leash goes slack when the Sub is stuck" (design D5-D6): pulled or following, but the
+    // Sub's own ground position moved less than StuckSlackMove for StuckSlackWindow - running in place. Slack
+    // lasts until the Sub is back within the leash, or SlackRetry has passed and the pull tries again.
+    private static readonly TimeSpan StuckSlackWindow = TimeSpan.FromSeconds(5);
+    private const float StuckSlackMove = 0.5f;
+    private static readonly TimeSpan SlackRetry = TimeSpan.FromSeconds(15);
 
     /// collar/leash-mounts: pitch (radians) used to bring a flying Sub down when the Owner lands.
     private const float DescendPitch = -0.8f;
@@ -58,6 +68,8 @@ public sealed class FollowCommand
     private ulong followedObjectId;
     /// The leashed Owner's name: object ids change between areas, so the Owner is found again by this.
     private string? ownerName;
+    /// The Sub-side pairing the leash was engaged by - who a leash-off notice goes to.
+    private Guid ownerPairingId;
     private DateTime waitingSince;
     private int requestedLength = LengthOption.DefaultYalms;
 
@@ -71,6 +83,11 @@ public sealed class FollowCommand
     private DateTime lastCrumbAt;
     private float pullBestDistance;
     private DateTime pullProgressAt;
+
+    private Vector2 playerGround;
+    private Vector2 stuckAnchor;
+    private DateTime stuckSince;
+    private DateTime slackSince;
 
     /// Whether this client believes the game's follow is on toward the Owner - set whenever we send
     /// `/follow <t>` ourselves, cleared when we stop it. Only then is the stop-follow command sent, since bare
@@ -98,6 +115,13 @@ public sealed class FollowCommand
     /// Whether the leash is on at all - including while waiting for or traveling to the Owner.
     public bool IsLeashed => state != LeashState.Released;
 
+    /// The pairing the current leash belongs to, or null while not leashed.
+    public Guid? LeashedPairingId => state == LeashState.Released ? null : ownerPairingId;
+
+    /// collar/leash "Sub tells the Owner when the leash comes off": raised once whenever an engaged leash
+    /// ends, with the pairing it belonged to and why (LeashOffNotifier decides whether to tell the Owner).
+    public event Action<Guid, LeashEnd>? LeashEnded;
+
     /// collar/leash "Sub's longest accepted leash": the requested length shortened to the Sub's limit, read
     /// live so lowering the limit applies to the current leash immediately.
     public float EffectiveLength =>
@@ -117,14 +141,15 @@ public sealed class FollowCommand
         Chat.SendMessage("/follow <t>");
     }
 
-    /// `peerName` is the specific Owner-side pairing whose incoming command triggered this (collar/
-    /// multi-pairing: resolved from the tell's own verified sender, not any single configured peer).
+    /// `source` is the specific pairing whose incoming command triggered this (collar/multi-pairing:
+    /// resolved from the tell's own verified sender, not any single configured peer).
     /// `lengthYalms` is the already-validated `length:` option (or the default). `moodleOverride` is the
     /// Owner's optional `leash moodle:"..."` pick (collar/attached-moodles). Re-leashing the same Owner keeps
     /// the leash and its state, only taking the new length and moodle.
-    public bool Engage(string? peerName, int lengthYalms, string? moodleOverride = null)
+    public bool Engage(PairingState? source, int lengthYalms, string? moodleOverride = null)
     {
-        if (!movementLock.IsSteerAvailable || peerName is null)
+        var peerName = source?.PeerName;
+        if (!movementLock.IsSteerAvailable || source is null || string.IsNullOrEmpty(peerName))
             return false;
 
         var owner = Plugin.ObjectTable.FirstOrDefault(o => string.Equals(o.Name.TextValue, peerName, StringComparison.OrdinalIgnoreCase));
@@ -135,13 +160,14 @@ public sealed class FollowCommand
         }
 
         if (state != LeashState.Released && !string.Equals(ownerName, owner.Name.TextValue, StringComparison.OrdinalIgnoreCase))
-            Release();
+            Release(LeashEnd.Other);
 
         requestedLength = lengthYalms;
         if (state == LeashState.Released)
         {
             followedObjectId = owner.GameObjectId;
             ownerName = owner.Name.TextValue;
+            ownerPairingId = source.Id;
             crumbs.Clear();
             lastCrumbAt = DateTime.MinValue;
             zeroNextFrame = false;
@@ -164,9 +190,12 @@ public sealed class FollowCommand
         return true;
     }
 
-    public void Release()
+    /// Ends the leash. `reason` says why, for the leash-off notice; LeashEnded is raised only if a leash was on.
+    public void Release(LeashEnd reason)
     {
+        var wasLeashed = state != LeashState.Released;
         var wasTraveling = state == LeashState.Traveling;
+        var pairingId = ownerPairingId;
         state = LeashState.Released;
         moodles.Ledger.Release(AttachedMoodleLedger.FollowSource);
         movementLock.ClearSteering(Owner);
@@ -181,6 +210,9 @@ public sealed class FollowCommand
         // journey stops with the leash. State is already Released, so its end event is ignored.
         if (wasTraveling)
             teleport.StopLeashJourney("the leash was released");
+        ownerPairingId = Guid.Empty;
+        if (wasLeashed)
+            LeashEnded?.Invoke(pairingId, reason);
     }
 
     /// collar/leash-travel "Sub travels to the Owner on leash travel": only while leashed, and only for the
@@ -198,7 +230,7 @@ public sealed class FollowCommand
         if (!success)
         {
             Plugin.Log.Info($"Leash released: leash travel couldn't start ({reason}).");
-            Release();
+            Release(LeashEnd.Travel);
             return (false, reason);
         }
         state = LeashState.Traveling;
@@ -212,7 +244,7 @@ public sealed class FollowCommand
         if (!arrived)
         {
             Plugin.Log.Info("Leash released: the leash journey was stopped.");
-            Release();
+            Release(LeashEnd.Travel);
             return;
         }
         if (!TryReattach())
@@ -250,7 +282,7 @@ public sealed class FollowCommand
         // Release - finish the job here so a fallback follow doesn't keep walking the Sub.
         if (!runtimeState.MovementLockActive)
         {
-            Release();
+            Release(LeashEnd.Other);
             return;
         }
 
@@ -271,7 +303,7 @@ public sealed class FollowCommand
             if (now - waitingSince > WaitTimeout)
             {
                 Plugin.Log.Info("Leash released: the Owner did not come back or send leash travel in time.");
-                Release();
+                Release(LeashEnd.Timeout);
             }
             return;
         }
@@ -288,13 +320,14 @@ public sealed class FollowCommand
         if (player is null) return;
         RecordCrumb(owner.Position, now);
 
-        var offset = Ground(player.Position) - Ground(owner.Position);
+        playerGround = Ground(player.Position);
+        var offset = playerGround - Ground(owner.Position);
         groundDistance = offset.Length();
         outward = groundDistance > 0.01f ? offset / groundDistance : Vector2.Zero;
         var suspended = movementLock.IsSteerSuspended;
 
         mount.Tick(owner, player, now);
-        if (mount.IsPillion && state is LeashState.Pulling or LeashState.Following)
+        if (mount.IsPillion && state is LeashState.Pulling or LeashState.Following or LeashState.Slack)
         {
             // Seated behind the Owner: the game carries the Sub, nothing to pull.
             StopFollowing();
@@ -308,10 +341,28 @@ public sealed class FollowCommand
             StartPull(now);
         }
 
+        if (state is LeashState.Pulling or LeashState.Following)
+        {
+            // Held by a restraint, a teleport or a mount cast isn't stuck - only running in place is. Not reset
+            // on Pulling -> Following, so a failed pull plus a failed follow add up.
+            if (suspended || mount.HoldStill || mount.IsPillion || Vector2.Distance(playerGround, stuckAnchor) >= StuckSlackMove)
+                ResetStuck(now);
+            else if (now - stuckSince >= StuckSlackWindow && groundDistance > EffectiveLength)
+                EnterSlack(now);
+        }
+
         switch (state)
         {
             case LeashState.Free:
                 if (groundDistance > EffectiveLength && !mount.IsPillion)
+                    StartPull(now);
+                break;
+
+            case LeashState.Slack:
+                // Back within the leash: the edge holds again. Still out after SlackRetry: pull again.
+                if (groundDistance <= EffectiveLength)
+                    state = LeashState.Free;
+                else if (now - slackSince >= SlackRetry)
                     StartPull(now);
                 break;
 
@@ -417,6 +468,31 @@ public sealed class FollowCommand
         pullBestDistance = groundDistance;
         pullProgressAt = now;
         pullDirection = Vector2.Zero;
+        ResetStuck(now);
+    }
+
+    private void ResetStuck(DateTime now)
+    {
+        stuckAnchor = playerGround;
+        stuckSince = now;
+    }
+
+    /// Stops pulling or following and hands the Sub their own steering - Steer/FlySteer pass input through
+    /// untouched in Slack, edge included. The leash itself (line, icon, moodle, leash travel) carries on, and
+    /// the Owner isn't told: nothing ended.
+    private void EnterSlack(DateTime now)
+    {
+        Plugin.Log.Info("Leash stuck: going slack until the Sub is back within the leash.");
+        StopFollowing();
+        state = LeashState.Slack;
+        slackSince = now;
+        zeroNextFrame = true;
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Leash went slack",
+            Content = "You were stuck, so your leash went slack. Walk back toward your Owner and it tightens again.",
+            Type = NotificationType.Info,
+        });
     }
 
     private void StartFollowing(IGameObject owner, DateTime now)

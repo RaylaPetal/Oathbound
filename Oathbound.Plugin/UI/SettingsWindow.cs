@@ -359,7 +359,7 @@ public class SettingsWindow : Window, IDisposable
         {
             if (activePairings.FirstOrDefault(p => p.Id == unpairId) is { } target)
             {
-                IconGlyph.WrappedColored(Theme.Danger, $"End your pairing with {target.PeerName}@{target.PeerWorld}? This reverts your current outfit, title, collar, movement lock and restraints the same way panic does, and can't be undone. Your other pairings aren't affected.");
+                IconGlyph.WrappedColored(Theme.Danger, $"End your pairing with {target.PeerName}@{target.PeerWorld}? This reverts your current outfit, title, movement lock and restraints the same way panic does, removes your collar if this is the pairing that collared you, and can't be undone. Your other pairings aren't affected.");
                 if (ImGui.Button("Confirm unpair"))
                 {
                     plugin.PanicHandler.ReleasePairing(target);
@@ -647,7 +647,7 @@ public class SettingsWindow : Window, IDisposable
             config.ShowStatusIcons = showIcons;
             config.Save();
         }
-        IconGlyph.HelpMarker("Gagged, restrained and leashed icons next to the name. On an Owner's screen these are an estimate from the commands you sent.");
+        IconGlyph.HelpMarker("Gagged, restrained and leashed icons next to the name. On an Owner's screen these are an estimate from the commands you sent (the leash icon also clears when your Sub's leash comes off on their side).");
 
         var showLeash = config.ShowLeashLine;
         if (ImGui.Checkbox("Show leash line", ref showLeash))
