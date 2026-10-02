@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Interface.Utility;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Safety;
@@ -36,6 +38,10 @@ public sealed class LeashRenderer : IDisposable
     private const int ClearancePasses = 3;
     /// Keeps a bent-around point from ending up under the floor.
     private const float MinPointClearance = 0.05f;
+
+    /// A game window bigger than this share of the screen is a full-screen layer (nameplates, fades, screen text);
+    /// cutting it out would hide the leash entirely.
+    private const float FullScreenFraction = 0.5f;
 
     // Deep crimson. ImGui packs colors as ABGR.
     private static readonly uint LeashColor = ImGui.GetColorU32(new Vector4(0.68f, 0.07f, 0.10f, 1f));
@@ -74,6 +80,9 @@ public sealed class LeashRenderer : IDisposable
     /// Head, neck-to-chest, chest-to-waist and a thigh and shin per leg, for each of the two characters.
     private readonly Capsule[] capsules = new Capsule[14];
     private int capsuleCount;
+    /// Screen rectangles of visible game windows, collected once per frame.
+    private readonly List<(Vector2 Min, Vector2 Max)> uiRects = new();
+    private bool warnedUiRects;
     private readonly Dictionary<Guid, Entry> entries = new();
     private readonly HashSet<Guid> seen = new();
     private readonly HashSet<Guid> instantEnds = new();
@@ -112,7 +121,8 @@ public sealed class LeashRenderer : IDisposable
             // No local player while loading, so no leash would read as on; treat it as a gap instead.
             if (Plugin.ObjectTable.LocalPlayer is null) return;
             Update();
-            if (!config.ShowLeashLine) return;
+            if (!config.ShowLeashLine || entries.Count == 0) return;
+            CollectUiRects();
             foreach (var entry in entries.Values)
             {
                 if (entry.Sub is not null && entry.Owner is not null)
@@ -193,6 +203,44 @@ public sealed class LeashRenderer : IDisposable
         instantEnds.Clear();
     }
 
+    /// Pictomancy's own UI mask switches off under DLSS/FSR or 3D resolution scaling, so the game's visible windows are
+    /// also cut out of the line. Any failure here only loses the extra clipping, never the line.
+    private unsafe void CollectUiRects()
+    {
+        uiRects.Clear();
+        if (pictomancy is null) return;
+        try
+        {
+            var stage = AtkStage.Instance();
+            if (stage == null || stage->RaptureAtkUnitManager == null) return;
+            var screen = ImGuiHelpers.MainViewport.Size;
+            var fullScreenArea = screen.X * screen.Y * FullScreenFraction;
+            ref var loaded = ref stage->RaptureAtkUnitManager->AtkUnitManager.AllLoadedUnitsList;
+            for (var i = 0; i < loaded.Count; i++)
+            {
+                var unit = loaded.Entries[i].Value;
+                if (unit == null || !unit->IsVisible || unit->Alpha == 0) continue;
+                var root = unit->RootNode;
+                if (root == null || !root->IsVisible()) continue;
+                // Always visible and screen-sized, but backstops the size check in case its root node is ever smaller.
+                if (unit->Name.StartsWith("NamePlate\0"u8)) continue;
+                var size = new Vector2(root->Width, root->Height) * unit->Scale;
+                if (size.X <= 0f || size.Y <= 0f || size.X * size.Y > fullScreenArea) continue;
+                var min = new Vector2(unit->X, unit->Y);
+                uiRects.Add((min, min + size));
+            }
+        }
+        catch (Exception ex)
+        {
+            uiRects.Clear();
+            if (!warnedUiRects)
+            {
+                warnedUiRects = true;
+                Plugin.Log.Warning(ex, "Leash line: couldn't read the game's windows - the line may draw over the UI under DLSS/FSR.");
+            }
+        }
+    }
+
     /// Ease-out cubic: the line slows as it reaches the collar.
     private static float Ease(float p) => 1f - MathF.Pow(1f - p, 3f);
 
@@ -226,6 +274,8 @@ public sealed class LeashRenderer : IDisposable
             using var drawList = PctService.Draw(hints: Hints);
             // Null in cutscenes or while the screen is faded.
             if (drawList is null) return;
+            foreach (var (min, max) in uiRects)
+                drawList.AddClipZone(min, max);
             for (var i = 0; i < count; i++)
                 drawList.PathLineTo(visible[i]);
             drawList.PathStroke(LeashColor, PctStrokeFlags.None, Thickness(neck, hand));
