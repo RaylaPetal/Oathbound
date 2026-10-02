@@ -3,7 +3,7 @@ import { RelayError } from "./lib/errors";
 import { logEvent } from "./lib/log";
 import { acceptInvitation, cancelInvitation, consumeInvitation, createInvitation, fetchInvitation } from "./routes/invitations";
 import { deleteBackup, fetchBackup, putBackup } from "./routes/backups";
-import { fetchPair } from "./routes/pairs";
+import { fetchPair, putCollarStatus } from "./routes/pairs";
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
 import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxKey, uploadMailboxSnapshot } from "./routes/mailbox";
@@ -11,6 +11,9 @@ import { health } from "./routes/health";
 import { runScheduledCleanup } from "./scheduled";
 import { enforceQuota } from "./lib/quotas";
 import { originScope } from "./lib/origin";
+
+/** Matches `simple.period` of the ORIGIN_RATE_LIMITER binding in wrangler.toml. */
+const ORIGIN_RATE_LIMIT_PERIOD_SECONDS = 60;
 
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -20,13 +23,13 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (segments[0] !== "v1") return new RelayError("not_found").toResponse();
 
   // Account-level budget guard. Safety traffic has an independent reserve so scans/pairing abuse cannot
-  // consume its allowance, while both pools keep total accepted Worker traffic comfortably below the
-  // platform's free daily request and D1-write ceilings.
+  // consume its allowance.
   const safetyRoute = segments[1] === "revocations";
   await enforceQuota(env, safetyRoute ? "globalDailySafety" : "globalDailyWork", "all");
   // Applied before authentication/body parsing so malformed and oversized anonymous traffic is bounded
-  // too. The scope is a one-way hash; raw client IPs are never retained.
-  await enforceQuota(env, "originRequests", await originScope(request));
+  // too. The key is a one-way hash; raw client IPs are never retained. Per Cloudflare location, not global.
+  const origin = await env.ORIGIN_RATE_LIMITER.limit({ key: await originScope(request) });
+  if (!origin.success) throw new RelayError("rate_limited", ORIGIN_RATE_LIMIT_PERIOD_SECONDS);
 
   if (method === "GET" && segments.length === 2 && segments[1] === "health") {
     return health(env);
@@ -48,6 +51,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   if (segments[1] === "pairs") {
     if (method === "GET" && segments.length === 3) return fetchPair(request, env, segments[2]!);
+    if (method === "POST" && segments.length === 4 && segments[3] === "collar-status") return putCollarStatus(request, env, segments[2]!);
   }
 
   if (segments[1] === "revocations") {

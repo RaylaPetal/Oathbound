@@ -14,6 +14,8 @@ export default defineWorkersConfig(async () => {
           miniflare: {
             compatibilityFlags: ["nodejs_compat"],
             bindings: { TEST_MIGRATIONS: migrations },
+            // The pool doesn't read `ratelimits` from wrangler.toml; mirror env.local's binding here.
+            ratelimits: { ORIGIN_RATE_LIMITER: { simple: { limit: 120, period: 60 } } },
           },
         },
       },

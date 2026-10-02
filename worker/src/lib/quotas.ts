@@ -23,17 +23,19 @@ export const QUOTA_LIMITS = {
   // Catalog mailbox key publish/fetch, status and consume (not upload, which catalogUploadBytes bounds).
   // Hourly Owner checks and debounced Sub publishes need a handful per hour; this only stops runaway loops.
   deviceMailboxOps: { windowSeconds: 3600, maxCount: 120 },
-  originRequests: { windowSeconds: 60, maxCount: 120 },
   // collar/pairing + collar/pairing-recovery: unauthenticated capability reads that a guesser would hammer.
   // Codes are 80/128 random bits, so these are defense in depth, generous for honest polling.
   originInvitationLookup: { windowSeconds: 3600, maxCount: 120 },
   originBackupFetch: { windowSeconds: 3600, maxCount: 20 },
   deviceBackupWrite: { windowSeconds: 3600, maxCount: 60 },
+  // State changes plus a check-in every couple of hours; this only stops runaway loops.
+  deviceCollarStatus: { windowSeconds: 3600, maxCount: 30 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
-  // Together these cap application traffic at 35k/day, leaving substantial headroom below Workers
-  // Free's 100k/day request ceiling and D1 Free's 100k/day row-write ceiling for nonce, lifecycle, and
-  // cleanup writes. Revocations have a separate reserve so ordinary abuse cannot starve safety traffic.
+  // Together these cap application traffic at 35k/day, under Workers Free's 100k/day request ceiling.
+  // D1 Free's 100k/day row-write ceiling is the tighter one: on top of its own writes, a request updates
+  // this counter, and a signed one also inserts (and the cron later deletes) a nonce and touches its
+  // per-device quotas. Index entries bill as extra rows, so keep indexes off these tables. Revocations have a separate reserve so ordinary abuse cannot starve safety traffic.
   globalDailyWork: { windowSeconds: 86400, maxCount: 25000 },
   globalDailySafety: { windowSeconds: 86400, maxCount: 10000 },
 } as const satisfies Record<string, QuotaLimit>;

@@ -16,6 +16,10 @@
     "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
     "ownerDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
     "subDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
-    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" }
+    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+    "revokedAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+    "collarState": { "description": "Latest collar state reported by the pair's Sub device, or null if none.", "enum": ["locked", "unlocked", "broken", null] },
+    "collarStateAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+    "collarCheckinAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
   }
 }

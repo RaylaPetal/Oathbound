@@ -82,7 +82,10 @@
     "catalogMailboxOwnerPollIntervalSeconds": 3600,
     "codeInvitationExpirySeconds": 604800,
     "pairStatusPollIntervalSeconds": 1800,
-    "backupCiphertextMaxBytes": 32768
+    "backupCiphertextMaxBytes": 32768,
+    "collarCheckinIntervalSeconds": 7200,
+    "collarBrokenGraceSeconds": 60,
+    "collarStaleSeconds": 172800
   },
   "pairingCode": {
     "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",

@@ -17,7 +17,12 @@ export interface PairRow {
   sub_device_key_id: string;
   created_at: number;
   revoked_at: number | null;
+  collar_state: CollarState | null;
+  collar_state_at: number | null;
+  collar_checkin_at: number | null;
 }
+
+export type CollarState = "locked" | "unlocked" | "broken";
 
 export async function latestPair(env: Env, pairIdHash: string): Promise<PairRow | null> {
   return env.RELAY_DB.prepare(

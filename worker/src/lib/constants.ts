@@ -21,6 +21,9 @@ interface ProtocolConstants {
     codeInvitationExpirySeconds: number;
     pairStatusPollIntervalSeconds: number;
     backupCiphertextMaxBytes: number;
+    collarCheckinIntervalSeconds: number;
+    collarBrokenGraceSeconds: number;
+    collarStaleSeconds: number;
   };
 }
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/collar-status.schema.json",
+  "title": "Collar status report",
+  "description": "Signed by the pair's Sub device (request signing) and posted to /v1/pairs/{pairIdHash}/collar-status. Carries no character name, world, item or other state. A report whose stateAt is older than the stored one is rejected; every accepted report also counts as a check-in.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schemaVersion",
+    "pairEpoch",
+    "state",
+    "stateAt"
+  ],
+  "properties": {
+    "type": {
+      "const": "collar-status"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "pairEpoch": {
+      "$ref": "common.schema.json#/$defs/pairEpoch"
+    },
+    "state": {
+      "enum": [
+        "locked",
+        "unlocked",
+        "broken"
+      ]
+    },
+    "stateAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    }
+  }
+}

@@ -22,6 +22,13 @@ migrations_dir = "migrations"
 binding = "RELAY_CATALOG_BUCKET"
 bucket_name = "oathbound-relay-catalog-local"
 
+# The general per-origin flood guard. Kept out of D1 so it costs no row writes; the capability-guessing
+# limits stay in D1 because they need one global count.
+[[env.local.ratelimits]]
+name = "ORIGIN_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
 [env.local.observability]
 [env.local.observability.logs]
 enabled = true
@@ -49,6 +56,11 @@ bucket_name = "oathbound-relay-catalog-staging"
 [env.staging.triggers]
 crons = ["*/15 * * * *"]
 
+[[env.staging.ratelimits]]
+name = "ORIGIN_RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
+
 [env.staging.observability]
 [env.staging.observability.logs]
 enabled = true
@@ -75,6 +87,11 @@ bucket_name = "oathbound-relay-catalog-production"
 
 [env.production.triggers]
 crons = ["*/15 * * * *"]
+
+[[env.production.ratelimits]]
+name = "ORIGIN_RATE_LIMITER"
+namespace_id = "1003"
+simple = { limit = 120, period = 60 }
 
 [env.production.observability]
 [env.production.observability.logs]
