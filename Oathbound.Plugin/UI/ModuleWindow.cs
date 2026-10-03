@@ -1963,7 +1963,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var locked = plugin.RuntimeState.CollarForceLocked;
         IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Equip the item you want in your Neck slot (any way you like), then capture it here. Applied and locked automatically the moment you accept a pairing - not from this tab.");
+        IconGlyph.WrappedDisabled("Choose a Neck-slot collar, a left-hand ring, or both. They're applied and locked together automatically the moment you accept a pairing - not from this tab.");
 
         if (locked)
             IconGlyph.WrappedColored(Theme.Danger, "Locked - applied at pairing. Only your Owner's \"collar unlock\" or ending that pairing releases it. Your safeword leaves the collar on.");
@@ -1979,7 +1979,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 plugin.ItemPickerWindow.Open(ApiEquipSlot.Neck, (chosenId, _) => plugin.CollarCommand.ConfigureFromItem(chosenId));
             IconGlyph.HelpMarker("Pick any Neck-slot item to save as your collar - it does not need to be equipped or owned.");
 
-            if (config.Collar.IsConfigured)
+            if (config.Collar.HasNeckItem)
             {
                 ImGui.SameLine();
                 if (ImGui.Button("Clear"))
@@ -1987,7 +1987,24 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
             else
             {
-                IconGlyph.WrappedDisabled("No collar configured yet.");
+                IconGlyph.WrappedDisabled("No Neck item chosen.");
+            }
+        }
+
+        using (Section.Begin("collarRing", "Ring"))
+        {
+            var ringChosenLabel = config.Collar.RingItemId is { } ringItemId ? GetItemName(ringItemId) : "(none chosen)";
+            ImGui.TextUnformatted($"Ring: {ringChosenLabel}");
+            ImGui.SameLine();
+            if (ImGui.Button("Choose item...##collarRing"))
+                plugin.ItemPickerWindow.Open(ApiEquipSlot.LFinger, (chosenId, _) => plugin.CollarCommand.ConfigureRingFromItem(chosenId));
+            IconGlyph.HelpMarker("Optional. A left-hand ring that locks and unlocks together with your collar - for partners or a wedding band. It does not need to be equipped or owned. While a restraint holds your left ring slot, the collar can't lock until it's removed.");
+
+            if (config.Collar.HasRing)
+            {
+                ImGui.SameLine();
+                if (ImGui.Button("Clear##collarRing"))
+                    plugin.CollarCommand.ClearConfiguredRing();
             }
         }
 

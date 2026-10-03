@@ -261,6 +261,7 @@ public static class TutorialCatalog
         [
             Help("collar", "Your collar - a piece of gear your Owner can lock on you."),
             new("Collar item", "The gear piece that is your collar.", S("collarItem"), n => n.Module("collar")),
+            new("Ring", "An optional left-hand ring that locks and unlocks together with your collar.", S("collarRing"), n => n.Module("collar")),
             new("Collar moodle", "A status to show while the collar is locked.", S("collarMoodle"), n => n.Module("collar")),
         ],
         ["follow"] =

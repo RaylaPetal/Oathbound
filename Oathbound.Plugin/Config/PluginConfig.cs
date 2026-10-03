@@ -316,11 +316,18 @@ public class CollarState
     public byte Stain { get; set; }
     public byte Stain2 { get; set; }
 
+    /// Optional left-ring piece, locked and released together with the Neck item.
+    public ulong? RingItemId { get; set; }
+    public byte RingStain { get; set; }
+    public byte RingStain2 { get; set; }
+
     /// Optional; follows the collar's lifecycle in CollarCommand.
     public string? MoodleStatusId { get; set; }
     public string? MoodleStatusName { get; set; }
 
-    public bool IsConfigured => ItemId is not null;
+    public bool HasNeckItem => ItemId is not null;
+    public bool HasRing => RingItemId is not null;
+    public bool IsConfigured => HasNeckItem || HasRing;
     public bool HasMoodleAssigned => MoodleStatusId is not null;
 }
 

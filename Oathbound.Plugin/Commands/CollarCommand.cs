@@ -6,8 +6,8 @@ using Glamourer.Api.Enums;
 
 namespace Oathbound.Plugin.Commands;
 
-/// The Sub's configured Neck-slot collar, applied at pairing acceptance or by the Owner's `collar lock`.
-/// Locks only the Neck slot via SlotLockManager.
+/// The Sub's configured collar (Neck item and/or left ring), applied at pairing acceptance or by the Owner's
+/// `collar lock`. Both pieces lock under one SlotLockManager owner, so they're applied and released together.
 public sealed class CollarCommand
 {
     /// PanicHandler keeps this owner's lock through panic.
@@ -98,15 +98,50 @@ public sealed class CollarCommand
         config.Save();
     }
 
-    /// Always takes over as the collar-owning pairing; only one pairing can hold the Neck slot.
-    public bool ForceApply(Guid pairingId)
+    /// Undyed. Refused while locked, like the Neck item.
+    public bool ConfigureRingFromItem(ulong itemId)
     {
-        if (!config.Collar.IsConfigured)
+        if (slotLocks.HasLock(Owner))
             return false;
 
-        var value = new SlotLockValue(config.Collar.ItemId!.Value, config.Collar.Stain, config.Collar.Stain2);
-        if (!slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [ApiEquipSlot.Neck] = value }))
+        config.Collar.RingItemId = itemId;
+        config.Collar.RingStain = 0;
+        config.Collar.RingStain2 = 0;
+        config.Save();
+        return true;
+    }
+
+    public void ClearConfiguredRing()
+    {
+        if (slotLocks.HasLock(Owner))
+            return;
+
+        config.Collar.RingItemId = null;
+        config.Collar.RingStain = 0;
+        config.Collar.RingStain2 = 0;
+        config.Save();
+    }
+
+    /// Always takes over as the collar-owning pairing; only one pairing can hold the collar slots.
+    /// One TryLock for both pieces, so a conflict on either slot locks neither.
+    public bool ForceApply(Guid pairingId)
+    {
+        var collar = config.Collar;
+        if (!collar.IsConfigured)
             return false;
+
+        var pieces = new Dictionary<ApiEquipSlot, SlotLockValue>();
+        if (collar.ItemId is { } neckItem)
+            pieces[ApiEquipSlot.Neck] = new SlotLockValue(neckItem, collar.Stain, collar.Stain2);
+        if (collar.RingItemId is { } ringItem)
+            pieces[ApiEquipSlot.LFinger] = new SlotLockValue(ringItem, collar.RingStain, collar.RingStain2);
+        if (!slotLocks.TryLock(Owner, pieces))
+        {
+            // TryLock doesn't roll back a Glamourer failure on the second slot; don't leave half a collar locked.
+            if (!runtimeState.CollarForceLocked && slotLocks.HasLock(Owner))
+                slotLocks.Release(Owner);
+            return false;
+        }
 
         config.CollarOwningPairingId = pairingId;
         config.Save();
