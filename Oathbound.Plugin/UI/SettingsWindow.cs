@@ -613,6 +613,46 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("A line from the Sub's neck to the Owner's hand while leashed. Hiding it doesn't release the leash.");
+
+        using (ImRaii.Disabled(!config.ShowLeashLine))
+            DrawLeashAppearance(config);
+    }
+
+    private static void DrawLeashAppearance(PluginConfig config)
+    {
+        using var indent = ImRaii.PushIndent();
+
+        var color = config.LeashColor;
+        if (ImGui.ColorEdit3("Leash color", ref color, ImGuiColorEditFlags.NoInputs))
+        {
+            config.LeashColor = color;
+            config.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Reset##leashAppearance"))
+        {
+            config.LeashColor = PluginConfig.DefaultLeashColor;
+            config.LeashBrightness = 1f;
+            config.LeashOpacity = 1f;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Only changes how the leash looks on your own screen; nothing is sent to your partner, who picks their own. Reset restores the default crimson.");
+
+        var brightness = (int)MathF.Round(config.LeashBrightness * 100f);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("Brightness##leash", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
+        {
+            config.LeashBrightness = brightness / 100f;
+            config.Save();
+        }
+
+        var opacity = (int)MathF.Round(config.LeashOpacity * 100f);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt("Opacity##leash", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
+        {
+            config.LeashOpacity = opacity / 100f;
+            config.Save();
+        }
     }
 
     private void DrawTutorialCard(PluginConfig config)

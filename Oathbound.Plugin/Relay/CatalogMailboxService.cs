@@ -19,13 +19,13 @@ public enum MailboxPublishOutcome
     NotReady,
     /// Retry after RetryAfterSeconds.
     RateLimited,
-    /// Retried on the hourly pass.
+    /// Retried after the next pair status poll (or the hourly fallback pass).
     Failed,
 }
 
 public readonly record struct MailboxPublishResult(MailboxPublishOutcome Outcome, int RetryAfterSeconds = 0);
 
-/// Automatic sync over the per-pair relay mailbox: the Sub pushes on change, the Owner collects hourly.
+/// Automatic sync over the per-pair relay mailbox: the Sub pushes on change, the Owner collects what the pair status poll reports waiting.
 /// No chat on this path. Timing lives in CatalogAutoSync; this is only the relay/crypto work.
 public sealed class CatalogMailboxService
 {
@@ -55,7 +55,6 @@ public sealed class CatalogMailboxService
 
     // ---- Sub side ----
 
-    /// `force` skips the "digest unchanged" shortcut, for the hourly delivery check.
     public async Task<MailboxPublishResult> PublishAsync(PairingState pairing, string exportText, string digest, CancellationToken ct)
     {
         if (pairing is not { Direction: PairingDirection.SubSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash } ||
@@ -192,26 +191,53 @@ public sealed class CatalogMailboxService
     // ---- Owner side ----
 
     /// Publishes a receive key if needed, and imports a newer snapshot (then rotates the key). Never throws.
-    public async Task CheckAsync(PairingState pairing, CancellationToken ct)
+    public Task CheckAsync(PairingState pairing, CancellationToken ct) => RunOwnerCheckAsync(pairing, null, ct);
+
+    /// From the pair status poll: no mailbox request at all unless a key needs publishing or a newer snapshot is waiting.
+    public Task ApplyPairStatusAsync(PairingState pairing, CatalogMailboxSummary state, CancellationToken ct)
+    {
+        if (pairing.Direction != PairingDirection.OwnerSide)
+            return Task.CompletedTask;
+        var keyCurrent = state.Exists && state.ReceiveKeyId == pairing.MailboxReceiveKeyId && HasUsableReceiveKey(pairing);
+        return RunOwnerCheckAsync(pairing, keyCurrent ? state : null, ct);
+    }
+
+    /// `known` is mailbox state already read from the pair status poll, with a key matching ours; null fetches it.
+    private async Task RunOwnerCheckAsync(PairingState pairing, CatalogMailboxSummary? known, CancellationToken ct)
     {
         if (pairing is not { Direction: PairingDirection.OwnerSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash })
             return;
         lock (gate)
             if (!checksInFlight.Add(pairing.Id))
                 return;
+        var recheck = false;
         try
         {
             identity.EnsureIdentity();
 
             CatalogMailboxStatus status;
-            try
+            if (known is not null)
             {
-                status = await relay.FetchMailboxStatusAsync(pairIdHash, pairing.PairEpoch, ct).ConfigureAwait(false);
+                status = new CatalogMailboxStatus
+                {
+                    HasKey = true,
+                    ReceiveKeyId = known.ReceiveKeyId,
+                    HasSnapshot = known.WaitingSnapshotId is not null,
+                    SnapshotId = known.WaitingSnapshotId,
+                    LastUploadAt = known.LastUploadAt,
+                };
             }
-            catch (RelayException ex) when (ex.Code == "not_found")
+            else
             {
-                RecordCheckFailure(pairing, "The relay doesn't support automatic catalog sync yet - use Request refresh.");
-                return;
+                try
+                {
+                    status = await relay.FetchMailboxStatusAsync(pairIdHash, pairing.PairEpoch, ct).ConfigureAwait(false);
+                }
+                catch (RelayException ex) when (ex.Code == "not_found")
+                {
+                    RecordCheckFailure(pairing, "The relay doesn't support automatic catalog sync yet - use Request refresh.");
+                    return;
+                }
             }
 
             // Replacing the key discards anything encrypted to the old one; the Sub's delivery check republishes it.
@@ -221,20 +247,36 @@ public sealed class CatalogMailboxService
                 pairing.SubLastPublishedUnixSeconds = status.LastUploadAt;
                 pairing.LastMailboxCheckOkUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 pairing.LastMailboxCheckError = status.HasSnapshot && status.SnapshotId > pairing.LastImportedSnapshotId
-                    ? "A newer catalog was waiting but couldn't be read with this device's key - your Sub's plugin will send it again within the hour."
+                    ? "A newer catalog was waiting but couldn't be read with this device's key - your Sub's plugin will send it again shortly."
                     : null;
                 config.SaveNow();
+                Plugin.Log.Debug($"Catalog mailbox for {pairing.PeerName}: published a fresh receive key.");
                 return;
             }
 
             pairing.SubLastPublishedUnixSeconds = status.LastUploadAt;
             string? importError = null;
             if (status is { HasSnapshot: true, SnapshotId: { } snapshotId } && snapshotId > pairing.LastImportedSnapshotId)
+            {
                 importError = await RetrieveAndImportAsync(pairing, snapshotId, ct).ConfigureAwait(false);
+                Plugin.Log.Debug($"Catalog mailbox for {pairing.PeerName}: snapshot #{snapshotId} {(importError is null ? "imported" : "rejected")}.");
+            }
+            else
+            {
+                Plugin.Log.Debug($"Catalog mailbox for {pairing.PeerName}: nothing new ({(known is null ? "status check" : "pair status")}).");
+            }
 
             pairing.LastMailboxCheckOkUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             pairing.LastMailboxCheckError = importError;
-            config.SaveNow();
+            if (known is not null && importError is null && !status.HasSnapshot)
+                config.Save(); // Display state only; the routine poll shouldn't force a disk write.
+            else
+                config.SaveNow();
+        }
+        catch (RelayException ex) when (known is not null && ex.Code == "not_found")
+        {
+            // The snapshot the poll saw was replaced or expired before pickup; ask the mailbox directly.
+            recheck = true;
         }
         catch (RelayException ex)
         {
@@ -256,6 +298,8 @@ public sealed class CatalogMailboxService
                 importing.Remove(pairing.Id);
             }
         }
+        if (recheck)
+            await RunOwnerCheckAsync(pairing, null, ct).ConfigureAwait(false);
     }
 
     /// Null on success; otherwise the prior catalog is untouched.

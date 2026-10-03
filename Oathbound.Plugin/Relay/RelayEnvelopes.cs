@@ -69,6 +69,17 @@ public sealed class PairEnvelope
     [JsonPropertyName("collarState")] public string? CollarState { get; set; }
     [JsonPropertyName("collarStateAt")] public long? CollarStateAt { get; set; }
     [JsonPropertyName("collarCheckinAt")] public long? CollarCheckinAt { get; set; }
+    /// Null only from a relay that predates the field, which puts automatic catalog sync back on its hourly checks.
+    [JsonPropertyName("catalogMailbox")] public CatalogMailboxSummary? CatalogMailbox { get; set; }
+}
+
+public sealed class CatalogMailboxSummary
+{
+    [JsonPropertyName("exists")] public bool Exists { get; set; }
+    [JsonPropertyName("receiveKeyId")] public string? ReceiveKeyId { get; set; }
+    [JsonPropertyName("waitingSnapshotId")] public int? WaitingSnapshotId { get; set; }
+    [JsonPropertyName("lastConsumedSnapshotId")] public int? LastConsumedSnapshotId { get; set; }
+    [JsonPropertyName("lastUploadAt")] public long? LastUploadAt { get; set; }
 }
 
 public sealed class RevocationEnvelope

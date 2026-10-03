@@ -227,6 +227,7 @@ public sealed class Plugin : IDalamudPlugin
         CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
+        RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
 
         PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
@@ -372,6 +373,7 @@ public sealed class Plugin : IDalamudPlugin
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
         RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
+        RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
         OwnerStatusEstimates.Dispose();
         leashOffNotifier.Dispose();
         leashRenderer.Dispose();

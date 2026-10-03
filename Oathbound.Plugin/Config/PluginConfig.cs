@@ -631,6 +631,15 @@ public class PluginConfig : IPluginConfiguration
 
     public bool ShowLeashLine { get; set; } = true;
 
+    public static readonly Vector3 DefaultLeashColor = new(0.68f, 0.07f, 0.10f);
+    public const float MinLeashBrightness = 0.2f;
+    /// Never fully transparent; hiding the line is what ShowLeashLine is for.
+    public const float MinLeashOpacity = 0.2f;
+
+    public Vector3 LeashColor { get; set; } = DefaultLeashColor;
+    public float LeashBrightness { get; set; } = 1f;
+    public float LeashOpacity { get; set; } = 1f;
+
     /// Changing it only affects messages sent/parsed afterwards.
     public string TriggerPhrase { get; set; } = "command";
 

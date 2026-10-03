@@ -109,6 +109,27 @@ async function loadMailbox(env: Env, pairIdHash: string, pairEpoch: number): Pro
     .first<MailboxRow>();
 }
 
+function waitingSnapshotId(mailbox: MailboxRow): number | null {
+  return mailbox.snapshot_envelope && (mailbox.snapshot_expires_at ?? 0) > nowSeconds() ? mailbox.snapshot_id : null;
+}
+
+export type CatalogMailboxSummary =
+  | { exists: false }
+  | { exists: true; receiveKeyId: string; waitingSnapshotId: number | null; lastConsumedSnapshotId: number | null; lastUploadAt: number | null };
+
+/** Rides on the pair status response, which both members already poll, so an unchanged catalog costs no mailbox call. */
+export async function catalogMailboxSummary(env: Env, pairIdHash: string, pairEpoch: number): Promise<CatalogMailboxSummary> {
+  const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
+  if (!mailbox) return { exists: false };
+  return {
+    exists: true,
+    receiveKeyId: mailbox.receive_key_id,
+    waitingSnapshotId: waitingSnapshotId(mailbox),
+    lastConsumedSnapshotId: mailbox.last_consumed_snapshot_id,
+    lastUploadAt: mailbox.last_upload_at,
+  };
+}
+
 function readPairRef(body: Record<string, unknown>): { pairIdHash: string; pairEpoch: number } {
   return { pairIdHash: requireField(body, "pairIdHash", isHex64), pairEpoch: requireField(body, "pairEpoch", isNonNegInt) };
 }
@@ -136,7 +157,10 @@ async function parseOwnerKeyEnvelope(env: Env, raw: unknown, pair: PairRow): Pro
   return envelope;
 }
 
-/** Owner: publish (or replace) this pair's receive key. Replacing it discards any waiting snapshot, which could only have been encrypted to the old key. */
+/**
+ * Owner: publish (or replace) this pair's receive key. Replacing it discards any waiting snapshot, which could only
+ * have been encrypted to the old key, and reopens the upload interval so the Sub's republish isn't held back.
+ */
 export async function publishMailboxKey(request: Request, env: Env): Promise<Response> {
   await assertCircuitBreakerClosed(env);
   const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
@@ -155,6 +179,7 @@ export async function publishMailboxKey(request: Request, env: Env): Promise<Res
        receive_key_id = excluded.receive_key_id,
        receive_key_envelope = excluded.receive_key_envelope,
        key_published_at = excluded.key_published_at,
+       last_upload_at = NULL,
        snapshot_id = NULL, snapshot_r2_key = NULL, snapshot_envelope = NULL,
        snapshot_created_at = NULL, snapshot_expires_at = NULL`,
   )
@@ -178,10 +203,9 @@ export async function fetchMailboxKey(request: Request, env: Env): Promise<Respo
   await requirePairSide(env, pairIdHash, pairEpoch, deviceKeyId, "sub");
   const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
   if (!mailbox) throw new RelayError("not_found");
-  const waiting = !!mailbox.snapshot_envelope && (mailbox.snapshot_expires_at ?? 0) > nowSeconds();
   return Response.json({
     key: JSON.parse(mailbox.receive_key_envelope),
-    waitingSnapshotId: waiting ? mailbox.snapshot_id : null,
+    waitingSnapshotId: waitingSnapshotId(mailbox),
     lastConsumedSnapshotId: mailbox.last_consumed_snapshot_id,
   });
 }

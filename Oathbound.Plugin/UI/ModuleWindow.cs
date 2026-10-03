@@ -431,14 +431,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void DrawSubAutoSyncInfo(PluginConfig config)
     {
-        IconGlyph.WrappedDisabled("Whenever your catalog changes, it's shared with your paired Owner automatically through the Oathbound Cloudflare relay, end-to-end encrypted. No chat messages are sent. Your Owner's plugin picks it up within about an hour.");
+        IconGlyph.WrappedDisabled("Whenever your catalog changes, it's shared with your paired Owner automatically through the Oathbound Cloudflare relay, end-to-end encrypted. No chat messages are sent. Changes go out a few minutes after you stop editing (at most twice an hour), and your Owner's plugin picks them up within about half an hour.");
 
-        if (ImGuiCheckbox("Automatically rescan every hour", config.AutoRescanCatalogs, out var autoRescan))
+        if (ImGuiCheckbox("Automatically rescan every 15 minutes", config.AutoRescanCatalogs, out var autoRescan))
         {
             config.AutoRescanCatalogs = autoRescan;
             config.Save();
         }
-        IconGlyph.HelpMarker("Re-reads your Glamourer designs, Penumbra animation/restraint mods, and Moodles statuses at login and about once an hour, using the selections below - so new additions reach your Owner without a manual rescan. A plugin that isn't loaded is skipped and keeps its previous list.");
+        IconGlyph.HelpMarker("Re-reads your Glamourer designs, Penumbra animation/restraint mods, and Moodles statuses at login and about every 15 minutes, using the selections below - so new additions reach your Owner without a manual rescan. A plugin that isn't loaded is skipped and keeps its previous list.");
 
         if (!config.Permissions.RelayCatalogSync)
         {
@@ -795,7 +795,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         group = Section.Begin("permCatalog", "Catalog sync");
         if (ImGuiCheckbox("Catalog sync (relay)", permissions.RelayCatalogSync, out var newRelayCatalogSync))
             SavePermission(() => permissions.RelayCatalogSync = newRelayCatalogSync);
-        IconGlyph.HelpMarker("Lets your paired Owner request an automatic, end-to-end encrypted refresh of your exported catalog (at most once every four hours) instead of you sending a file manually. The relay never sees the plaintext. Off by default; manual file export/import always remains available regardless of this setting.");
+        IconGlyph.HelpMarker("Shares your catalog with your paired Owner automatically, end-to-end encrypted, a few minutes after it changes (at most twice an hour), and lets them request a refresh, instead of you sending a file manually. The relay never sees the plaintext. Off by default; manual file export/import always remains available regardless of this setting.");
 
         group.Dispose();
         group = Section.Begin("permCustomChat", "Custom chat (own acknowledgement)");
@@ -2182,7 +2182,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var mailbox = plugin.CatalogMailboxService;
         var pairing = plugin.Configuration.ActivePairing;
         IconGlyph.Text(FontAwesomeIcon.CloudDownloadAlt, "Cloud catalog sync");
-        IconGlyph.WrappedDisabled("Your Sub's catalog syncs automatically through the Oathbound Cloudflare relay, end-to-end encrypted: their plugin shares changes as they happen, and this plugin checks about once an hour. No chat messages or file transfers are needed.");
+        IconGlyph.WrappedDisabled("Your Sub's catalog syncs automatically through the Oathbound Cloudflare relay, end-to-end encrypted: their plugin shares changes a few minutes after they stop editing, and this plugin picks them up within about half an hour. No chat messages or file transfers are needed.");
         if (pairing is not { Direction: PairingDirection.OwnerSide })
         {
             IconGlyph.WrappedDisabled("No Owner-side pairing is active - select one above, or pair from Settings first. The offline file fallback remains available below.");
@@ -2197,7 +2197,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.Button(mailbox.IsChecking(pairing.Id) ? "Checking..." : "Check now"))
                 plugin.CatalogAutoSync.RequestOwnerCheck(pairing, force: true);
         }
-        IconGlyph.HelpMarker("Checks the relay right away for a newer catalog from your Sub and imports it if there is one. Otherwise this happens automatically about once an hour.");
+        IconGlyph.HelpMarker("Checks the relay right away for a newer catalog from your Sub and imports it if there is one. Otherwise this happens automatically about every 30 minutes.");
 
         ImGui.SameLine();
         using (ImRaii.Disabled(relayService.RequestInFlight))

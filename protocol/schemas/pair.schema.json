@@ -20,6 +20,19 @@
     "revokedAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
     "collarState": { "description": "Latest collar state reported by the pair's Sub device, or null if none.", "enum": ["locked", "unlocked", "broken", null] },
     "collarStateAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
-    "collarCheckinAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
+    "collarCheckinAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+    "catalogMailbox": {
+      "description": "The pair epoch's catalog mailbox state, so both members learn from this one poll whether a snapshot is waiting or was collected. exists is false when the Owner has never published a receive key.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "receiveKeyId": { "$ref": "catalog-mailbox-key.schema.json#/properties/receiveKeyId" },
+        "waitingSnapshotId": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
+        "lastConsumedSnapshotId": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
+        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
+      }
+    }
   }
 }

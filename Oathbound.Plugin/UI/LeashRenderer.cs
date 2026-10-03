@@ -43,9 +43,6 @@ public sealed class LeashRenderer : IDisposable
     /// cutting it out would hide the leash entirely.
     private const float FullScreenFraction = 0.5f;
 
-    // Deep crimson. ImGui packs colors as ABGR.
-    private static readonly uint LeashColor = ImGui.GetColorU32(new Vector4(0.68f, 0.07f, 0.10f, 1f));
-
     private static readonly PctDrawHints Hints = new()
     {
         // Additive blending washes the red out to pink against bright backgrounds.
@@ -70,6 +67,7 @@ public sealed class LeashRenderer : IDisposable
     }
 
     private readonly PluginConfig config;
+    private uint lineColor;
     private readonly StatusIndicatorState state;
     private readonly FollowCommand follow;
     private readonly PctContext? pictomancy;
@@ -122,6 +120,7 @@ public sealed class LeashRenderer : IDisposable
             if (Plugin.ObjectTable.LocalPlayer is null) return;
             Update();
             if (!config.ShowLeashLine || entries.Count == 0) return;
+            lineColor = LineColor(config);
             CollectUiRects();
             foreach (var entry in entries.Values)
             {
@@ -278,7 +277,7 @@ public sealed class LeashRenderer : IDisposable
                 drawList.AddClipZone(min, max);
             for (var i = 0; i < count; i++)
                 drawList.PathLineTo(visible[i]);
-            drawList.PathStroke(LeashColor, PctStrokeFlags.None, Thickness(neck, hand));
+            drawList.PathStroke(lineColor, PctStrokeFlags.None, Thickness(neck, hand));
             return;
         }
 
@@ -393,6 +392,14 @@ public sealed class LeashRenderer : IDisposable
     }
 
     /// Thinner the farther the camera is.
+    /// Not GetColorU32: that multiplies in the current ImGui style alpha. Clamped here too, for hand-edited configs.
+    private static uint LineColor(PluginConfig config)
+    {
+        var brightness = Math.Clamp(config.LeashBrightness, PluginConfig.MinLeashBrightness, 1f);
+        var opacity = Math.Clamp(config.LeashOpacity, PluginConfig.MinLeashOpacity, 1f);
+        return ImGui.ColorConvertFloat4ToU32(new Vector4(Vector3.Clamp(config.LeashColor, Vector3.Zero, Vector3.One) * brightness, opacity));
+    }
+
     private static unsafe float Thickness(Vector3 neck, Vector3 hand)
     {
         var camera = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
@@ -410,7 +417,7 @@ public sealed class LeashRenderer : IDisposable
             // Skip a segment with an end behind the camera rather than draw it to a wrapped point.
             if (!Plugin.GameGui.WorldToScreen(visible[i], out var a) || !Plugin.GameGui.WorldToScreen(visible[i + 1], out var b))
                 continue;
-            drawList.AddLine(a, b, LeashColor, thickness);
+            drawList.AddLine(a, b, lineColor, thickness);
         }
     }
 

@@ -11,7 +11,7 @@ public static class RelayProtocolConstants
     public const int CatalogCiphertextMaxBytes = 786432;
     public const int RevocationPollMinIntervalSeconds = 21600;
     public const int CatalogMailboxExpirySeconds = 604800;
-    public const int CatalogMailboxMinUploadIntervalSeconds = 60;
+    public const int CatalogMailboxMinUploadIntervalSeconds = 1800;
     public const int CatalogMailboxOwnerPollIntervalSeconds = 3600;
     public const int CodeInvitationExpirySeconds = 604800;
     public const int PairStatusPollIntervalSeconds = 1800;

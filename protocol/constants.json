@@ -78,7 +78,7 @@
     "envelopeMaxBytes": 16384,
     "revocationPollMinIntervalSeconds": 21600,
     "catalogMailboxExpirySeconds": 604800,
-    "catalogMailboxMinUploadIntervalSeconds": 60,
+    "catalogMailboxMinUploadIntervalSeconds": 1800,
     "catalogMailboxOwnerPollIntervalSeconds": 3600,
     "codeInvitationExpirySeconds": 604800,
     "pairStatusPollIntervalSeconds": 1800,

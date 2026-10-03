@@ -175,7 +175,7 @@ public static class TutorialCatalog
         ["sync"] =
         [
             Help("sync", "Get your Sub's outfits, animations, moodles and restraints into your modules."),
-            new("Cloud catalog sync", "Your Sub's catalog arrives here by itself, end-to-end encrypted, about once an hour.", S("catalogRelay"), n => n.Module("sync")),
+            new("Cloud catalog sync", "Your Sub's catalog arrives here by itself, end-to-end encrypted, within about half an hour of a change.", S("catalogRelay"), n => n.Module("sync")),
             new("Import from a file", "If your Sub sends you an export file instead, import it here.", S("catalogFileFallback"), n => n.Module("sync")),
         ],
         ["favorites"] =
