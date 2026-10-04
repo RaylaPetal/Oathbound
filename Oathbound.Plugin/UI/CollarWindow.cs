@@ -43,7 +43,6 @@ public class CollarWindow : Window, IDisposable
         ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("rulebook", FontAwesomeIcon.Book, "Rulebook"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
-        ("favorites", FontAwesomeIcon.Star, "Favorites"),
     ];
 
     public CollarWindow(Plugin plugin, ModuleWindow moduleWindow) : base("Oathbound###CollarWindow")
@@ -56,6 +55,13 @@ public class CollarWindow : Window, IDisposable
             Icon = FontAwesomeIcon.Cog,
             Click = _ => plugin.ToggleSettingsUi(),
             ShowTooltip = () => ImGui.SetTooltip("Settings"),
+        });
+        // Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Star,
+            Click = _ => plugin.FavoritesWindow.IsOpen = true,
+            ShowTooltip = () => ImGui.SetTooltip("Favorites"),
         });
     }
 
@@ -97,22 +103,16 @@ public class CollarWindow : Window, IDisposable
         // Title-bar buttons aren't ImGui items, so the settings cog's area is reported by position.
         var titleBarHeight = ImGui.GetFrameHeight();
         TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
+        TutorialService.AnchorRect(TutorialAnchors.NavFavorites, LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, 0), LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, titleBarHeight));
 
         DrawCharacterHeader();
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
-        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
-            id => id == "favorites" ? TutorialAnchors.NavFavorites : null);
+        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id));
         TutorialService.Anchor(TutorialAnchors.MainNav);
         if (clicked is not null)
-        {
-            // Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
-            if (clicked == "favorites")
-                plugin.FavoritesWindow.IsOpen = true;
-            else
-                moduleWindow.Show(clicked);
-        }
+            moduleWindow.Show(clicked);
 
         // Not on the appearing frame: widths aren't settled, so wrapped text measures far too tall.
         if (!ImGui.IsWindowAppearing())
