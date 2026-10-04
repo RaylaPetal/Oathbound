@@ -219,6 +219,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
         public string? LegsCuffedAnimationId;
         public bool FullBodyCuffed;
         public string? FullBodyCuffedAnimationId;
+        /// Device and mod restraints only; a rules-only restraint's cuffs are always drawn.
+        public bool ArmsCuffedDrawn;
+        public bool LegsCuffedDrawn;
+        public bool FullBodyCuffedDrawn;
     }
 
     public override void PreDraw() => Theme.PushWindowStyle();
@@ -1014,8 +1018,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.WrappedDisabled($"Gear (from an older version): {device.Slot} · {GetItemName(deviceItemId)}");
             IconGlyph.WrappedDisabled($"Moodle: {(device.AttachedMoodle is { } m ? MoodlesTextFormat.StripMarkup(m.StatusName) : "none")}");
             var staleAnimation = device.Rules.Any(r =>
-                r.Kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed or RestraintRuleKind.FullBodyCuffed
-                && (string.IsNullOrWhiteSpace(r.AnimationId) || !config.GestureMapping.LocalCatalog.ContainsKey(r.AnimationId)));
+                CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId) && !config.GestureMapping.LocalCatalog.ContainsKey(r.AnimationId));
             if (staleAnimation)
                 IconGlyph.WrappedColored(Theme.Warning, "A cuff animation is stale. Choose Edit and select the animation again before using this restraint.");
 
@@ -1043,16 +1046,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawRestraintRuleCheckboxes(newDeviceRuleEdit, "newDevice", allowCustomizePreset: true, rulesOnly: true);
 
         var hasAnyRule = HasAnyRule(newDeviceRuleEdit);
-        var boundAnimationsConfigured = BoundAnimationsConfigured(newDeviceRuleEdit);
+        var boundAnimationsConfigured = BoundAnimationsConfigured(newDeviceRuleEdit, rulesOnly: true);
         if (hasAnyRule && !boundAnimationsConfigured)
-            IconGlyph.WrappedColored(Theme.Warning, "Choose an animation for every checked Arms/Legs/Full Body Cuffed rule before saving.");
+            IconGlyph.WrappedColored(Theme.Warning, "A chosen animation is missing or stale. Choose it again, or clear it.");
 
         var duplicateDeviceName = devices.Any(d => d.Id != editingDeviceId &&
             string.Equals(d.Name, newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase))
             || config.RestraintMapping.ConfiguredMods.Any(m => string.Equals(m.Alias.Trim(), newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase));
         // Only measured once the draft is complete; Save is disabled for an unfinished rule anyway.
         var safeDeviceCommand = !hasAnyRule || !boundAnimationsConfigured
-            || CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), ToRules(newDeviceRuleEdit)));
+            || CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), ToRules(newDeviceRuleEdit, rulesOnly: true)));
         if (duplicateDeviceName)
             IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias.");
         if (!safeDeviceCommand)
@@ -1063,7 +1066,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             if (ImGui.Button(editingDeviceId is null ? "Add restraint" : "Save restraint"))
             {
-                var rules = ToRules(newDeviceRuleEdit);
+                var rules = ToRules(newDeviceRuleEdit, rulesOnly: true);
 
                 // New ones never carry gear; an edited older device keeps its gear.
                 var saved = editingDeviceId is null
@@ -1082,6 +1085,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 ResetDeviceDraft();
         }
         formBox.Dispose();
+
+        DrawDrawnRestraintsSection(config);
     }
 
     private void DrawSubModRestraints(PluginConfig config)
@@ -1233,25 +1238,54 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static bool HasAnyRule(RestraintRuleEditState edit) =>
         edit.ForcedPose || edit.WalkOnly || edit.ActionBlock || edit.Gagged || edit.ArmsCuffed || edit.LegsCuffed || edit.FullBodyCuffed;
 
-    /// Gagged's animation stays optional: its chat garble applies on its own.
-    private bool BoundAnimationsConfigured(RestraintRuleEditState edit)
+    /// Gagged's animation stays optional: its chat garble applies on its own. So do a rules-only restraint's cuff
+    /// animations, since its cuffs are drawn.
+    private bool BoundAnimationsConfigured(RestraintRuleEditState edit, bool rulesOnly = false)
     {
         bool Contains(string id) => ResolveOwnerModeView()
             ? plugin.Configuration.GestureMapping.ImportedPeerCatalog.ContainsKey(id)
             : plugin.Configuration.GestureMapping.LocalCatalog.ContainsKey(id);
         bool Valid(bool enabled, string? id) => !enabled || id is not null && Contains(id);
-        return Valid(edit.ArmsCuffed, edit.ArmsCuffedAnimationId)
-            && Valid(edit.LegsCuffed, edit.LegsCuffedAnimationId)
-            && Valid(edit.FullBodyCuffed, edit.FullBodyCuffedAnimationId)
+        bool ValidCuff(bool enabled, string? id) => rulesOnly && id is null || Valid(enabled, id);
+        return ValidCuff(edit.ArmsCuffed, edit.ArmsCuffedAnimationId)
+            && ValidCuff(edit.LegsCuffed, edit.LegsCuffedAnimationId)
+            && ValidCuff(edit.FullBodyCuffed, edit.FullBodyCuffedAnimationId)
             && Valid(edit.ForcedPose && edit.ForcedPoseIsMod, edit.ForcedPoseAnimationId);
     }
 
     private static readonly string[] ForcedPoseSourceNames = ["Vanilla pose", "Animation mod"];
 
     /// `allowCustomizePreset` is only for the Sub's own editors - only the Sub's client can list their profiles.
-    /// `rulesOnly` hides the device-only rules unless one is already checked on an older restraint.
+    /// `rulesOnly` makes the cuffs drawn, with an optional animation.
     private void DrawRestraintRuleCheckboxes(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset = false, bool rulesOnly = false)
     {
+        void Cuff(string label, ref bool enabled, ref bool drawn, string? animationId, Action<string?> setAnimation, string cuffSuffix, string help)
+        {
+            if (rulesOnly)
+            {
+                ImGui.Checkbox($"{label} (drawn)##{idSuffix}{cuffSuffix}", ref enabled);
+                IconGlyph.HelpMarker($"Draws cuffs on you until released. {help} Optionally also holds an animation.");
+                if (enabled)
+                {
+                    ImGui.Indent();
+                    DrawAnimationChooser(animationId, id => setAnimation(id), $"{idSuffix}{cuffSuffix}", () => setAnimation(null));
+                    ImGui.Unindent();
+                }
+            }
+            else
+            {
+                DrawBoundAnimationPicker(label, ref enabled, animationId, id => setAnimation(id), $"{idSuffix}{cuffSuffix}");
+                IconGlyph.HelpMarker($"Holds you in the chosen animation until released. {help}");
+                if (enabled)
+                {
+                    ImGui.Indent();
+                    ImGui.Checkbox($"Draw cuffs##{idSuffix}{cuffSuffix}Drawn", ref drawn);
+                    IconGlyph.HelpMarker("Also draws cuffs and chains for this rule. Leave it off if this restraint's own gear already shows them.");
+                    ImGui.Unindent();
+                }
+            }
+        }
+
         var cells = new List<Action>
         {
             () =>
@@ -1272,30 +1306,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 }
             },
         };
-        if (!rulesOnly || edit.ArmsCuffed)
-            cells.Add(() =>
-            {
-                DrawBoundAnimationPicker("Arms Cuffed", ref edit.ArmsCuffed, edit.ArmsCuffedAnimationId, id => edit.ArmsCuffedAnimationId = id, $"{idSuffix}Arms");
-                IconGlyph.HelpMarker("Holds you in the chosen animation until released.");
-            });
-        if (!rulesOnly || edit.LegsCuffed)
-            cells.Add(() =>
-            {
-                DrawBoundAnimationPicker("Legs Cuffed", ref edit.LegsCuffed, edit.LegsCuffedAnimationId, id => edit.LegsCuffedAnimationId = id, $"{idSuffix}Legs");
-                IconGlyph.HelpMarker("Holds you in the chosen animation until released.");
-            });
+        cells.Add(() => Cuff("Arms Cuffed", ref edit.ArmsCuffed, ref edit.ArmsCuffedDrawn, edit.ArmsCuffedAnimationId, id => edit.ArmsCuffedAnimationId = id,
+            "Arms", "Cuffs your wrists together."));
+        cells.Add(() => Cuff("Legs Cuffed", ref edit.LegsCuffed, ref edit.LegsCuffedDrawn, edit.LegsCuffedAnimationId, id => edit.LegsCuffedAnimationId = id,
+            "Legs", "Cuffs your ankles together."));
         cells.Add(() =>
         {
             ImGui.Checkbox($"Walk-only##{idSuffix}", ref edit.WalkOnly);
             IconGlyph.HelpMarker("Forces walking and blocks running, without blocking directional movement input.");
         });
         cells.Add(() => DrawGaggedPicker(edit, idSuffix, allowCustomizePreset));
-        if (!rulesOnly || edit.FullBodyCuffed)
-            cells.Add(() =>
-            {
-                DrawBoundAnimationPicker("Fully Restrain", ref edit.FullBodyCuffed, edit.FullBodyCuffedAnimationId, id => edit.FullBodyCuffedAnimationId = id, $"{idSuffix}FullBody");
-                IconGlyph.HelpMarker("Holds you in the chosen animation and blocks movement until released.");
-            });
+        cells.Add(() => Cuff("Fully Restrain", ref edit.FullBodyCuffed, ref edit.FullBodyCuffedDrawn, edit.FullBodyCuffedAnimationId, id => edit.FullBodyCuffedAnimationId = id,
+            "FullBody", "Cuffs your wrists and ankles and chains them together, and blocks movement."));
         cells.Add(() =>
         {
             ImGui.Checkbox($"Action block##{idSuffix}", ref edit.ActionBlock);
@@ -1977,6 +1999,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         target.LegsCuffedAnimationId = source.LegsCuffedAnimationId;
         target.FullBodyCuffed = source.FullBodyCuffed;
         target.FullBodyCuffedAnimationId = source.FullBodyCuffedAnimationId;
+        target.ArmsCuffedDrawn = source.ArmsCuffedDrawn;
+        target.LegsCuffedDrawn = source.LegsCuffedDrawn;
+        target.FullBodyCuffedDrawn = source.FullBodyCuffedDrawn;
     }
 
     /// Capture-only, and editing is disabled while the collar is locked.
@@ -2154,6 +2179,51 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (ImGui.SliderInt("Opacity##leash", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
         {
             config.LeashOpacity = opacity / 100f;
+            config.Save();
+        }
+    }
+
+    /// Only changes what this client draws; the restraint's rules keep applying with its cuffs hidden.
+    private static void DrawDrawnRestraintsSection(PluginConfig config)
+    {
+        using var box = Section.Begin("restraintAppearance", "Drawn restraints");
+        var show = config.ShowDrawnRestraints;
+        if (ImGui.Checkbox("Show drawn restraints", ref show))
+        {
+            config.ShowDrawnRestraints = show;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Cuffs and chains drawn for Arms Cuffed, Legs Cuffed and Fully Restrain. Only changes what you see. Hiding them doesn't release the restraint.");
+
+        using var disabled = ImRaii.Disabled(!config.ShowDrawnRestraints);
+        var color = config.RestraintColor;
+        if (ImGui.ColorEdit3("Color##restraintAppearance", ref color, ImGuiColorEditFlags.NoInputs))
+        {
+            config.RestraintColor = color;
+            config.Save();
+        }
+        ContinueRowOrWrap(ButtonWidth("Reset"));
+        if (ImGui.SmallButton("Reset##restraintAppearance"))
+        {
+            config.RestraintColor = PluginConfig.DefaultRestraintColor;
+            config.RestraintBrightness = 1f;
+            config.RestraintOpacity = 1f;
+            config.Save();
+        }
+
+        var brightness = (int)MathF.Round(config.RestraintBrightness * 100f);
+        ItemWidth(200);
+        if (ImGui.SliderInt("Brightness##restraintAppearance", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
+        {
+            config.RestraintBrightness = brightness / 100f;
+            config.Save();
+        }
+
+        var opacity = (int)MathF.Round(config.RestraintOpacity * 100f);
+        ItemWidth(200);
+        if (ImGui.SliderInt("Opacity##restraintAppearance", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
+        {
+            config.RestraintOpacity = opacity / 100f;
             config.Save();
         }
     }
@@ -2446,6 +2516,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using (Section.Begin("restraintQuickAdHoc", "Rules-only restraint"))
             DrawAdHocRestraintSection(canSend);
+
+        DrawDrawnRestraintsSection(plugin.Configuration);
     }
 
     /// Rules-only and sent with its full definition in the command, so it isn't added to the quick list.
@@ -2463,15 +2535,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawRestraintRuleCheckboxes(newAdHocRuleEdit, "adHocRestraint", rulesOnly: true);
 
         var hasAnyRule = HasAnyRule(newAdHocRuleEdit);
-        var boundAnimationsConfigured = BoundAnimationsConfigured(newAdHocRuleEdit);
+        var boundAnimationsConfigured = BoundAnimationsConfigured(newAdHocRuleEdit, rulesOnly: true);
         if (hasAnyRule && !boundAnimationsConfigured)
-            IconGlyph.WrappedColored(Theme.Warning, "Choose an animation for every checked Arms/Legs/Full Body Cuffed rule before sending.");
+            IconGlyph.WrappedColored(Theme.Warning, "A chosen animation is missing or stale. Choose it again, or clear it.");
 
         ImGui.Spacing();
         ImGui.Separator();
         if (newAdHocLabel.Trim().Length > 0 && hasAnyRule && boundAnimationsConfigured)
         {
-            var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit));
+            var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit, rulesOnly: true));
             ImGui.TextUnformatted("Send this restraint:");
             ContinueRowOrWrap(ButtonWidth("Send"));
             DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(command, adHocMoodleOverride), adHocLockSeconds), canSend, "adHocRestraint");
@@ -2874,15 +2946,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     edit.GagCustomizePresetId = rule.CustomizePresetId;
                     edit.GagCustomizePresetLabel = rule.CustomizePresetLabel;
                     break;
-                case RestraintRuleKind.ArmsCuffed: edit.ArmsCuffed = true; edit.ArmsCuffedAnimationId = rule.AnimationId; break;
-                case RestraintRuleKind.LegsCuffed: edit.LegsCuffed = true; edit.LegsCuffedAnimationId = rule.AnimationId; break;
-                case RestraintRuleKind.FullBodyCuffed: edit.FullBodyCuffed = true; edit.FullBodyCuffedAnimationId = rule.AnimationId; break;
+                case RestraintRuleKind.ArmsCuffed: edit.ArmsCuffed = true; edit.ArmsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.ArmsCuffedDrawn = rule.Drawn; break;
+                case RestraintRuleKind.LegsCuffed: edit.LegsCuffed = true; edit.LegsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.LegsCuffedDrawn = rule.Drawn; break;
+                case RestraintRuleKind.FullBodyCuffed: edit.FullBodyCuffed = true; edit.FullBodyCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.FullBodyCuffedDrawn = rule.Drawn; break;
             }
         }
         return edit;
     }
 
-    private List<RestraintRuleAssignment> ToRules(RestraintRuleEditState edit)
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// A rules-only restraint's cuffs are always drawn.
+    private List<RestraintRuleAssignment> ToRules(RestraintRuleEditState edit, bool rulesOnly = false)
     {
         string? LabelFor(string? id)
         {
@@ -2913,11 +2988,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
             });
         }
         if (edit.ArmsCuffed)
-            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ArmsCuffed, AnimationId = edit.ArmsCuffedAnimationId, AnimationLabel = LabelFor(edit.ArmsCuffedAnimationId) });
+            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ArmsCuffed, AnimationId = edit.ArmsCuffedAnimationId, AnimationLabel = LabelFor(edit.ArmsCuffedAnimationId), Drawn = rulesOnly || edit.ArmsCuffedDrawn });
         if (edit.LegsCuffed)
-            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.LegsCuffed, AnimationId = edit.LegsCuffedAnimationId, AnimationLabel = LabelFor(edit.LegsCuffedAnimationId) });
+            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.LegsCuffed, AnimationId = edit.LegsCuffedAnimationId, AnimationLabel = LabelFor(edit.LegsCuffedAnimationId), Drawn = rulesOnly || edit.LegsCuffedDrawn });
         if (edit.FullBodyCuffed)
-            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.FullBodyCuffed, AnimationId = edit.FullBodyCuffedAnimationId, AnimationLabel = LabelFor(edit.FullBodyCuffedAnimationId) });
+            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.FullBodyCuffed, AnimationId = edit.FullBodyCuffedAnimationId, AnimationLabel = LabelFor(edit.FullBodyCuffedAnimationId), Drawn = rulesOnly || edit.FullBodyCuffedDrawn });
         return rules;
     }
 

@@ -23,6 +23,11 @@ public static unsafe class BoneLocator
     public static readonly LegBones LeftLeg = new("j_asi_a_l", "j_asi_c_l", "j_asi_d_l");
     public static readonly LegBones RightLeg = new("j_asi_a_r", "j_asi_c_r", "j_asi_d_r");
 
+    /// The hand bone's origin sits at the wrist joint.
+    public readonly record struct ArmBones(string Forearm, string Hand);
+    public static readonly ArmBones LeftArm = new("j_ude_b_l", "j_te_l");
+    public static readonly ArmBones RightArm = new("j_ude_b_r", RightHand);
+
     /// Keyed by pointer; a reused address could map to another skeleton, so every hit is re-checked by name.
     private static readonly Dictionary<(nint Skeleton, string Bone), int> IndexCache = new();
 

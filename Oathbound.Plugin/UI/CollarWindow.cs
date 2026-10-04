@@ -298,6 +298,11 @@ public class CollarWindow : Window, IDisposable
                 IconGlyph.WrappedColored(Theme.StatusMissing, $"{pairing.PeerName}'s collar is unlocked");
                 IconGlyph.HelpMarker($"Their collar came off without you unlocking it ({status.StateAt.ToLocalTime():g}). This clears once it's locked again.");
             }
+            else if (status.State == Relay.CollarStatusReporter.Unlocked)
+            {
+                IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName}'s collar is unlocked");
+                IconGlyph.HelpMarker($"You unlocked it ({status.StateAt.ToLocalTime():g}). This clears once you lock it again.");
+            }
             else if (OwnerCollarStatusStore.IsStale(status) && status.CheckinAt is { } checkin)
             {
                 IconGlyph.WrappedDisabled($"{pairing.PeerName}'s collar status unknown since {checkin.ToLocalTime():g}");

@@ -39,7 +39,7 @@ everything instantly with their safeword.
 | 👗 | **Outfit** | Dress your Sub in one of their Glamourer designs, locked in place or free to change. |
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. Your Sub is held in the pose until you press **Stop animation**. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
-| ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions or gagged. Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
+| ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions, gagged, or arm/leg/full-body cuffs drawn on their wrists and ankles with chains between them (gear restraints can draw them too, rule by rule). Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
 | 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on until you unleash them: when you teleport or change area your Sub is brought along to you, and anywhere they can't follow (your house, an inn room, a duty) it just pauses until you're together again. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
 | 🔒 | **Collar** | A collar piece, a left-hand ring, or both, that go on and lock together when you pair, as a visible sign of your bond. It can carry a Moodle too. If it ever comes off without you unlocking it, you see a red warning in your header - even if it happened while you were offline. |
@@ -100,13 +100,13 @@ Sync tab shows whether it's up to date.
   came off because you used your safeword. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
   partner even if they're offline: their pairing ends the next time they log in, however long that takes.
-- **Only the two of you see the icons and the leash line.** They're drawn by your own clients - nobody
+- **Only the two of you see the icons, the leash line and drawn cuffs.** They're drawn by your own clients - nobody
   else sees them, and drawing them sends nothing. The Sub's own view is exact; the Owner's is an estimate
   built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
   Sub's plugin tells the Owner's. So is the collar: while one is locked, the Sub's plugin tells the relay whether
   it's really on, and the Owner is warned if it comes off. For everything else the estimate can't see a panic or the Sub's own
   releases (Sub Control has a **Clear estimate** button for that). The leash line's look (or hiding it) is set in
-  the Follow / Leash module.
+  the Follow / Leash module, and the drawn cuffs' look in the Restraints module.
 - **Rulebooks run only after you say yes.** A rulebook your Owner writes reaches you encrypted, and nothing in
   it runs until you accept that version; each new oath needs its own yes too. Accepting a version that changes
   or removes an oath you already swore switches that oath to the new terms or ends it, and the review tells you

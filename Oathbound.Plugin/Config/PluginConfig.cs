@@ -386,6 +386,40 @@ public enum RestraintRuleKind
     FullBodyCuffed,
 }
 
+/// What a set of cuff rules draws: Arms Cuffed = Wrists, Legs Cuffed = Ankles, Fully Restrain = all three.
+[Flags]
+public enum CuffSet
+{
+    None = 0,
+    Wrists = 1,
+    Ankles = 2,
+    /// The chain from the wrists to the ankles.
+    Linked = 4,
+}
+
+public static class CuffSets
+{
+    public static bool IsCuff(RestraintRuleKind kind) =>
+        kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed or RestraintRuleKind.FullBodyCuffed;
+
+    public static CuffSet For(RestraintRuleKind kind) => kind switch
+    {
+        RestraintRuleKind.ArmsCuffed => CuffSet.Wrists,
+        RestraintRuleKind.LegsCuffed => CuffSet.Ankles,
+        RestraintRuleKind.FullBodyCuffed => CuffSet.Wrists | CuffSet.Ankles | CuffSet.Linked,
+        _ => CuffSet.None,
+    };
+
+    public static CuffSet Drawn(IEnumerable<RestraintRuleAssignment>? rules)
+    {
+        var set = CuffSet.None;
+        if (rules is null) return set;
+        foreach (var rule in rules)
+            if (rule.Drawn) set |= For(rule.Kind);
+        return set;
+    }
+}
+
 /// PoseModeId only matters for ForcedPose (1=GroundSit, 2=Sit, 3=Doze; 0 = mod pose via AnimationId).
 /// AnimationId is the held animation for the cuffed/gagged kinds. CustomizePreset* only matter for Gagged.
 [Serializable]
@@ -397,6 +431,9 @@ public class RestraintRuleAssignment
     public string? AnimationLabel { get; set; }
     public string? CustomizePresetId { get; set; }
     public string? CustomizePresetLabel { get; set; }
+
+    /// Cuff kinds only: also draw the cuffs.
+    public bool Drawn { get; set; }
 }
 
 /// A single gear piece in any lockable slot, carrying one or more restriction rules.
@@ -570,7 +607,7 @@ public class RestraintCatalogExportEntry
 [Serializable]
 public class PluginConfig : IPluginConfiguration
 {
-    public int Version { get; set; } = 6;
+    public int Version { get; set; } = 7;
 
     public PluginRole Role { get; set; } = PluginRole.Sub;
 
@@ -643,6 +680,13 @@ public class PluginConfig : IPluginConfiguration
     public Vector3 LeashColor { get; set; } = DefaultLeashColor;
     public float LeashBrightness { get; set; } = 1f;
     public float LeashOpacity { get; set; } = 1f;
+
+    public bool ShowDrawnRestraints { get; set; } = true;
+    public static readonly Vector3 DefaultRestraintColor = new(0.62f, 0.64f, 0.68f);
+    /// Brightness and opacity share the leash's minimums.
+    public Vector3 RestraintColor { get; set; } = DefaultRestraintColor;
+    public float RestraintBrightness { get; set; } = 1f;
+    public float RestraintOpacity { get; set; } = 1f;
 
     /// Changing it only affects messages sent/parsed afterwards.
     public string TriggerPhrase { get; set; } = "command";
@@ -859,5 +903,12 @@ public class PluginConfig : IPluginConfiguration
             MigrateRules(mod.Rules);
         foreach (var cmd in QuickCommands.Restraints.Where(c => c.RestraintRules is { Count: > 0 }))
             MigrateRules(cmd.RestraintRules!);
+    }
+
+    /// A rules-only restraint's cuffs are always drawn; ones saved before that existed carry no Drawn flag.
+    public void MigrateRulesOnlyCuffsToDrawn()
+    {
+        foreach (var rule in RestraintMapping.Devices.Values.SelectMany(d => d.Rules).Where(r => CuffSets.IsCuff(r.Kind)))
+            rule.Drawn = true;
     }
 }

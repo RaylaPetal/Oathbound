@@ -113,6 +113,22 @@ public sealed class RestraintCommand
     public IReadOnlySet<string> ActiveDeviceIds => activeDeviceIds;
     private readonly HashSet<string> activeDeviceIds = new();
 
+    /// Engaged restraints, oldest first, with the rules each was engaged with (an Owner's rules can replace the Sub's).
+    public IReadOnlyList<(string Id, IReadOnlyList<RestraintRuleAssignment> Rules)> Engaged => engaged;
+    private readonly List<(string Id, IReadOnlyList<RestraintRuleAssignment> Rules)> engaged = new();
+
+    /// What the engaged restraints' cuff rules draw.
+    public CuffSet DrawnCuffs
+    {
+        get
+        {
+            var set = CuffSet.None;
+            foreach (var (_, rules) in engaged)
+                set |= CuffSets.Drawn(rules);
+            return set;
+        }
+    }
+
     /// Keyed by (device, rule kind): one device can hold several bound animations. Kept apart from GestureCommand
     /// so a restraint's animation is never hit by Gesture's idle-timeout revert.
     private readonly Dictionary<(string DeviceId, RestraintRuleKind Kind), (Guid Collection, string ModDirectory)> boundAnimations = new();
@@ -309,7 +325,7 @@ public sealed class RestraintCommand
             LastFailureReason = $"{unavailable} enforcement is unavailable";
             return false;
         }
-        var boundRules = rules.Where(r => r.Kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed or RestraintRuleKind.FullBodyCuffed
+        var boundRules = rules.Where(r => (CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId))
             || (r.Kind == RestraintRuleKind.Gagged && !string.IsNullOrWhiteSpace(r.AnimationId))
             || (r.Kind == RestraintRuleKind.ForcedPose && r.PoseModeId == 0)).ToList();
         if (boundRules.Any(r => ResolveAnimation(r.AnimationId) is null))
@@ -366,6 +382,7 @@ public sealed class RestraintCommand
         foreach (var rule in rules.Where(r => r.Kind == RestraintRuleKind.Gagged))
             chatGagService.ApplyCustomizePreset(runtimeId, rule.CustomizePresetId);
         activeDeviceIds.Add(runtimeId);
+        engaged.Add((runtimeId, rules.ToList()));
 
         var configured = config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId);
         moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(runtimeId), configured?.AttachedMoodle, moodleOverride);
@@ -485,7 +502,7 @@ public sealed class RestraintCommand
             Plugin.Log.Warning($"Restraint apply refused for '{device.Name}': pose state is unavailable.");
             return false;
         }
-        var boundRules = device.Rules.Where(r => r.Kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed or RestraintRuleKind.FullBodyCuffed
+        var boundRules = device.Rules.Where(r => (CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId))
             || (r.Kind == RestraintRuleKind.Gagged && !string.IsNullOrWhiteSpace(r.AnimationId))
             || (r.Kind == RestraintRuleKind.ForcedPose && r.PoseModeId == 0)).ToList();
         if (boundRules.Any(r => ResolveAnimation(r.AnimationId) is null))
@@ -532,6 +549,7 @@ public sealed class RestraintCommand
             chatGagService.ApplyCustomizePreset(deviceId, rule.CustomizePresetId);
 
         activeDeviceIds.Add(deviceId);
+        engaged.Add((deviceId, device.Rules.ToList()));
         moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(deviceId), device.AttachedMoodle, moodleOverride);
         if (hasGear)
             slotLocks.VerifySoon();
@@ -640,6 +658,7 @@ public sealed class RestraintCommand
         boundAnimations.Clear();
         pendingBoundPlays.Clear();
         activeDeviceIds.Clear();
+        engaged.Clear();
         moodles.Ledger.ReleaseAllWithPrefix(AttachedMoodleLedger.RestraintPrefix);
         chatGagService.RevertAllCustomizePresetsForPanic();
         ReleaseAllCatalogOverrides();
@@ -672,6 +691,7 @@ public sealed class RestraintCommand
     {
         restrictionRules.Release(deviceId);
         activeDeviceIds.Remove(deviceId);
+        engaged.RemoveAll(e => e.Id == deviceId);
         ReleaseBoundAnimations(deviceId);
         chatGagService.RevertCustomizePreset(deviceId);
         moodles.Ledger.Release(AttachedMoodleLedger.RestraintSource(deviceId));
@@ -719,8 +739,7 @@ public sealed class RestraintCommand
     /// The name is always quoted so the parser finds where it ends; an older Sub fails closed on it.
     public static string BuildLockCommand(string deviceName, List<RestraintRuleAssignment> rules)
     {
-        var tokens = rules.SelectMany(RuleTokens);
-        return $"restraint lock \"{deviceName}\" {RulesToken}{string.Join(',', tokens)}";
+        return $"restraint lock \"{deviceName}\" {RulesToken}{EncodeRuleTokens(rules)}";
     }
 
     /// Gagged may emit a second `gagcplus` token, always right after `gagged`.
@@ -743,16 +762,28 @@ public sealed class RestraintCommand
                     yield return $"gagcplus={ReadableCustomizePreset(r)}";
                 break;
             case RestraintRuleKind.ArmsCuffed:
-                yield return $"armscuffed={ReadableAnimation(r)}";
+                yield return CuffToken("armscuffed", r);
+                if (r.Drawn) yield return DrawArmsToken;
                 break;
             case RestraintRuleKind.LegsCuffed:
-                yield return $"legscuffed={ReadableAnimation(r)}";
+                yield return CuffToken("legscuffed", r);
+                if (r.Drawn) yield return DrawLegsToken;
                 break;
             case RestraintRuleKind.FullBodyCuffed:
-                yield return $"fullbodycuffed={ReadableAnimation(r)}";
+                yield return CuffToken("fullbodycuffed", r);
+                if (r.Drawn) yield return DrawFullBodyToken;
                 break;
         }
     }
+
+    /// Bare when there's no animation (drawn rules-only cuffs); an older Sub only knows the `=` form and skips it.
+    private static string CuffToken(string name, RestraintRuleAssignment r) =>
+        string.IsNullOrWhiteSpace(r.AnimationId) && string.IsNullOrWhiteSpace(r.AnimationLabel) ? name : $"{name}={ReadableAnimation(r)}";
+
+    /// One per drawn cuff rule; an older Sub skips them.
+    private const string DrawArmsToken = "drawarms";
+    private const string DrawLegsToken = "drawlegs";
+    private const string DrawFullBodyToken = "drawfullbody";
 
     /// Shared with CustomTriggerCommand so both encode rules identically.
     public static string EncodeRuleTokens(List<RestraintRuleAssignment> rules) => string.Join(',', rules.SelectMany(RuleTokens));
@@ -821,11 +852,9 @@ public sealed class RestraintCommand
     /// Carries the full definition inline, since there's no Sub-side name to look up.
     public static string BuildWearCommand(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules)
     {
-        var tokens = rules.SelectMany(RuleTokens);
-
         var slotText = slot is null ? NoGearToken : slot.Value.ToString();
         var itemText = itemId is null ? NoGearToken : itemId.Value.ToString();
-        return $"restraint wear {slotText} {itemText} \"{label}\" {RulesToken}{string.Join(',', tokens)}";
+        return $"restraint wear {slotText} {itemText} \"{label}\" {RulesToken}{EncodeRuleTokens(rules)}";
     }
 
     /// Fails closed on any malformed segment, and on a device with neither gear nor rules.
@@ -881,9 +910,22 @@ public sealed class RestraintCommand
     private static List<RestraintRuleAssignment> ParseRuleTokens(string tokens)
     {
         var rules = new List<RestraintRuleAssignment>();
+        var drawn = new HashSet<RestraintRuleKind>();
         foreach (var token in tokens.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (token.StartsWith("posemod=", StringComparison.OrdinalIgnoreCase))
+            if (token.Equals(DrawArmsToken, StringComparison.OrdinalIgnoreCase))
+                drawn.Add(RestraintRuleKind.ArmsCuffed);
+            else if (token.Equals(DrawLegsToken, StringComparison.OrdinalIgnoreCase))
+                drawn.Add(RestraintRuleKind.LegsCuffed);
+            else if (token.Equals(DrawFullBodyToken, StringComparison.OrdinalIgnoreCase))
+                drawn.Add(RestraintRuleKind.FullBodyCuffed);
+            else if (token.Equals("armscuffed", StringComparison.OrdinalIgnoreCase))
+                rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ArmsCuffed });
+            else if (token.Equals("legscuffed", StringComparison.OrdinalIgnoreCase))
+                rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.LegsCuffed });
+            else if (token.Equals("fullbodycuffed", StringComparison.OrdinalIgnoreCase))
+                rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.FullBodyCuffed });
+            else if (token.StartsWith("posemod=", StringComparison.OrdinalIgnoreCase))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ForcedPose, PoseModeId = 0, AnimationId = token["posemod=".Length..] });
             else if (token.StartsWith("pose=", StringComparison.OrdinalIgnoreCase) && int.TryParse(token.AsSpan(5), out var poseId))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ForcedPose, PoseModeId = poseId });
@@ -907,6 +949,8 @@ public sealed class RestraintCommand
             else if (token.StartsWith("fullbodycuffed=", StringComparison.OrdinalIgnoreCase))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.FullBodyCuffed, AnimationId = token["fullbodycuffed=".Length..] });
         }
+        foreach (var rule in rules.Where(r => drawn.Contains(r.Kind)))
+            rule.Drawn = true;
         return rules;
     }
 

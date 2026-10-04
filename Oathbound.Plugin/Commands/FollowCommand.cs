@@ -68,6 +68,8 @@ public sealed class FollowCommand
     private (string World, uint Territory, int Instance)? retryArea;
     private DateTime? loadedAt;
     private bool areaChangePending;
+    private uint moodleTerritory;
+    private DateTime? moodleAreaLoadedAt;
     private bool wasInCombat;
     private bool pauseNotified;
     private int requestedLength = LengthOption.DefaultYalms;
@@ -176,6 +178,7 @@ public sealed class FollowCommand
 
         runtimeState.MovementLockActive = true;
         moodles.HoldAttached(AttachedMoodleLedger.FollowSource, config.Aliases.Follow.AttachedMoodle, moodleOverride);
+        moodleTerritory = Plugin.ClientState.TerritoryType;
         return true;
     }
 
@@ -349,6 +352,22 @@ public sealed class FollowCommand
         return combatEnded;
     }
 
+    /// Moodles can drop a status across a zone load, which would leave the leash on without its moodle.
+    private void ReassertMoodleAfterAreaChange(DateTime now)
+    {
+        if (Plugin.ObjectTable.LocalPlayer is null || Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51])
+        {
+            moodleAreaLoadedAt = null;
+            return;
+        }
+        moodleAreaLoadedAt ??= now;
+        var territory = Plugin.ClientState.TerritoryType;
+        if (territory == moodleTerritory || now - moodleAreaLoadedAt.Value < RetrySettleDelay)
+            return;
+        moodleTerritory = territory;
+        moodles.Ledger.Reassert(AttachedMoodleLedger.FollowSource);
+    }
+
     public void OnFrameworkUpdate()
     {
         if (state == LeashState.Released) return;
@@ -361,6 +380,7 @@ public sealed class FollowCommand
         }
 
         var now = DateTime.UtcNow;
+        ReassertMoodleAfterAreaChange(now);
 
         // TeleportCommand owns movement during the trip. A journey that vanished without an end event counts as arrived.
         if (state == LeashState.Traveling)

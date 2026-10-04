@@ -1,19 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Types;
-using Dalamud.Interface.Utility;
-using FFXIVClientStructs.FFXIV.Component.GUI;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Safety;
-using Pictomancy;
 
 namespace Oathbound.Plugin.UI;
 
-/// The neck-to-hand leash line, drawn from UiBuilder.Draw so Dalamud's UI hiding covers cutscenes and GPose.
-/// Depth-aware via Pictomancy when available, else a flat projected line. Never touches the leash itself.
+/// The neck-to-hand leash line, drawn through WorldStrokeRenderer. Never touches the leash itself.
 /// Draws out from the hand when a leash starts and withdraws into it when one ends; only real on/off animates.
 public sealed class LeashRenderer : IDisposable
 {
@@ -39,18 +34,6 @@ public sealed class LeashRenderer : IDisposable
     /// Keeps a bent-around point from ending up under the floor.
     private const float MinPointClearance = 0.05f;
 
-    /// A game window bigger than this share of the screen is a full-screen layer (nameplates, fades, screen text);
-    /// cutting it out would hide the leash entirely.
-    private const float FullScreenFraction = 0.5f;
-
-    private static readonly PctDrawHints Hints = new()
-    {
-        // Additive blending washes the red out to pink against bright backgrounds.
-        AlphaBlendMode = AlphaBlendMode.None,
-        // The default OccludedAlpha of 1 means no occlusion; fade strongly behind walls.
-        DefaultParams = new PctDxParams { OccludedAlpha = 0.15f, OcclusionTolerance = 0.05f },
-    };
-
     /// A tapered capsule: radius goes from RadiusA at A to RadiusB at B. A sphere when A == B.
     private readonly record struct Capsule(Vector3 A, Vector3 B, float RadiusA, float RadiusB);
 
@@ -70,7 +53,7 @@ public sealed class LeashRenderer : IDisposable
     private uint lineColor;
     private readonly StatusIndicatorState state;
     private readonly FollowCommand follow;
-    private readonly PctContext? pictomancy;
+    private readonly WorldStrokeRenderer strokes;
     private readonly HashSet<(ulong, ulong)> warnedPairs = new();
     private readonly Vector3[] samples = new Vector3[Segments + 1];
     private readonly Vector3[] visible = new Vector3[Segments + 1];
@@ -78,31 +61,19 @@ public sealed class LeashRenderer : IDisposable
     /// Head, neck-to-chest, chest-to-waist and a thigh and shin per leg, for each of the two characters.
     private readonly Capsule[] capsules = new Capsule[14];
     private int capsuleCount;
-    /// Screen rectangles of visible game windows, collected once per frame.
-    private readonly List<(Vector2 Min, Vector2 Max)> uiRects = new();
-    private bool warnedUiRects;
     private readonly Dictionary<Guid, Entry> entries = new();
     private readonly HashSet<Guid> seen = new();
     private readonly HashSet<Guid> instantEnds = new();
     private readonly List<Guid> finished = new();
     private long lastUpdateAt;
 
-    public LeashRenderer(PluginConfig config, StatusIndicatorState state, FollowCommand follow)
+    public LeashRenderer(PluginConfig config, StatusIndicatorState state, FollowCommand follow, WorldStrokeRenderer strokes)
     {
         this.config = config;
         this.state = state;
         this.follow = follow;
+        this.strokes = strokes;
         follow.LeashEnded += OnLeashEnded;
-        try
-        {
-            // Only strokes are drawn, so the VFX renderer's signature scans are pure risk.
-            pictomancy = PctService.Initialize(Plugin.PluginInterface, new PctOptions { EnableVfxRenderer = false });
-        }
-        catch (Exception ex)
-        {
-            pictomancy = null;
-            Plugin.Log.Warning(ex, "Leash line: 3D drawing (Pictomancy) failed to initialize - falling back to a flat on-screen line.");
-        }
     }
 
     /// Panic is the safeword: its line goes at once rather than withdrawing.
@@ -120,8 +91,7 @@ public sealed class LeashRenderer : IDisposable
             if (Plugin.ObjectTable.LocalPlayer is null) return;
             Update();
             if (!config.ShowLeashLine || entries.Count == 0) return;
-            lineColor = LineColor(config);
-            CollectUiRects();
+            lineColor = WorldStrokeRenderer.Color(config.LeashColor, config.LeashBrightness, config.LeashOpacity);
             foreach (var entry in entries.Values)
             {
                 if (entry.Sub is not null && entry.Owner is not null)
@@ -202,44 +172,6 @@ public sealed class LeashRenderer : IDisposable
         instantEnds.Clear();
     }
 
-    /// Pictomancy's own UI mask switches off under DLSS/FSR or 3D resolution scaling, so the game's visible windows are
-    /// also cut out of the line. Any failure here only loses the extra clipping, never the line.
-    private unsafe void CollectUiRects()
-    {
-        uiRects.Clear();
-        if (pictomancy is null) return;
-        try
-        {
-            var stage = AtkStage.Instance();
-            if (stage == null || stage->RaptureAtkUnitManager == null) return;
-            var screen = ImGuiHelpers.MainViewport.Size;
-            var fullScreenArea = screen.X * screen.Y * FullScreenFraction;
-            ref var loaded = ref stage->RaptureAtkUnitManager->AtkUnitManager.AllLoadedUnitsList;
-            for (var i = 0; i < loaded.Count; i++)
-            {
-                var unit = loaded.Entries[i].Value;
-                if (unit == null || !unit->IsVisible || unit->Alpha == 0) continue;
-                var root = unit->RootNode;
-                if (root == null || !root->IsVisible()) continue;
-                // Always visible and screen-sized, but backstops the size check in case its root node is ever smaller.
-                if (unit->Name.StartsWith("NamePlate\0"u8)) continue;
-                var size = new Vector2(root->Width, root->Height) * unit->Scale;
-                if (size.X <= 0f || size.Y <= 0f || size.X * size.Y > fullScreenArea) continue;
-                var min = new Vector2(unit->X, unit->Y);
-                uiRects.Add((min, min + size));
-            }
-        }
-        catch (Exception ex)
-        {
-            uiRects.Clear();
-            if (!warnedUiRects)
-            {
-                warnedUiRects = true;
-                Plugin.Log.Warning(ex, "Leash line: couldn't read the game's windows - the line may draw over the UI under DLSS/FSR.");
-            }
-        }
-    }
-
     /// Ease-out cubic: the line slows as it reaches the collar.
     private static float Ease(float p) => 1f - MathF.Pow(1f - p, 3f);
 
@@ -264,39 +196,14 @@ public sealed class LeashRenderer : IDisposable
             neck += Vector3.Normalize(toHand) * (subTorso * NeckRadius);
 
         var groundY = MathF.Min(sub.Position.Y, owner.Position.Y);
-        BuildCurve(neck, hand, length, groundY);
+        WorldStrokeRenderer.SagCurve(samples, neck, hand, length, groundY, MinClearance);
         KeepClearOfBodies(hand - neck, groundY);
         var count = VisibleFromHand(extent);
 
-        if (pictomancy is not null)
-        {
-            using var drawList = PctService.Draw(hints: Hints);
-            // Null in cutscenes or while the screen is faded.
-            if (drawList is null) return;
-            foreach (var (min, max) in uiRects)
-                drawList.AddClipZone(min, max);
-            for (var i = 0; i < count; i++)
-                drawList.PathLineTo(visible[i]);
-            drawList.PathStroke(lineColor, PctStrokeFlags.None, Thickness(neck, hand));
-            return;
-        }
-
-        DrawFlat(count, Thickness(neck, hand));
-    }
-
-    /// Sag is half the spare leash (sqrt(L^2 - d^2) / 2): slack when close, straight at the full length.
-    /// Capped so the midpoint stays MinClearance above the ground.
-    private void BuildCurve(Vector3 neck, Vector3 hand, float length, float groundY)
-    {
-        var distance = Vector3.Distance(neck, hand);
-        var sag = 0.5f * MathF.Sqrt(MathF.Max(length * length - distance * distance, 0f));
-        var midY = (neck.Y + hand.Y) / 2f;
-        sag = Math.Clamp(sag, 0f, MathF.Max(midY - (groundY + MinClearance), 0f));
-        for (var i = 0; i <= Segments; i++)
-        {
-            var t = i / (float)Segments;
-            samples[i] = Vector3.Lerp(neck, hand, t) - Vector3.UnitY * (sag * 4f * t * (1f - t));
-        }
+        // Null in cutscenes or while the screen is faded.
+        if (strokes.Begin() is not { } batch) return;
+        using (batch)
+            batch.Stroke(visible.AsSpan(0, count), lineColor, WorldStrokeRenderer.Thickness((neck + hand) / 2f, 24f, 1.5f, 6f));
     }
 
     /// Adds the character's body volumes and returns its torso length, or 0 when the torso can't be measured, in which
@@ -391,39 +298,8 @@ public sealed class LeashRenderer : IDisposable
         return count;
     }
 
-    /// Thinner the farther the camera is.
-    /// Not GetColorU32: that multiplies in the current ImGui style alpha. Clamped here too, for hand-edited configs.
-    private static uint LineColor(PluginConfig config)
-    {
-        var brightness = Math.Clamp(config.LeashBrightness, PluginConfig.MinLeashBrightness, 1f);
-        var opacity = Math.Clamp(config.LeashOpacity, PluginConfig.MinLeashOpacity, 1f);
-        return ImGui.ColorConvertFloat4ToU32(new Vector4(Vector3.Clamp(config.LeashColor, Vector3.Zero, Vector3.One) * brightness, opacity));
-    }
-
-    private static unsafe float Thickness(Vector3 neck, Vector3 hand)
-    {
-        var camera = FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CameraManager.Instance();
-        if (camera == null || camera->CurrentCamera == null) return 3f;
-        var p = camera->CurrentCamera->Position;
-        var distance = Vector3.Distance(new Vector3(p.X, p.Y, p.Z), (neck + hand) / 2f);
-        return Math.Clamp(24f / MathF.Max(distance, 1f), 1.5f, 6f);
-    }
-
-    private void DrawFlat(int count, float thickness)
-    {
-        var drawList = ImGui.GetBackgroundDrawList();
-        for (var i = 0; i < count - 1; i++)
-        {
-            // Skip a segment with an end behind the camera rather than draw it to a wrapped point.
-            if (!Plugin.GameGui.WorldToScreen(visible[i], out var a) || !Plugin.GameGui.WorldToScreen(visible[i + 1], out var b))
-                continue;
-            drawList.AddLine(a, b, lineColor, thickness);
-        }
-    }
-
     public void Dispose()
     {
         follow.LeashEnded -= OnLeashEnded;
-        pictomancy?.Dispose();
     }
 }

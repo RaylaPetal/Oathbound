@@ -79,6 +79,24 @@ public sealed class StatusIndicatorState
         }
     }
 
+    /// Every rendered character with drawn cuffs: the local player's engaged restraints, and each Owner-side estimate's.
+    public IEnumerable<(IPlayerCharacter Sub, CuffSet Cuffs)> ActiveCuffs()
+    {
+        if (Plugin.ObjectTable.LocalPlayer is not { } me) yield break;
+
+        var own = restraints.DrawnCuffs;
+        if (own != CuffSet.None)
+            yield return (me, own);
+
+        foreach (var pairing in config.Pairings)
+        {
+            if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
+            if (estimates.For(pairing) is not { Restrained: true, Cuffs: not CuffSet.None } estimate) continue;
+            if (FindPlayer(pairing.PeerName!, pairing.PeerWorld!) is { } sub)
+                yield return (sub, estimate.Cuffs);
+        }
+    }
+
     private static IPlayerCharacter? FindPlayer(string name, string world)
     {
         foreach (var obj in Plugin.ObjectTable)

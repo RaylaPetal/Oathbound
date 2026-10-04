@@ -28,7 +28,7 @@ public sealed class RestrictionRuleManager
     {
         foreach (var rule in rules)
         {
-            // Arms/Legs Cuffed are animation-only and have no enforcer. Full Body Cuffed and mod Forced Pose also immobilize,
+            // Arms/Legs Cuffed only hold an animation (or are only drawn) and have no enforcer. Full Body Cuffed and mod Forced Pose also immobilize,
             // and Gagged always needs ChatGagService.
             if (rule.Kind is RestraintRuleKind.ArmsCuffed or RestraintRuleKind.LegsCuffed)
                 continue;
@@ -52,7 +52,8 @@ public sealed class RestrictionRuleManager
         _ => null,
     };
 
-    /// Only a config-checked kind can conflict, and only with a different owner.
+    /// Only a config-checked kind can conflict, and only with a different owner. A cuff with no animation holds
+    /// nothing, so it never conflicts with one that does.
     public bool WouldConflict(IEnumerable<RestraintRuleAssignment> rules, string owner)
     {
         foreach (var rule in rules)
@@ -62,7 +63,7 @@ public sealed class RestrictionRuleManager
                 continue;
             if (!activeByKind.TryGetValue(rule.Kind, out var owners) || owners.Count == 0)
                 continue;
-            if (owners.Any(kv => kv.Key != owner && kv.Value != configKey))
+            if (owners.Any(kv => kv.Key != owner && kv.Value != configKey && !(CuffSets.IsCuff(rule.Kind) && kv.Value.Length == 0)))
                 return true;
         }
         return false;

@@ -133,7 +133,9 @@ public sealed class Plugin : IDalamudPlugin
     public RelayActivity RelayActivity { get; } = new();
     private readonly CollarStatusReporter collarStatusReporter;
     public StatusIndicatorState StatusIndicators { get; }
+    private readonly WorldStrokeRenderer worldStrokes;
     private readonly LeashRenderer leashRenderer;
+    private readonly RestraintRenderer restraintRenderer;
     private readonly LeashTravelWatcher leashTravelWatcher;
     private readonly LeashOffNotifier leashOffNotifier;
     private readonly StatusIconRenderer statusIconRenderer;
@@ -214,7 +216,9 @@ public sealed class Plugin : IDalamudPlugin
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
-        leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand);
+        worldStrokes = new WorldStrokeRenderer();
+        leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
+        restraintRenderer = new RestraintRenderer(Configuration, StatusIndicators, worldStrokes);
         statusIconRenderer = new StatusIconRenderer(StatusIndicators);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
@@ -302,6 +306,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw += FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
+        PluginInterface.UiBuilder.Draw += restraintRenderer.Draw;
         // After every window, so anchors reported this frame are current.
         PluginInterface.UiBuilder.Draw += Tutorial.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
@@ -365,6 +370,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw -= FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
+        PluginInterface.UiBuilder.Draw -= restraintRenderer.Draw;
         PluginInterface.UiBuilder.Draw -= Tutorial.Draw;
         Tutorial.Dispose();
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
@@ -390,6 +396,7 @@ public sealed class Plugin : IDalamudPlugin
         OwnerStatusEstimates.Dispose();
         leashOffNotifier.Dispose();
         leashRenderer.Dispose();
+        worldStrokes.Dispose();
         statusIconRenderer.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
@@ -580,6 +587,12 @@ public sealed class Plugin : IDalamudPlugin
         {
             Configuration.MigrateLegacyGagRules();
             Configuration.Version = 6;
+            changed = true;
+        }
+        if (Configuration.Version < 7)
+        {
+            Configuration.MigrateRulesOnlyCuffsToDrawn();
+            Configuration.Version = 7;
             changed = true;
         }
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();

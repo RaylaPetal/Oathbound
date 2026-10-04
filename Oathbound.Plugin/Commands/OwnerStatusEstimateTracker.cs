@@ -195,6 +195,8 @@ public sealed class OwnerStatusEstimate
     public bool Leashed { get; internal set; }
     public float LeashLength { get; internal set; } = LengthOption.DefaultYalms;
     public DateTime? RestrainedUntilUtc { get; internal set; }
+    /// What the sent restraints' rules draw; None when the rules aren't known.
+    public CuffSet Cuffs { get; internal set; }
 
     public bool Any => Gagged || Restrained || Leashed;
 
@@ -203,6 +205,7 @@ public sealed class OwnerStatusEstimate
         Restrained = true;
         if (rules?.Any(r => r.Kind == RestraintRuleKind.Gagged) == true)
             Gagged = true;
+        Cuffs |= CuffSets.Drawn(rules);
         RestrainedUntilUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
     }
 
@@ -210,6 +213,7 @@ public sealed class OwnerStatusEstimate
     {
         Restrained = false;
         Gagged = false;
+        Cuffs = CuffSet.None;
         RestrainedUntilUtc = null;
     }
 

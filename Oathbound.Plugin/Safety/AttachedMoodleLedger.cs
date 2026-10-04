@@ -51,6 +51,9 @@ public sealed class AttachedMoodleLedger
         return true;
     }
 
+    /// Re-applies a held status Moodles may have dropped. False if `source` holds nothing.
+    public bool Reassert(string source) => Holds.TryGetValue(source, out var statusId) && moodles.ApplyStatus(statusId);
+
     /// Removes the status only if no other source still holds it.
     public bool Release(string source)
     {

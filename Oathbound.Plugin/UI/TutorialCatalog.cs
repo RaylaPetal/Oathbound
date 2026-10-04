@@ -135,6 +135,7 @@ public static class TutorialCatalog
             new("Configured mod restraints", "Mods you've set up with rules, ready to send.", S("restraintQuickConfigured"), n => n.Module("restraints"), "None configured yet."),
             new("Shared rules-only restraints", "Restraints your Sub set up themselves, with rules but no gear.", S("restraintQuickShared"), n => n.Module("restraints"), "Your Sub hasn't shared any."),
             new("Rules-only restraint", "Build a restraint from rules alone, without any gear, and send it.", S("restraintQuickAdHoc"), n => n.Module("restraints")),
+            new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
             new("Lock timer", "Locked restraints stay on until you unlock them, or until a timer you set here runs out.", TutorialAnchors.QuickLock, n => n.Module("restraints"), "Appears on a restraint row."),
             Star(),
         ],
@@ -250,9 +251,10 @@ public static class TutorialCatalog
         ["restraints"] =
         [
             Help("restraints", "Restraints your Owner can put on you."),
-            new("Rules-only restraints", "Restraints made of rules without gear - forced pose, walk only, blocked actions, gagged. Your Owner sees these.", S("capturedDevices"), n => n.Module("restraints"), "None yet."),
+            new("Rules-only restraints", "Restraints made of rules without gear - forced pose, walk only, blocked actions, gagged, and drawn cuffs. Your Owner sees these.", S("capturedDevices"), n => n.Module("restraints"), "None yet."),
             new("Detected restraint mods", "Restraint mods found in Penumbra. Configure one to make it usable.", S("detectedRestraintMods"), n => n.Module("restraints"), "Shown when Penumbra has restraint mods."),
             new("My configured mod restraints", "Mods you've set up, each with its own rules.", S("configuredRestraintMods"), n => n.Module("restraints"), "None configured yet."),
+            new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
         ],
         ["toycontrol"] =
         [
