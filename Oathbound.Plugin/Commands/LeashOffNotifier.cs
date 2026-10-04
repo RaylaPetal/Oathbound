@@ -14,6 +14,8 @@ public enum LeashEnd
     Travel,
     Timeout,
     Refused,
+    /// The Sub's own accepted presence rule ended it.
+    Rule,
     Other,
 }
 
@@ -26,6 +28,7 @@ public static class LeashEndExtensions
         LeashEnd.Travel => "travel",
         LeashEnd.Timeout => "timeout",
         LeashEnd.Refused => "refused",
+        LeashEnd.Rule => "rule",
         _ => "other",
     };
 
@@ -35,6 +38,7 @@ public static class LeashEndExtensions
         "travel" => LeashEnd.Travel,
         "timeout" => LeashEnd.Timeout,
         "refused" => LeashEnd.Refused,
+        "rule" => LeashEnd.Rule,
         _ => LeashEnd.Other,
     };
 
@@ -45,6 +49,7 @@ public static class LeashEndExtensions
         LeashEnd.Travel => "they couldn't follow you.",
         LeashEnd.Timeout => "they waited too long for you to come back.",
         LeashEnd.Refused => "their client couldn't put the leash on.",
+        LeashEnd.Rule => "your presence rule took it off when you left.",
         _ => "it came off on their side.",
     };
 }

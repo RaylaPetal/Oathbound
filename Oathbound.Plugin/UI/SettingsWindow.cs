@@ -143,8 +143,12 @@ public class SettingsWindow : Window, IDisposable
             if (config.Role == PluginRole.Owner)
                 IconGlyph.WrappedDisabled("Permissions only apply to Subs. Switch your role in Identity & Pairing to set them.");
             else
+            {
                 using (Section.Begin("permissionsCard"))
                     plugin.ModuleWindow.DrawPermissionsCard();
+                using (Section.Begin("redrawCard"))
+                    DrawRedrawCard(config);
+            }
             ImGui.EndTabItem();
         }
 
@@ -587,6 +591,18 @@ public class SettingsWindow : Window, IDisposable
             if (ImGui.Button("Cancel"))
                 confirmingIdentityReset = false;
         }
+    }
+
+    private static void DrawRedrawCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Sync, "Mod changes");
+        ImGui.Separator();
+        if (ImGuiCheckbox("Redraw my character after a mod change", config.RedrawAfterModChange, out var redraw))
+        {
+            config.RedrawAfterModChange = redraw;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Only turn this on if animations, restraint mods or Reaction mods don't show up until something else redraws you. Penumbra can redraw on its own, and each extra redraw makes a sync plugin re-send your character, so people synced with you see you flash.");
     }
 
     private void DrawTutorialCard(PluginConfig config)

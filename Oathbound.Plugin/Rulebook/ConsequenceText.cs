@@ -244,13 +244,26 @@ public static class RuleText
         ("Cooldown", $"{r.CooldownSeconds}s"),
     ];
 
-    public static List<(string Label, string Text)> Presence(PresenceRule r, string owner) =>
-    [
-        ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms"),
-        ("Arrives", Cap(ConsequenceText.Describe(r.Arrive))),
-        ("Leaves", Cap(ConsequenceText.Describe(r.Depart))),
-        ("Cooldown", $"{r.CooldownSeconds}s"),
-    ];
+    public static List<(string Label, string Text)> Presence(PresenceRule r, string owner)
+    {
+        var arrive = r.Arrive.Select(ConsequenceText.Describe).ToList();
+        if (r.LeashOnArrive)
+            arrive.Add($"leash you to {owner} ({r.LeashLengthYalms} yalms)");
+        if (!string.IsNullOrWhiteSpace(r.ArriveTell))
+            arrive.Add($"you /tell {owner} \"{r.ArriveTell.Trim()}\"");
+        var depart = r.Depart.Select(ConsequenceText.Describe).ToList();
+        if (r.UnleashOnDepart)
+            depart.Add("take the leash off");
+        if (!string.IsNullOrWhiteSpace(r.DepartTell))
+            depart.Add($"you /tell {owner} \"{r.DepartTell.Trim()}\"");
+        return
+        [
+            ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms"),
+            ("Arrives", Cap(arrive.Count == 0 ? "nothing" : string.Join("; ", arrive))),
+            ("Leaves", Cap(depart.Count == 0 ? "nothing" : string.Join("; ", depart))),
+            ("Cooldown", $"{r.CooldownSeconds}s"),
+        ];
+    }
 
     public static List<(string Label, string Text)> Threshold(LedgerThreshold t)
     {

@@ -286,12 +286,12 @@ public static class TutorialCatalog
         ["reactions"] = OwnerTours["reactions"],
         ["rulebook"] =
         [
-            Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and you can switch any rule off."),
+            Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and only they can change a rule after that."),
             new("New version", "When your Owner publishes, review what changed here and accept or decline it.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
             new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
             new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Ledger", "Your score and the cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
-            new("Rules", "Uncheck any rule to switch it off. An oath you swore stays on until it ends. Your Owner sees which ones are off.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Rules", "Every rule you accepted, laid out line by line. Only your Owner can change or remove one; your safeword pauses them all.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Activity", "Everything the rulebook did, newest first.", S("rbSubActivity"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
         ],
         ["sync"] =

@@ -34,6 +34,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly RulebookGameEvents events;
     private readonly Safety.EmoteWatcher emotes;
     private readonly Commands.GestureCommand gesture;
+    private readonly Commands.FollowCommand follow;
     /// The oath the Sub is performing; its own emote isn't counted on top, and it counts only once the hold completes.
     private (Guid PairingId, string OathId)? performing;
     private readonly Func<CancellationToken> backgroundToken;
@@ -53,10 +54,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         public DateTime? OutOfRangeSince;
     }
 
-    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes, Commands.GestureCommand gesture, Func<CancellationToken> backgroundToken)
+    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes, Commands.GestureCommand gesture, Commands.FollowCommand follow, Func<CancellationToken> backgroundToken)
     {
         this.config = config;
         this.gesture = gesture;
+        this.follow = follow;
         this.mailbox = mailbox;
         this.listener = listener;
         this.composer = composer;
@@ -65,6 +67,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         this.emotes = emotes;
         events = new RulebookGameEvents();
         Queue = new ConsequenceQueue(RunCommand, OnCommandResult, RulebookGameEvents.ShouldHoldConsequences);
+
+        // Accepting a version is the Sub's consent to every rule in it; switches from older builds no longer apply.
+        foreach (var pairing in config.Pairings.Where(p => p.Rulebook.DisabledRuleIds.Count > 0))
+            pairing.Rulebook.DisabledRuleIds.Clear();
 
         listener.RulebookSink = this;
         listener.RulebookNudgeReceived += OnNudge;
@@ -184,7 +190,6 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         && pairing.Rulebook.Accepted is not null
         && config.Permissions.Rulebook && config.RulebookAcknowledged && !config.RulebookSuspended;
 
-    private static bool RuleOn(PairingState pairing, string id) => !pairing.Rulebook.DisabledRuleIds.Contains(id);
 
     /// Turning the permission off voids open oaths and drops anything held, like panic minus the suspension.
     private void TrackRunningState(PairingState pairing)
@@ -243,11 +248,15 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     }
 
     /// `cooldownKey` null for a drawn card, which its draw already paid for.
-    private void Fire(PairingState pairing, string ruleId, string label, IReadOnlyList<string> commands, string? cooldownKey, int cooldownSeconds)
+    /// `extra` runs alongside the commands when they're accepted (not cooling down or capped): a presence rule's leash
+    /// and message, which aren't commands any other rule may run.
+    private void Fire(PairingState pairing, string ruleId, string label, IReadOnlyList<string> commands, string? cooldownKey, int cooldownSeconds, Action? extra = null)
     {
-        if (commands.Count == 0 || !IsRunning(pairing))
+        if ((commands.Count == 0 && extra is null) || !IsRunning(pairing))
             return;
         var outcome = Queue.Enqueue(new ConsequenceQueue.Item(pairing.Id, ruleId, label, commands.ToList()), cooldownKey, cooldownSeconds);
+        if (outcome is ConsequenceQueue.Outcome.Ran or ConsequenceQueue.Outcome.Held)
+            extra?.Invoke();
         if (outcome == ConsequenceQueue.Outcome.Capped)
             Log(pairing, RulebookEventKind.ConsequenceDropped, ruleId, $"{label}: dropped - more than {ConsequenceQueue.CapCount} consequences in 10 minutes.");
         else if (outcome == ConsequenceQueue.Outcome.CoolingDown)
@@ -284,8 +293,6 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         state.Pending = null;
         state.AcceptedUnixSeconds = Now();
         state.RemovedOnceCards.Clear();
-        var liveIds = doc.AllRules().Select(r => r.Id).ToHashSet();
-        state.DisabledRuleIds.RemoveWhere(id => !liveIds.Contains(id));
         state.ThresholdsMet.RemoveWhere(id => doc.Thresholds.All(t => t.Id != id));
         ReconcileOaths(pairing, previous, doc);
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"Version {doc.Version} accepted.");
@@ -299,7 +306,6 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         Queue.DropFor(pairing.Id);
         state.Accepted = null;
         state.LastDeclinedVersion = null;
-        state.DisabledRuleIds.Clear();
         state.Oaths.Clear();
         state.LedgerScore = 0;
         state.ThresholdsMet.Clear();
@@ -319,23 +325,6 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         Log(pairing, RulebookEventKind.VersionDeclined, null, $"Version {doc.Version} declined.");
         config.SaveNow();
     }
-
-    public void SetRuleEnabled(PairingState pairing, string ruleId, bool enabled)
-    {
-        var state = pairing.Rulebook;
-        var name = state.Accepted?.AllRules().FirstOrDefault(r => r.Id == ruleId).Name ?? "rule";
-        // The Sub swore to an open oath; only the Owner, panic or the permission can end it early.
-        if (!enabled && IsSworn(pairing, ruleId))
-            return;
-        if (enabled ? !state.DisabledRuleIds.Remove(ruleId) : !state.DisabledRuleIds.Add(ruleId))
-            return;
-        Log(pairing, enabled ? RulebookEventKind.RuleSwitchedOn : RulebookEventKind.RuleSwitchedOff, ruleId,
-            $"\"{name}\" switched {(enabled ? "on" : "off")}.");
-        config.SaveNow();
-    }
-
-    public static bool IsSworn(PairingState pairing, string ruleId) =>
-        pairing.Rulebook.Oaths.TryGetValue(ruleId, out var oath) && oath.Status == OathStatus.Open;
 
     // ---- Oaths ----
 
@@ -405,8 +394,6 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             !state.Oaths.TryGetValue(oathId, out var s) || s.Status != OathStatus.Offered)
             return;
         StartOath(s, terms, Now());
-        // An oath switched off while it was only offered would otherwise be sworn but never judged.
-        state.DisabledRuleIds.Remove(oathId);
         Log(pairing, RulebookEventKind.OathAccepted, oathId, $"Oath \"{terms.Name}\" accepted: {OathText.Describe(terms)}.");
         config.SaveNow();
     }
@@ -470,7 +457,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 
     private IEnumerable<(string Id, OathState State, Oath Terms)> OpenOaths(PairingState pairing) =>
         pairing.Rulebook.Oaths
-            .Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null && RuleOn(pairing, kv.Key))
+            .Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null)
             .Select(kv => (kv.Key, kv.Value, kv.Value.Terms!))
             .ToList();
 
@@ -866,7 +853,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                     ResolveOath(pairing, id, s, OathStatus.Broken, $"entered {RulebookPlaces.TerritoryName(to)}");
             }
 
-            foreach (var rule in pairing.Rulebook.Accepted!.Places.Where(r => RuleOn(pairing, r.Id)))
+            foreach (var rule in pairing.Rulebook.Accepted!.Places)
             {
                 var wasIn = from != 0 && RulebookPlaces.MatchesAny(rule.Places, from);
                 var isIn = RulebookPlaces.MatchesAny(rule.Places, to);
@@ -883,7 +870,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 
     private void TickPresence(PairingState pairing, DateTime now)
     {
-        var rules = pairing.Rulebook.Accepted!.Presence.Where(r => RuleOn(pairing, r.Id)).ToList();
+        var rules = pairing.Rulebook.Accepted!.Presence;
         if (rules.Count == 0)
             return;
         var distance = OwnerDistance(pairing);
@@ -903,7 +890,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 if (!p.Arrived && now - p.InRangeSince >= ArriveAfter)
                 {
                     p.Arrived = true;
-                    Fire(pairing, rule.Id, $"{name} ({pairing.PeerName} arrived)", rule.Arrive, rule.Id + ":arrive", rule.CooldownSeconds);
+                    var label = $"{name} ({pairing.PeerName} arrived)";
+                    Fire(pairing, rule.Id, label, rule.Arrive, rule.Id + ":arrive", rule.CooldownSeconds,
+                        rule.LeashOnArrive || !string.IsNullOrWhiteSpace(rule.ArriveTell) ? () => PresenceExtras(pairing, rule, arrived: true, label) : null);
                 }
             }
             else
@@ -921,9 +910,50 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 {
                     p.Arrived = false;
                     p.OutOfRangeSince = null;
-                    Fire(pairing, rule.Id, $"{name} ({pairing.PeerName} left)", rule.Depart, rule.Id + ":depart", rule.CooldownSeconds);
+                    var label = $"{name} ({pairing.PeerName} left)";
+                    Fire(pairing, rule.Id, label, rule.Depart, rule.Id + ":depart", rule.CooldownSeconds,
+                        rule.UnleashOnDepart || !string.IsNullOrWhiteSpace(rule.DepartTell) ? () => PresenceExtras(pairing, rule, arrived: false, label) : null);
                 }
             }
+        }
+    }
+
+    /// Each part needs the Sub's own permission for it, exactly as if the Owner had sent it; a missing one is logged, not run.
+    private void PresenceExtras(PairingState pairing, PresenceRule rule, bool arrived, string label)
+    {
+        if (arrived && rule.LeashOnArrive)
+        {
+            if (!config.Permissions.Follow)
+                Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: skipped the leash - Follow permission is off.");
+            else if (follow.LeashedPairingId == pairing.Id)
+            {
+                // Already on: nothing to tell the Owner.
+            }
+            else if (follow.Engage(pairing, Math.Clamp(rule.LeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms)))
+            {
+                Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: leashed to {pairing.PeerName} ({rule.LeashLengthYalms} yalms).");
+                sender.Send(composer.ComposeLeashOnNotice(pairing.PeerName!, pairing.PeerWorld!));
+            }
+            else
+                Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: the leash couldn't start.");
+        }
+        if (!arrived && rule.UnleashOnDepart && follow.LeashedPairingId == pairing.Id)
+        {
+            if (!config.Permissions.Follow)
+                Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: skipped the unleash - Follow permission is off.");
+            else
+            {
+                follow.Release(LeashEnd.Rule);
+                Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: unleashed.");
+            }
+        }
+        var text = (arrived ? rule.ArriveTell : rule.DepartTell).Trim();
+        if (text.Length > 0)
+        {
+            if (!(config.Permissions.CustomChatMessages && config.CustomChatAcknowledged))
+                Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: skipped the message - custom chat messages are off.");
+            else if (sender.Send(composer.ComposePresenceTell(pairing.PeerName!, pairing.PeerWorld!, text)))
+                Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: told {pairing.PeerName} \"{text}\".");
         }
     }
 
@@ -951,7 +981,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 
     private void DrawForEvent(PairingState pairing, CardPile pile, string reason)
     {
-        if (!RuleOn(pairing, DrawOnSettings.RuleId) || pairing.Rulebook.Accepted is not { } doc)
+        if (pairing.Rulebook.Accepted is not { } doc)
             return;
         // The draw itself is what the cooldown limits; the card's consequence then runs without a second check.
         if (!TryReserveCooldown(pairing, DrawOnSettings.RuleId, doc.DrawOn.CooldownSeconds))
@@ -976,7 +1006,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         if (!IsRunning(pairing) || pairing.Rulebook.Accepted is not { } doc)
             return null;
         var state = pairing.Rulebook;
-        var cards = doc.Deck.Where(c => c.Pile == pile && !state.RemovedOnceCards.Contains(c.Id) && RuleOn(pairing, c.Id)).ToList();
+        var cards = doc.Deck.Where(c => c.Pile == pile && !state.RemovedOnceCards.Contains(c.Id)).ToList();
         if (cards.Count == 0)
         {
             Log(pairing, RulebookEventKind.DeckEmpty, null, $"Tried to draw a {CardPiles.Word(pile)} card for {reason}, but there are none.");
@@ -1031,7 +1061,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                     state.ThresholdsMet.Remove(t.Id);
                     continue;
                 }
-                if (!state.ThresholdsMet.Add(t.Id) || !RuleOn(pairing, t.Id))
+                if (!state.ThresholdsMet.Add(t.Id))
                     continue;
                 var name = string.IsNullOrWhiteSpace(t.Name) ? $"Ledger {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}" : t.Name;
                 Log(pairing, RulebookEventKind.ThresholdCrossed, t.Id, $"Threshold \"{name}\" reached at {state.LedgerScore}.");

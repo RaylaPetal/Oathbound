@@ -339,11 +339,24 @@ public sealed class ChatCommandListener : IDisposable
             return false;
 
         var (word, rest) = SplitFirstToken(text[LeashOffNoticeKeyword.Length..].Trim());
-        if (!word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
+        var on = word.Equals(ChatComposer.LeashOnWord, StringComparison.OrdinalIgnoreCase);
+        if (!on && !word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
             return true;
         var (name, world) = ExtractNameAndWorld(sender);
         if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
             return true;
+
+        if (on)
+        {
+            estimates.MarkLeashed(ownerPairing.Id);
+            Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+            {
+                Title = "Leashed",
+                Content = $"Your presence rule leashed {ownerPairing.PeerName} to you.",
+                Type = Dalamud.Interface.ImGuiNotification.NotificationType.Info,
+            });
+            return true;
+        }
 
         var reason = LeashEndExtensions.FromNoticeWord(SplitFirstToken(rest).First);
         if (!estimates.MarkUnleashed(ownerPairing.Id))

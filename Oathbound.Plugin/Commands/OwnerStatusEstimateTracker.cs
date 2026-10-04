@@ -40,6 +40,14 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
 
     public void Clear(Guid pairingId) => estimates.Remove(pairingId);
 
+    /// The Sub's own presence rule leashed them; from here the leash travels with area changes like one the Owner sent.
+    public void MarkLeashed(Guid pairingId)
+    {
+        if (!estimates.TryGetValue(pairingId, out var estimate))
+            estimates[pairingId] = estimate = new OwnerStatusEstimate();
+        estimate.Leashed = true;
+    }
+
     /// Returns whether the estimate showed the Sub leashed until now.
     public bool MarkUnleashed(Guid pairingId)
     {

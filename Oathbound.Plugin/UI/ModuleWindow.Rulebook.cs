@@ -434,6 +434,17 @@ public sealed partial class ModuleWindow
     private static string? StatusOf(RulebookPairingState state, string oathId) =>
         state.LastReport?.Oaths.FirstOrDefault(o => o.Id == oathId) is { } reported ? OathStatusText(reported.Status, reported.ScopeEndsAt) : null;
 
+    private static readonly string[] SubRuleTabs = ["Oaths", "Deck", "Places", "Presence", "Ledger"];
+
+    private static string SubRuleTab(string kind) => kind switch
+    {
+        "Oath" => "Oaths",
+        "Card" or "Deck" => "Deck",
+        "Place rule" => "Places",
+        "Presence rule" => "Presence",
+        _ => "Ledger",
+    };
+
     /// Label column on the left, wrapped text on the right, so each part of a rule reads on its own line.
     private static void DrawRuleLines(IReadOnlyList<(string Label, string Text)> lines)
     {
@@ -781,14 +792,39 @@ public sealed partial class ModuleWindow
         IconGlyph.HelpMarker("How close you have to be. You count as arrived half a second after coming within range, and gone a second after moving a little past it (a quarter of the range more, at least 1 yalm). Each of arrive and leave can only fire once per cooldown.");
         Section.SubHeading("When you arrive");
         changed |= DrawConsequenceEditor("arrive", rule.Arrive);
+        var leash = rule.LeashOnArrive;
+        if (ImGui.Checkbox("Leash them to you", ref leash)) { rule.LeashOnArrive = leash; changed = true; }
+        IconGlyph.HelpMarker("Needs their Follow permission (and Teleport for the leash to follow you across areas). Their client tells yours, so the leash travels with you like one you sent.");
+        if (rule.LeashOnArrive)
+        {
+            ImGui.SameLine();
+            var length = rule.LeashLengthYalms;
+            ItemWidth(110);
+            if (ImGui.SliderInt("yalms##presenceLeash", ref length, LengthOption.MinYalms, LengthOption.MaxYalms)) { rule.LeashLengthYalms = length; changed = true; }
+        }
+        changed |= DrawPresenceTell("arriveTell", rule.ArriveTell, v => rule.ArriveTell = v);
         Section.SubHeading("When you leave");
         changed |= DrawConsequenceEditor("depart", rule.Depart);
+        var unleash = rule.UnleashOnDepart;
+        if (ImGui.Checkbox("Take the leash off", ref unleash)) { rule.UnleashOnDepart = unleash; changed = true; }
+        IconGlyph.HelpMarker("Only a leash to you. While leashed they're pulled along, so this mostly fires when you teleport away or the leash pauses.");
+        changed |= DrawPresenceTell("departTell", rule.DepartTell, v => rule.DepartTell = v);
         ImGui.Spacing();
         var cd = rule.CooldownSeconds;
         if (DrawCooldown("presenceCooldown", ref cd, "Arriving or leaving again within this time does nothing.")) { rule.CooldownSeconds = cd; changed = true; }
         if (changed) plugin.Configuration.Save();
         DrawDoneButton();
         ImGui.PopID();
+    }
+
+    private static bool DrawPresenceTell(string id, string value, Action<string> set)
+    {
+        ItemWidth(260);
+        var changed = ImGui.InputTextWithHint($"they /tell you##{id}", "optional, e.g. I'm here", ref value, RulebookLimits.MaxPresenceTellLength);
+        if (changed)
+            set(value);
+        IconGlyph.HelpMarker("Their client sends this to you as a /tell, nowhere else. Needs their Custom chat messages permission and its acknowledgement.");
+        return changed;
     }
 
     private void DrawThresholdEditor(LedgerThreshold t)
@@ -1125,7 +1161,7 @@ public sealed partial class ModuleWindow
         var config = plugin.Configuration;
         var service = plugin.RulebookService;
         var state = pairing.Rulebook;
-        IconGlyph.WrappedDisabled($"Rules {pairing.PeerName} wrote for you. Nothing runs until you accept it, and you can switch any rule off except an oath you swore to.");
+        IconGlyph.WrappedDisabled($"Rules {pairing.PeerName} wrote for you. Nothing runs until you accept it; once accepted, only they can change or remove a rule.");
 
         if (config.RulebookSuspended)
         {
@@ -1148,7 +1184,8 @@ public sealed partial class ModuleWindow
                 var startsOver = pending.ResetCount > state.AppliedResetCount;
                 if (startsOver)
                     IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName ?? "Your Owner"} is starting over. Accepting clears your oaths (running ones end with no outcome), your ledger score, switched-off rules and history, and offers every oath again.");
-                DrawRulebookDiff(startsOver ? null : state.Accepted, pending, startsOver ? new Dictionary<string, OathState>() : state.Oaths, pairing.PeerName ?? "your Owner");
+                using (Section.List("rbSubPendingDiff", Scaled(300)))
+                    DrawRulebookDiff(startsOver ? null : state.Accepted, pending, startsOver ? new Dictionary<string, OathState>() : state.Oaths, pairing.PeerName ?? "your Owner");
                 if (ImGui.Button("Accept"))
                     service.AcceptPending(pairing);
                 ImGui.SameLine();
@@ -1237,30 +1274,39 @@ public sealed partial class ModuleWindow
 
         using (Section.Begin("rbSubRules", "Rules"))
         {
-            IconGlyph.WrappedDisabled("Uncheck a rule to switch it off. An oath you've sworn stays on until it ends.");
-            foreach (var (id, kind, name, _, lines) in RuleText.All(accepted, pairing.PeerName ?? "your Owner"))
+            IconGlyph.WrappedDisabled($"Everything in the version you accepted. Only {pairing.PeerName ?? "your Owner"} can change or remove a rule. Your safeword, or turning the Rulebook permission off, pauses all of it.");
+            var groups = RuleText.All(accepted, pairing.PeerName ?? "your Owner")
+                .Where(r => r.Id != DrawOnSettings.RuleId || accepted.DrawOn.Any)
+                .GroupBy(r => SubRuleTab(r.Kind))
+                .OrderBy(g => Array.IndexOf(SubRuleTabs, g.Key))
+                .ToList();
+            if (groups.Count > 0 && ImGui.BeginTabBar("rbSubRuleTabs"))
             {
-                if (id == DrawOnSettings.RuleId && !accepted.DrawOn.Any)
-                    continue;
-                ImGui.PushID(id);
-                var on = !state.DisabledRuleIds.Contains(id);
-                var sworn = RulebookService.IsSworn(pairing, id);
-                ImGui.BeginDisabled(sworn);
-                if (ImGui.Checkbox("##on", ref on))
-                    service.SetRuleEnabled(pairing, id, on);
-                ImGui.EndDisabled();
-                ImGui.SameLine();
-                ImGui.PushTextWrapPos(0);
-                ImGui.TextUnformatted($"{kind}: {name}");
-                ImGui.PopTextWrapPos();
-                if (sworn)
+                foreach (var group in groups)
                 {
-                    ImGui.SameLine();
-                    IconGlyph.HelpMarker($"You swore to this oath. Only {pairing.PeerName ?? "your Owner"} can change or remove it. Panic still ends it.");
+                    // The deck's draw settings aren't a rule of their own, so they don't add to the count.
+                    var count = group.Count(r => r.Id != DrawOnSettings.RuleId);
+                    if (!ImGui.BeginTabItem(count > 0 ? $"{group.Key} ({count})###rbSubTab{group.Key}" : $"{group.Key}###rbSubTab{group.Key}"))
+                        continue;
+                    using (Section.List($"rbSubRules{group.Key}", Scaled(300)))
+                    {
+                        var first = true;
+                        foreach (var (id, _, name, _, lines) in group)
+                        {
+                            if (!first)
+                                ImGui.Separator();
+                            first = false;
+                            ImGui.PushID(id);
+                            ImGui.PushTextWrapPos(0);
+                            ImGui.TextColored(Theme.AccentHover, name);
+                            ImGui.PopTextWrapPos();
+                            DrawRuleLines(lines);
+                            ImGui.PopID();
+                        }
+                    }
+                    ImGui.EndTabItem();
                 }
-                DrawRuleLines(lines);
-                ImGui.Spacing();
-                ImGui.PopID();
+                ImGui.EndTabBar();
             }
         }
 

@@ -54,6 +54,7 @@ public sealed class RulebookPairingState
     /// The Owner's ResetCount as of the last wipe.
     public int AppliedResetCount { get; set; }
 
+    /// No longer set: the Sub can't switch rules off. Kept so older configs load and reports keep their shape.
     public HashSet<string> DisabledRuleIds { get; set; } = new();
     public Dictionary<string, OathState> Oaths { get; set; } = new();
     public int LedgerScore { get; set; }

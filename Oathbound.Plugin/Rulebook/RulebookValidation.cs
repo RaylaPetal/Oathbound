@@ -48,8 +48,12 @@ public static class RulebookValidation
         {
             if (p.RangeYalms is < RulebookLimits.MinRangeYalms or > RulebookLimits.MaxRangeYalms)
                 return $"Presence rule \"{Label(p.Name)}\": range must be {RulebookLimits.MinRangeYalms}-{RulebookLimits.MaxRangeYalms} yalms.";
-            if (p.Arrive.Count + p.Depart.Count == 0)
+            if (!p.DoesAnything)
                 return $"Presence rule \"{Label(p.Name)}\" does nothing.";
+            if (p.LeashLengthYalms is < Commands.LengthOption.MinYalms or > Commands.LengthOption.MaxYalms)
+                return $"Presence rule \"{Label(p.Name)}\": the leash is {Commands.LengthOption.MinYalms}-{Commands.LengthOption.MaxYalms} yalms.";
+            if ((CheckPresenceTell(p.ArriveTell) ?? CheckPresenceTell(p.DepartTell)) is { } tellError)
+                return $"Presence rule \"{Label(p.Name)}\": {tellError}";
             if ((CheckCooldown(p.CooldownSeconds) ?? ConsequenceValidator.CheckAll(p.Arrive.Concat(p.Depart))) is { } e)
                 return $"Presence rule \"{Label(p.Name)}\": {e}";
         }
@@ -112,6 +116,19 @@ public static class RulebookValidation
             o.LedgerPerMissed is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
             return $"a ledger change is at most {RulebookLimits.MaxLedgerChange}.";
         return ConsequenceValidator.CheckAll(o.Kept.Concat(o.Broken));
+    }
+
+    /// The text lands in the Owner's tells, where a leading "collar..." word is a peer notice their client acts on.
+    private static string? CheckPresenceTell(string text)
+    {
+        var t = text.Trim();
+        if (t.Length == 0)
+            return null;
+        if (t.Length > RulebookLimits.MaxPresenceTellLength)
+            return $"a message is at most {RulebookLimits.MaxPresenceTellLength} characters.";
+        if (t.StartsWith('/') || t.StartsWith("collar", System.StringComparison.OrdinalIgnoreCase) || t.Contains('\n'))
+            return "a message can't start with / or \"collar\", or have line breaks.";
+        return null;
     }
 
     private static string? CheckCooldown(int seconds) =>

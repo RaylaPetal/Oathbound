@@ -99,6 +99,15 @@ public sealed class ChatComposer
 
     public const string RulebookNudgeKeyword = "collarrulebook";
     public const string LeashOffWord = "off";
+    /// `collarleash on`: the Sub's presence rule leashed them, so the Owner's client follows up with leash travel.
+    public const string LeashOnWord = "on";
+
+    public string ComposeLeashOnNotice(string name, string world) =>
+        $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOnWord}";
+
+    /// A presence rule's message, only ever as a /tell to that Owner.
+    public string ComposePresenceTell(string name, string world, string text) =>
+        $"/tell {name}@{world} {text.Trim()}";
 
     /// `direction` is this device's side in the pairing that ended, not its Role.
     public string ComposeUnpairNotice(string name, string world, PairingDirection direction)

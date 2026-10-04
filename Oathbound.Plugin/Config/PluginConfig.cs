@@ -681,6 +681,9 @@ public class PluginConfig : IPluginConfiguration
     /// Required before the automation-heavy permissions can be enabled.
     public bool TosAcknowledged { get; set; }
 
+    /// Off by default: Penumbra can redraw on its own, and every extra redraw makes sync plugins re-send the character.
+    public bool RedrawAfterModChange { get; set; }
+
     /// Separate from TosAcknowledged: arbitrary chat on any channel is a broader automation surface.
     public bool CustomChatAcknowledged { get; set; }
 

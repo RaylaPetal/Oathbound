@@ -163,7 +163,7 @@ public sealed class Plugin : IDalamudPlugin
         GlamourerIpc = new GlamourerIpc();
         SlotLockManager = new SlotLockManager(Configuration, GlamourerIpc);
         HonorificIpc = new HonorificIpc();
-        PenumbraIpc = new PenumbraIpc();
+        PenumbraIpc = new PenumbraIpc(Configuration);
         MoodlesIpc = new MoodlesIpc();
         CustomizePlusIpc = new CustomizePlusIpc();
         IntifaceIpc = new IntifaceIpc();
@@ -239,7 +239,7 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
-        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, () => relayBackgroundWorkCts.Token);
+        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
 

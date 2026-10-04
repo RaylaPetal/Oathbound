@@ -177,6 +177,16 @@ public sealed class PresenceRule
     public float RangeYalms { get; set; } = 10;
     public List<string> Arrive { get; set; } = new();
     public List<string> Depart { get; set; } = new();
+    /// The one rule type allowed to leash or send chat, each still behind the Sub's own permission for it.
+    public bool LeashOnArrive { get; set; }
+    public int LeashLengthYalms { get; set; } = Commands.LengthOption.DefaultYalms;
+    public bool UnleashOnDepart { get; set; }
+    /// Sent as a /tell to the Owner, never anywhere else.
+    public string ArriveTell { get; set; } = "";
+    public string DepartTell { get; set; } = "";
+
+    public bool DoesAnything => Arrive.Count + Depart.Count > 0 || LeashOnArrive || UnleashOnDepart ||
+        !string.IsNullOrWhiteSpace(ArriveTell) || !string.IsNullOrWhiteSpace(DepartTell);
 }
 
 public enum ThresholdDirection
@@ -254,6 +264,7 @@ public static class RulebookLimits
     public const int MaxTimesPerPeriod = 10;
     public const int MaxPeriodDays = 7;
     public const int MaxPhraseLength = 40;
+    public const int MaxPresenceTellLength = 200;
     /// SayGoodnight: how long before logging off the goodnight tell may be sent.
     public const int GoodnightWindowMinutes = 15;
     public const float MinRangeYalms = 3;

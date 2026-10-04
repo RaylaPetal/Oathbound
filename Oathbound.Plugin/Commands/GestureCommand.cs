@@ -38,7 +38,8 @@ public sealed class GestureCommand
     private const string HoldOwner = "gesture";
 
     private (GestureTrigger Trigger, long ReadyAtTicks)? pendingPlay;
-    private (Guid Collection, string ModDirectory, long IdleUntilTicks)? activeTemporary;
+    /// Selections is the option set's signature, so replaying the same animation can tell nothing needs changing.
+    private (Guid Collection, string ModDirectory, string Selections, long IdleUntilTicks)? activeTemporary;
     /// The trigger the Sub is held in, so Stop can stand them up from a seated pose.
     private GestureTrigger? heldTrigger;
     private Guid? heldBySourcePairingId;
@@ -276,7 +277,7 @@ public sealed class GestureCommand
             ReleaseTemporary();
             penumbra.TryRedrawLocalPlayer();
         }
-        BeginHold(trigger, sourcePairingId, holdSeconds, onEnd, Environment.TickCount64);
+        BeginHold(trigger, sourcePairingId, holdSeconds, onEnd, Environment.TickCount64, PlayDelayMs);
     }
 
     private bool Execute(GestureCatalogEntry entry, Guid? sourcePairingId)
@@ -292,37 +293,49 @@ public sealed class GestureCommand
         if (activeTemporary is { } active && (active.Collection != collection.Value || active.ModDirectory != entry.ModDirectory))
             ReleaseTemporary();
 
-        var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
-        if (!temporarySettings.Acquire("gesture", collection.Value, entry.ModDirectory, selections))
-            return new ApplyResult(ApplyStatus.TemporarySettingsFailed, entry.AnimationName);
-        if (!penumbra.TryRedrawLocalPlayer())
+        var signature = SelectionSignature(entry.GroupSelections);
+        // Rewriting the settings and redrawing makes sync plugins re-send the character (a visible flash for
+        // everyone synced) and drop the animation files they only learn about when they play.
+        var alreadyOn = activeTemporary is { } on && on.Collection == collection.Value && on.ModDirectory == entry.ModDirectory && on.Selections == signature;
+        if (!alreadyOn)
         {
-            temporarySettings.Release("gesture", collection.Value, entry.ModDirectory);
-            return new ApplyResult(ApplyStatus.RedrawFailed, entry.AnimationName);
+            var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
+            if (!temporarySettings.Acquire("gesture", collection.Value, entry.ModDirectory, selections))
+                return new ApplyResult(ApplyStatus.TemporarySettingsFailed, entry.AnimationName);
+            if (!penumbra.TryRedrawLocalPlayer())
+            {
+                temporarySettings.Release("gesture", collection.Value, entry.ModDirectory);
+                return new ApplyResult(ApplyStatus.RedrawFailed, entry.AnimationName);
+            }
         }
 
         var now = Environment.TickCount64;
-        activeTemporary = (collection.Value, entry.ModDirectory, now + IdleTimeoutMs);
-        BeginHold(entry.Trigger, sourcePairingId, holdSeconds, onEnd, now);
+        activeTemporary = (collection.Value, entry.ModDirectory, signature, now + IdleTimeoutMs);
+        BeginHold(entry.Trigger, sourcePairingId, holdSeconds, onEnd, now, alreadyOn ? 0 : PlayDelayMs);
         return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
     }
 
+    private static string SelectionSignature(Dictionary<string, List<string>> selections) =>
+        string.Join("|", selections.OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => x.Key + "=" + string.Join(",", x.Value.OrderBy(v => v, StringComparer.Ordinal))));
+
     /// Every caller is an Owner command or the Sub's Perform on an oath they swore, so it holds the Sub like a Forced Pose.
-    private void BeginHold(GestureTrigger trigger, Guid? sourcePairingId, int? holdSeconds, Action<bool>? onEnd, long now)
+    /// `playDelayMs` lets a redraw settle first; with nothing redrawn it plays on the next frame.
+    private void BeginHold(GestureTrigger trigger, Guid? sourcePairingId, int? holdSeconds, Action<bool>? onEnd, long now, long playDelayMs)
     {
         // A hold being replaced didn't run its course.
         var replaced = holdEnded;
         holdEnded = null;
         replaced?.Invoke(false);
 
-        pendingPlay = (trigger, now + PlayDelayMs);
+        pendingPlay = (trigger, now + playDelayMs);
         heldTrigger = trigger;
         heldBySourcePairingId = sourcePairingId;
         // Unknown commands stay held until stopped, like before.
         heldEmote = trigger.Kind == GestureTriggerKind.SlashCommand ? GestureTriggerResolver.LookupEmoteMode(trigger.SlashCommand) : null;
         heldEmoteSeenPlaying = false;
-        heldEmoteDeadlineTicks = now + PlayDelayMs + OneShotCapMs;
-        heldUntilTicks = holdSeconds is { } seconds ? now + PlayDelayMs + Math.Clamp(seconds, MinHoldSeconds, MaxHoldSeconds) * 1000L : null;
+        heldEmoteDeadlineTicks = now + playDelayMs + OneShotCapMs;
+        heldUntilTicks = holdSeconds is { } seconds ? now + playDelayMs + Math.Clamp(seconds, MinHoldSeconds, MaxHoldSeconds) * 1000L : null;
         holdEnded = onEnd;
         Plugin.Log.Debug($"Holding for {trigger.DisplayName}: emote {heldEmote?.EmoteId.ToString() ?? "unknown"}, " +
             (heldUntilTicks is not null ? $"timed {holdSeconds}s" : heldEmote is { Looping: false } ? "one-shot" : "holds until stopped") + ".");

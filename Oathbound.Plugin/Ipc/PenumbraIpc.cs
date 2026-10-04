@@ -23,8 +23,11 @@ public sealed class PenumbraIpc : IDisposable
     /// Includes Penumbra dropping temporary settings after a mod's structure changed, which a lock doesn't prevent.
     public event Action<Guid, string>? SettingChanged;
 
-    public PenumbraIpc()
+    private readonly Config.PluginConfig config;
+
+    public PenumbraIpc(Config.PluginConfig config)
     {
+        this.config = config;
         modSettingChanged = ModSettingChanged.Subscriber(Plugin.PluginInterface, (_, collection, mod, _) => SettingChanged?.Invoke(collection, mod));
     }
 
@@ -141,8 +144,11 @@ public sealed class PenumbraIpc : IDisposable
         }
         catch (Exception ex) { Plugin.Log.Error(ex, "Failed to remove temporary gesture mod settings."); return false; }
     }
+    /// A no-op that reports success unless the Sub turned on "Redraw after a mod change".
     public bool TryRedrawLocalPlayer()
     {
+        if (!config.RedrawAfterModChange)
+            return true;
         try { redrawObject.Invoke(0); return true; }
         catch (Exception ex) { Plugin.Log.Error(ex, "Failed to redraw the local player after a temporary Penumbra activation."); return false; }
     }
