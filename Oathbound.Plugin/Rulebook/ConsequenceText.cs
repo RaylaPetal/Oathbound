@@ -258,7 +258,7 @@ public static class RuleText
             depart.Add($"you /tell {owner} \"{r.DepartTell.Trim()}\"");
         return
         [
-            ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms"),
+            ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms{(r.SkipInDuties ? ", outside duties" : "")}"),
             ("Arrives", Cap(arrive.Count == 0 ? "nothing" : string.Join("; ", arrive))),
             ("Leaves", Cap(depart.Count == 0 ? "nothing" : string.Join("; ", depart))),
             ("Cooldown", $"{r.CooldownSeconds}s"),

@@ -8,8 +8,6 @@ namespace Oathbound.Plugin.Rulebook;
 /// and panic's flush can't be skipped. In memory only: anything still held when the plugin unloads is dropped.
 public sealed class ConsequenceQueue
 {
-    public const int CapCount = 6;
-    public static readonly TimeSpan CapWindow = TimeSpan.FromMinutes(10);
 
     /// A consequence that fired for one pairing; Label is what the activity log calls it.
     public sealed record Item(Guid PairingId, string RuleId, string Label, IReadOnlyList<string> Commands);
@@ -19,7 +17,6 @@ public sealed class ConsequenceQueue
         Ran,
         Held,
         CoolingDown,
-        Capped,
     }
 
     /// Runs one command for a pairing and reports (success, message). Wired to ChatCommandListener.RunRulebookCommand.
@@ -28,7 +25,6 @@ public sealed class ConsequenceQueue
     private readonly Func<bool> shouldHold;
 
     private readonly List<Item> held = new();
-    private readonly Dictionary<Guid, List<DateTime>> accepted = new();
     private readonly Dictionary<(Guid, string), DateTime> lastFired = new();
 
     public ConsequenceQueue(Func<Guid, string, (bool, string)> run, Action<Guid, Item, string, bool, string> onCommandResult, Func<bool> shouldHold)
@@ -48,12 +44,6 @@ public sealed class ConsequenceQueue
                 return Outcome.CoolingDown;
         }
 
-        // Counted when accepted, not when run, so a backlog held through a fight can't exceed the cap either.
-        var times = accepted.TryGetValue(item.PairingId, out var list) ? list : accepted[item.PairingId] = new();
-        times.RemoveAll(t => now - t >= CapWindow);
-        if (times.Count >= CapCount)
-            return Outcome.Capped;
-        times.Add(now);
         if (cooldownKey is not null)
             lastFired[(item.PairingId, cooldownKey)] = now;
 

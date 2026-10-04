@@ -184,6 +184,8 @@ public sealed class PresenceRule
     /// Sent as a /tell to the Owner, never anywhere else.
     public string ArriveTell { get; set; } = "";
     public string DepartTell { get; set; } = "";
+    /// Does nothing inside duties and other instanced content.
+    public bool SkipInDuties { get; set; }
 
     public bool DoesAnything => Arrive.Count + Depart.Count > 0 || LeashOnArrive || UnleashOnDepart ||
         !string.IsNullOrWhiteSpace(ArriveTell) || !string.IsNullOrWhiteSpace(DepartTell);

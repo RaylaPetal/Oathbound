@@ -219,8 +219,8 @@ further, and you should decide for yourself before turning them on:
   tell so the leash follows them across areas), take it off when they leave, and **send your Owner a /tell**
   they wrote, by itself, when they arrive or leave. Leashing needs your Follow permission and the message needs
   Custom chat messages; with either off, that part is skipped.
-  Anything other than toys and moodles waits until you're out of combat and cutscenes, each rule has a
-  cooldown of at least a minute, and no more than 6 consequences run in any 10 minutes.
+  Anything other than toys and moodles waits until you're out of combat and cutscenes, and each rule has a
+  cooldown of at least a minute.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
   reaction with a chat message **replies automatically**, in whatever channel you wrote it for, at most
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only

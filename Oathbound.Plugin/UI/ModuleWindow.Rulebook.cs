@@ -57,9 +57,18 @@ public sealed partial class ModuleWindow
     private static readonly string[] ThresholdDirectionNames = ["At or above", "At or below"];
     private static readonly string[] CardPileNames = ["Punishment", "Reward"];
 
-    private enum AddKind { Saved, Ledger, RestraintTimer, UnlockRestraints, RevertAll, Toy, Typed }
-    private static readonly string[] AddKindNames =
-        ["One of my saved commands", "Change the ledger", "Change the restraint timer", "Unlock restraints", "Revert everything", "Toy pattern", "Type a command"];
+    private enum ConsequenceKind { Title, Outfit, Animation, Moodle, Restraint, CustomTrigger, Toy, Ledger, DeckDraw, RestraintTimer, UnlockRestraints, RevertAll, Typed }
+
+    private static readonly (ConsequenceKind Kind, string Label)[] ConsequenceKinds =
+    [
+        (ConsequenceKind.Title, "Title"), (ConsequenceKind.Outfit, "Outfit"), (ConsequenceKind.Animation, "Animation"),
+        (ConsequenceKind.Moodle, "Moodle"), (ConsequenceKind.Restraint, "Restraint"), (ConsequenceKind.CustomTrigger, "Custom Trigger"),
+        (ConsequenceKind.Toy, "Toy pattern"), (ConsequenceKind.Ledger, "Ledger"), (ConsequenceKind.DeckDraw, "Draw a card"),
+        (ConsequenceKind.RestraintTimer, "Restraint timer"), (ConsequenceKind.UnlockRestraints, "Unlock restraints"),
+        (ConsequenceKind.RevertAll, "Revert everything"), (ConsequenceKind.Typed, "Typed command"),
+    ];
+
+    private static readonly string[] DeckPileNames = ["Punishment", "Reward"];
 
     private string? rbEditingId;
     private string? rbRequestedTab;
@@ -72,7 +81,10 @@ public sealed partial class ModuleWindow
     private readonly Dictionary<string, string> rbPlaceSearch = new();
 
     // The "+ Add" popup; only one is open at a time, so one set of fields serves every list.
-    private AddKind rbAddKind;
+    private ConsequenceKind rbPickKind;
+    /// The row being changed; null adds a new one.
+    private int? rbPickIndex;
+    private int rbAddDeckPile;
     private string rbAddSearch = "";
     private QuickCommand? rbAddPick;
     private int? rbAddLock;
@@ -790,6 +802,9 @@ public sealed partial class ModuleWindow
         ItemWidth(160);
         if (ImGui.SliderFloat("Range (yalms)", ref range, RulebookLimits.MinRangeYalms, RulebookLimits.MaxRangeYalms, "%.0f")) { rule.RangeYalms = range; changed = true; }
         IconGlyph.HelpMarker("How close you have to be. You count as arrived half a second after coming within range, and gone a second after moving a little past it (a quarter of the range more, at least 1 yalm). Each of arrive and leave can only fire once per cooldown.");
+        var skipDuties = rule.SkipInDuties;
+        if (ImGui.Checkbox("Not in duties", ref skipDuties)) { rule.SkipInDuties = skipDuties; changed = true; }
+        IconGlyph.HelpMarker("Does nothing inside dungeons, trials, raids and other instanced content. Being near each other once the duty ends counts as arriving.");
         Section.SubHeading("When you arrive");
         changed |= DrawConsequenceEditor("arrive", rule.Arrive);
         var leash = rule.LeashOnArrive;
@@ -954,23 +969,79 @@ public sealed partial class ModuleWindow
     // ---- Consequences ----
 
     /// A list of what happens, plus one "+ Add" popup. Only categories a rulebook may use are offered.
+    private static ConsequenceKind KindOf(string command)
+    {
+        var t = command.Trim();
+        static bool Starts(string text, string word) => text.StartsWith(word + " ", StringComparison.OrdinalIgnoreCase) || text.Equals(word, StringComparison.OrdinalIgnoreCase);
+        if (Starts(t, "title")) return ConsequenceKind.Title;
+        if (Starts(t, "outfit")) return ConsequenceKind.Outfit;
+        if (Starts(t, "gesture")) return ConsequenceKind.Animation;
+        if (Starts(t, "moodle")) return ConsequenceKind.Moodle;
+        if (Starts(t, "restraint timer")) return ConsequenceKind.RestraintTimer;
+        if (Starts(t, "restraint unlock")) return ConsequenceKind.UnlockRestraints;
+        if (Starts(t, "restraint")) return ConsequenceKind.Restraint;
+        if (Starts(t, "customtrigger")) return ConsequenceKind.CustomTrigger;
+        if (Starts(t, "toy")) return ConsequenceKind.Toy;
+        if (Starts(t, ConsequenceValidator.LedgerWord)) return ConsequenceKind.Ledger;
+        if (Starts(t, ConsequenceValidator.DeckWord)) return ConsequenceKind.DeckDraw;
+        if (Starts(t, "revert")) return ConsequenceKind.RevertAll;
+        return ConsequenceKind.Typed;
+    }
+
+    /// Kinds with nothing to choose are added straight from their checkbox.
+    private static string? FixedCommand(ConsequenceKind kind) => kind switch
+    {
+        ConsequenceKind.UnlockRestraints => "restraint unlock",
+        ConsequenceKind.RevertAll => "revert all",
+        _ => null,
+    };
+
+    /// One checkbox per kind of consequence; ticking one opens a picker for just that kind, unticking removes it.
     private bool DrawConsequenceEditor(string id, List<string> commands)
     {
         var changed = false;
         ImGui.PushID("cons" + id);
-        if (commands.Count == 0)
-            ImGui.TextDisabled("Nothing yet.");
+        var style = ImGui.GetStyle();
+        var first = true;
+        foreach (var (kind, label) in ConsequenceKinds)
+        {
+            var width = ImGui.GetFrameHeight() + style.ItemInnerSpacing.X + ImGui.CalcTextSize(label).X;
+            if (!first)
+                ContinueRowOrWrap(width);
+            first = false;
+            var on = commands.Any(c => KindOf(c) == kind);
+            if (!ImGui.Checkbox($"{label}##kind{kind}", ref on))
+                continue;
+            if (!on)
+            {
+                commands.RemoveAll(c => KindOf(c) == kind);
+                changed = true;
+            }
+            else if (FixedCommand(kind) is { } fixedCommand)
+            {
+                commands.Add(fixedCommand);
+                changed = true;
+            }
+            else
+                OpenConsequencePicker(kind, null);
+        }
+
         for (var i = 0; i < commands.Count; i++)
         {
             ImGui.PushID(i);
-            ImGui.Bullet();
-            ImGui.SameLine();
-            ImGui.PushTextWrapPos(ImGui.GetContentRegionMax().X - ButtonWidth("x") - ImGui.GetStyle().ItemSpacing.X);
-            ImGui.TextUnformatted(ConsequenceText.Describe(commands[i]));
-            ImGui.PopTextWrapPos();
+            var kind = KindOf(commands[i]);
+            var label = ConsequenceKinds.First(k => k.Kind == kind).Label;
+            var canChange = FixedCommand(kind) is null;
+            var actions = (canChange ? ButtonWidth("Change") + style.ItemSpacing.X : 0) + ButtonWidth("x");
+            TextWithActions($"{label}: {RuleText.Cap(ConsequenceText.Describe(commands[i]))}", actions, t => ImGui.TextColored(Theme.TextMuted, t));
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(commands[i]);
-            ImGui.SameLine();
+            if (canChange)
+            {
+                if (ImGui.SmallButton("Change"))
+                    OpenConsequencePicker(kind, i);
+                ImGui.SameLine();
+            }
             if (ImGui.SmallButton("x"))
             {
                 commands.RemoveAt(i);
@@ -981,22 +1052,16 @@ public sealed partial class ModuleWindow
             ImGui.PopID();
         }
 
-        if (ImGui.SmallButton("+ Add"))
-        {
-            rbAddKind = AddKind.Saved;
-            rbAddSearch = "";
-            rbAddPick = null;
-            rbAddLock = null;
-            rbAddTyped = "";
-            ImGui.OpenPopup("add");
-        }
         // Popups auto-size to their widest item; a long saved label would otherwise stretch it across the screen.
         ImGui.SetNextWindowSizeConstraints(new Vector2(Scaled(440), 0), new Vector2(Scaled(440), float.MaxValue));
-        if (ImGui.BeginPopup("add"))
+        if (ImGui.BeginPopup("pick"))
         {
-            if (DrawAddPopup() is { } command)
+            if (DrawConsequencePicker() is { } command)
             {
-                commands.Add(command);
+                if (rbPickIndex is { } index && index < commands.Count)
+                    commands[index] = command;
+                else
+                    commands.Add(command);
                 changed = true;
                 ImGui.CloseCurrentPopup();
             }
@@ -1006,52 +1071,73 @@ public sealed partial class ModuleWindow
         return changed;
     }
 
-    /// Returns the command to add once the Owner clicks Add.
-    private string? DrawAddPopup()
+    private void OpenConsequencePicker(ConsequenceKind kind, int? index)
     {
-        var kind = (int)rbAddKind;
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.Combo("##kind", ref kind, AddKindNames, AddKindNames.Length))
-            rbAddKind = (AddKind)kind;
-        ImGui.Spacing();
+        rbPickKind = kind;
+        rbPickIndex = index;
+        rbAddSearch = "";
+        rbAddPick = null;
+        rbAddLock = null;
+        rbAddTyped = "";
+        ImGui.OpenPopup("pick");
+    }
+
+    /// Returns the command once the Owner clicks Use.
+    private string? DrawConsequencePicker()
+    {
+        var kindLabel = ConsequenceKinds.First(k => k.Kind == rbPickKind).Label;
+        ImGui.TextColored(Theme.AccentHover, kindLabel);
+        ImGui.Separator();
 
         string? command = null;
         string? error = null;
-        switch (rbAddKind)
+        switch (rbPickKind)
         {
-            case AddKind.Saved:
-                command = DrawSavedPicker(out error);
+            case ConsequenceKind.Title:
+                command = DrawSavedPicker("Titles", "No saved titles yet. Save some in the Title module.");
                 break;
-            case AddKind.Ledger:
+            case ConsequenceKind.Outfit:
+                command = DrawSavedPicker("Outfits", "No saved outfits yet. Save some in the Outfit module.");
+                break;
+            case ConsequenceKind.Animation:
+                command = DrawSavedPicker("Animations", "No saved animations yet. Save some in the Animation module.");
+                break;
+            case ConsequenceKind.Moodle:
+                command = DrawSavedPicker("Moodles", "No saved moodles yet. Save some in the Moodles module.");
+                break;
+            case ConsequenceKind.Restraint:
+                command = DrawSavedPicker("Restraints", "No saved restraints yet. Save some in the Restraints module.");
+                break;
+            case ConsequenceKind.CustomTrigger:
+                command = DrawSavedPicker("Custom Triggers", "No saved Custom Triggers yet. Save some in the Custom Triggers module.");
+                break;
+            case ConsequenceKind.Ledger:
                 ItemWidth(120);
                 ImGui.InputInt("points", ref rbAddLedger, 1, 5);
                 rbAddLedger = Math.Clamp(rbAddLedger, -RulebookLimits.MaxLedgerChange, RulebookLimits.MaxLedgerChange);
                 ImGui.TextDisabled("Positive adds merits, negative adds demerits.");
                 command = rbAddLedger == 0 ? null : LedgerCommandText(rbAddLedger, "");
                 break;
-            case AddKind.RestraintTimer:
+            case ConsequenceKind.DeckDraw:
+                ItemWidth(160);
+                ImGui.Combo("pile", ref rbAddDeckPile, DeckPileNames, DeckPileNames.Length);
+                command = $"{ConsequenceValidator.DeckWord} draw {(rbAddDeckPile == 1 ? "reward" : "punishment")}";
+                break;
+            case ConsequenceKind.RestraintTimer:
                 ItemWidth(120);
                 ImGui.InputInt("minutes", ref rbAddTimerMinutes, 5, 30);
                 rbAddTimerMinutes = Math.Clamp(rbAddTimerMinutes, -RestraintCommand.MaxTimerAdjustSeconds / 60, RestraintCommand.MaxTimerAdjustSeconds / 60);
                 ImGui.TextDisabled("Negative takes time off. Only changes restraints that are on a timer.");
                 command = rbAddTimerMinutes == 0 ? null : $"restraint timer {(rbAddTimerMinutes > 0 ? "+" : "-")}{Math.Abs(rbAddTimerMinutes) * 60}";
                 break;
-            case AddKind.UnlockRestraints:
-                ImGui.TextDisabled("Takes off every restraint and its lock.");
-                command = "restraint unlock";
-                break;
-            case AddKind.RevertAll:
-                ImGui.TextDisabled("Takes off everything you can command, except the collar.");
-                command = "revert all";
-                break;
-            case AddKind.Toy:
+            case ConsequenceKind.Toy:
                 var patterns = ToyControlCommand.BuiltInPatternNames.ToArray();
                 rbAddToy = Math.Clamp(rbAddToy, 0, patterns.Length - 1);
                 ItemWidth(200);
                 ImGui.Combo("pattern", ref rbAddToy, patterns, patterns.Length);
                 command = ToyControlCommand.BuildPatternCommand(patterns[rbAddToy]);
                 break;
-            case AddKind.Typed:
+            case ConsequenceKind.Typed:
                 ImGui.SetNextItemWidth(-1);
                 ImGui.InputTextWithHint("##typed", "e.g. moodle apply \"Blushing\"", ref rbAddTyped, CommandSelector.MaxCommandLength);
                 if (rbAddTyped.Trim().Length > 0)
@@ -1064,14 +1150,14 @@ public sealed partial class ModuleWindow
 
         if (error is not null)
             IconGlyph.WrappedColored(Theme.Warning, error);
-        if (command is not null && rbAddKind != AddKind.Typed)
+        if (command is not null && rbPickKind != ConsequenceKind.Typed)
             ImGui.TextDisabled($"Will: {ConsequenceText.Describe(command)}");
 
         ImGui.Spacing();
         string? result = null;
         using (ImRaii.Disabled(command is null))
         {
-            if (ImGui.Button("Add"))
+            if (ImGui.Button("Use"))
                 result = command;
         }
         ImGui.SameLine();
@@ -1080,14 +1166,13 @@ public sealed partial class ModuleWindow
         return result;
     }
 
-    private string? DrawSavedPicker(out string? error)
+    private string? DrawSavedPicker(string kind, string emptyText)
     {
-        error = null;
         var config = plugin.Configuration;
-        var choices = SavedConsequenceChoices();
+        var choices = SavedConsequenceChoices().Where(c => c.Kind == kind).ToList();
         if (choices.Count == 0)
         {
-            IconGlyph.WrappedDisabled("Nothing saved yet. Commands you save in the Title, Outfit, Animation, Moodles, Restraints and Custom Triggers modules show up here.");
+            IconGlyph.WrappedDisabled(emptyText);
             return null;
         }
 
@@ -1096,26 +1181,18 @@ public sealed partial class ModuleWindow
         var filter = rbAddSearch.Trim();
         using (Section.List("savedChoices", Scaled(220)))
         {
-            var any = false;
-            foreach (var group in choices.GroupBy(c => c.Kind))
+            var rows = choices.Where(c => filter.Length == 0 || c.Display.Contains(filter, StringComparison.OrdinalIgnoreCase) || c.Cmd.Label.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (var (_, display, cmd) in rows)
             {
-                var rows = group.Where(c => filter.Length == 0 || c.Display.Contains(filter, StringComparison.OrdinalIgnoreCase) || c.Cmd.Label.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (rows.Count == 0)
-                    continue;
-                any = true;
-                ImGui.TextColored(Theme.AccentHover, group.Key);
-                foreach (var (_, display, cmd) in rows)
+                if (ImGui.Selectable($"{display}##{cmd.Command}", ReferenceEquals(rbAddPick, cmd)))
                 {
-                    if (ImGui.Selectable($"{display}##{group.Key}{cmd.Command}", ReferenceEquals(rbAddPick, cmd)))
-                    {
-                        rbAddPick = cmd;
-                        rbAddLock = cmd.LockSeconds;
-                    }
-                    if (ImGui.IsItemHovered() && display != cmd.Label)
-                        ImGui.SetTooltip(cmd.Label);
+                    rbAddPick = cmd;
+                    rbAddLock = cmd.LockSeconds;
                 }
+                if (ImGui.IsItemHovered() && display != cmd.Label)
+                    ImGui.SetTooltip(cmd.Label);
             }
-            if (!any)
+            if (rows.Count == 0)
                 ImGui.TextDisabled("Nothing matches.");
         }
 
@@ -1126,7 +1203,6 @@ public sealed partial class ModuleWindow
         return OwnerLockOption.Apply(OwnerMoodleOverride.ForSend(config, pick), rbAddLock);
     }
 
-    /// Animation labels repeat the mod name; it's already the group a Sub would recognize, so it's trimmed here.
     private List<(string Kind, string Display, QuickCommand Cmd)> SavedConsequenceChoices()
     {
         var q = plugin.Configuration.QuickCommands;

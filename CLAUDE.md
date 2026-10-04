@@ -202,7 +202,7 @@ accepted presence rule (`RulebookService.PresenceExtras`), a user-configured Rea
 to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
 rulebooks (`Rulebook/`) run consequences on their own, but only through `ChatCommandListener.RunRulebookCommand`
 and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never chat, teleport, leash or collar) - except a presence rule's
-leash/unleash and /tell to the Owner, which run outside the queue's commands but behind its cooldown/cap and the
+leash/unleash and /tell to the Owner, which run outside the queue's commands but behind its cooldown and the
 Sub's Follow / Custom chat permissions. Only `ChatSender` transmits chat. Peer-notice
 tells are trigger-less keywords (`collarinvite`, `collarpairack`, `collarunpair`, `collarcatalogreq`,
 `collarcatalogdenied`, `collarleash`, `collarrulebook`) composed in `ChatComposer` and matched in `ChatCommandListener`, always

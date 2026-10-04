@@ -248,7 +248,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     }
 
     /// `cooldownKey` null for a drawn card, which its draw already paid for.
-    /// `extra` runs alongside the commands when they're accepted (not cooling down or capped): a presence rule's leash
+    /// `extra` runs alongside the commands when they're accepted (not cooling down): a presence rule's leash
     /// and message, which aren't commands any other rule may run.
     private void Fire(PairingState pairing, string ruleId, string label, IReadOnlyList<string> commands, string? cooldownKey, int cooldownSeconds, Action? extra = null)
     {
@@ -257,9 +257,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         var outcome = Queue.Enqueue(new ConsequenceQueue.Item(pairing.Id, ruleId, label, commands.ToList()), cooldownKey, cooldownSeconds);
         if (outcome is ConsequenceQueue.Outcome.Ran or ConsequenceQueue.Outcome.Held)
             extra?.Invoke();
-        if (outcome == ConsequenceQueue.Outcome.Capped)
-            Log(pairing, RulebookEventKind.ConsequenceDropped, ruleId, $"{label}: dropped - more than {ConsequenceQueue.CapCount} consequences in 10 minutes.");
-        else if (outcome == ConsequenceQueue.Outcome.CoolingDown)
+        if (outcome == ConsequenceQueue.Outcome.CoolingDown)
             Log(pairing, RulebookEventKind.ConsequenceSkipped, ruleId, $"{label}: skipped - its cooldown ({Math.Max(cooldownSeconds, RulebookLimits.MinCooldownSeconds)}s) hasn't passed yet.");
     }
 
@@ -874,11 +872,18 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         if (rules.Count == 0)
             return;
         var distance = OwnerDistance(pairing);
+        var inDuty = RulebookPlaces.IsDuty(Plugin.ClientState.TerritoryType);
         foreach (var rule in rules)
         {
             var key = (pairing.Id, rule.Id);
             if (!presence.TryGetValue(key, out var p))
                 presence[key] = p = new PresenceState();
+            if (rule.SkipInDuties && inDuty)
+            {
+                // Forgotten rather than paused, so being together once the duty ends counts as a fresh arrival.
+                presence[key] = new PresenceState();
+                continue;
+            }
             var inRange = distance is { } d && d <= rule.RangeYalms;
             var margin = Math.Max(MinDepartMarginYalms, rule.RangeYalms * DepartMarginFraction);
             var gone = distance is not { } far || far > rule.RangeYalms + margin;

@@ -127,6 +127,8 @@ public static class RulebookPlaces
         };
     }
 
+    public static bool IsDuty(uint territory) => Matches(new PlaceRef { Kind = PlaceKind.Duty }, territory);
+
     public static bool MatchesAny(System.Collections.Generic.IEnumerable<PlaceRef> places, uint territory)
     {
         foreach (var p in places)
