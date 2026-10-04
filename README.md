@@ -45,6 +45,7 @@ everything instantly with their safeword.
 | 🔒 | **Collar** | A collar piece, a left-hand ring, or both, that go on and lock together when you pair, as a visible sign of your bond. It can carry a Moodle too. If it ever comes off without you unlocking it, you see a red warning in your header - even if it happened while you were offline. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
+| 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. The Sub accepts every version and every oath before anything runs, can switch any rule off, and the Owner sees what happened. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header puts everything back to nothing. The collar and your pairing stay. |
@@ -106,6 +107,12 @@ Sync tab shows whether it's up to date.
   it's really on, and the Owner is warned if it comes off. For everything else the estimate can't see a panic or the Sub's own
   releases (Sub Control has a **Clear estimate** button for that). The leash line's look (or hiding it) is set in
   the Follow / Leash module.
+- **Rulebooks run only after you say yes.** A rulebook your Owner writes reaches you encrypted, and nothing in
+  it runs until you accept that version; each oath needs its own yes too. You can switch any single rule
+  off at any time, and your Owner sees which ones are off. It needs its own permission and acknowledgement,
+  every consequence still needs the permission for its category, and a rulebook can never send chat, move
+  you, teleport you or touch your collar. Your safeword pauses all rulebooks and voids open oaths until you
+  resume.
 - **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
   on themselves without sending anything.
 
@@ -198,6 +205,12 @@ further, and you should decide for yourself before turning them on:
   in the header (or use your safeword). It doesn't work from inside a house or apartment.
 - **Gagged** changes chat messages you type into muffled text before they're sent.
 - **Custom chat messages** in a Custom Trigger send text you wrote yourself, on the channel you chose.
+- **Rulebook** consequences happen on their own when something in your game matches a rule you accepted:
+  breaking or keeping an oath, a wipe, dying, entering or leaving a place, your Owner coming near, a card
+  being drawn or the ledger crossing a threshold. Each one runs the same commands your Owner could send you
+  (title, outfit, animation, moodle, restraint, toy, revert all), never chat, teleport, leash or the collar.
+  Anything other than toys and moodles waits until you're out of combat and cutscenes, each rule has a
+  cooldown of at least a minute, and no more than 6 consequences run in any 10 minutes.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
   reaction with a chat message **replies automatically**, in whatever channel you wrote it for, at most
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
@@ -210,13 +223,17 @@ side (their safeword, or a leash their plugin couldn't put on), it sends the Own
 leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
 from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
 other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing
-you accepted.
+you accepted, or the optional "collarrulebook" tell when an Owner publishes a rulebook with **Tell them now**
+ticked, which only asks the Sub's plugin to pick it up right away.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.
 
-Pairing, catalog sync and the collar warning go through a small Oathbound relay service. Your catalog is
-end-to-end encrypted, and the relay never sees your catalog contents or your character's name. It does keep,
+Pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay service. Your
+catalog, the Owner's rulebook and the Sub's rulebook activity report are end-to-end encrypted, and the relay
+never sees their contents or your character's name. While a Sub has a rulebook, their plugin uploads that
+encrypted activity report by itself, at most every 10 minutes and only when something changed. The relay also counts how many installs
+checked in during the last half hour, as one anonymous number shown in the main window's header. It does keep,
 under an anonymous id per pairing, whether that pairing has ended and whether a locked collar is still on.
 
 **Using third-party plugins is against FINAL FANTASY XIV's Terms of Service. Use Oathbound at your own

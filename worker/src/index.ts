@@ -7,6 +7,7 @@ import { fetchPair, putCollarStatus } from "./routes/pairs";
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
 import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxKey, uploadMailboxSnapshot } from "./routes/mailbox";
+import { consumeRulebookItem, fetchRulebookKey, publishRulebookKey, uploadRulebookItem } from "./routes/rulebook";
 import { health } from "./routes/health";
 import { runScheduledCleanup } from "./scheduled";
 import { enforceQuota } from "./lib/quotas";
@@ -73,6 +74,14 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (action === "upload") return uploadMailboxSnapshot(request, env);
     if (action === "status") return mailboxStatus(request, env);
     if (action === "consume") return consumeMailboxSnapshot(request, env);
+  }
+
+  if (segments[1] === "rulebook" && method === "POST") {
+    const action = segments.slice(2).join("/");
+    if (action === "key") return publishRulebookKey(request, env);
+    if (action === "key/fetch") return fetchRulebookKey(request, env);
+    if (action === "upload") return uploadRulebookItem(request, env);
+    if (action === "consume") return consumeRulebookItem(request, env);
   }
 
   return new RelayError("not_found").toResponse();

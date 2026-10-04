@@ -158,6 +158,8 @@ public class SettingsWindow : Window, IDisposable
                 DrawToyControlCard(config);
             using (Section.Begin("toyTriggersCard"))
                 DrawToyTriggersCard(config);
+            using (Section.Begin("rulebookCard"))
+                DrawRulebookCard(config);
             ImGui.EndTabItem();
         }
 
@@ -674,6 +676,23 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("Needed before any trigger rule in Toy Control can be turned on.");
+    }
+
+    /// Its own card: rulebook consequences fire with no click from either person.
+    private void DrawRulebookCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Book, "Rulebook");
+        ImGui.Separator();
+        IconGlyph.WrappedDisabled("A rulebook you accept runs by itself: when you break an oath, enter a place, or your Owner comes near, its consequences happen without anyone clicking anything. Only categories that don't send chat or move you are allowed, and your safeword pauses it.");
+
+        if (ImGuiCheckbox("I understand a rulebook acts on its own", config.RulebookAcknowledged, out var newAck))
+        {
+            config.RulebookAcknowledged = newAck;
+            if (!newAck)
+                config.Permissions.Rulebook = false;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Needed before the Rulebook permission can be turned on.");
     }
 
     /// ImGui.Checkbox never wraps its label, so the label is drawn separately, wrapped.

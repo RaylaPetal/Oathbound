@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { NONCE_REPLAY_WINDOW_SECONDS, nowSeconds } from "./lib/constants";
+import { ACTIVE_DEVICE_WINDOW_SECONDS, NONCE_RETENTION_SECONDS, nowSeconds } from "./lib/constants";
 import { deleteCiphertext } from "./lib/r2";
 import { logEvent } from "./lib/log";
 import { QUOTA_LIMITS } from "./lib/quotas";
@@ -86,10 +86,48 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
       .run();
   }
 
+  // Rulebook mailboxes: same treatment per channel - an expired item goes, the key stays; a revoked pair's rows go.
+  const expiredRulebookItems = await env.RELAY_DB.prepare(
+    `SELECT pair_id_hash, pair_epoch, channel, item_r2_key FROM rulebook_mailboxes WHERE item_expires_at <= ?1`,
+  )
+    .bind(now)
+    .all<{ pair_id_hash: string; pair_epoch: number; channel: string; item_r2_key: string | null }>();
+  for (const row of expiredRulebookItems.results) {
+    if (row.item_r2_key) await deleteCiphertext(env, row.item_r2_key);
+    await env.RELAY_DB.prepare(
+      `UPDATE rulebook_mailboxes SET item_sequence = NULL, item_r2_key = NULL, item_envelope = NULL,
+         item_created_at = NULL, item_expires_at = NULL
+       WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND channel = ?3 AND item_r2_key IS ?4`,
+    )
+      .bind(row.pair_id_hash, row.pair_epoch, row.channel, row.item_r2_key)
+      .run();
+  }
+  const revokedRulebookMailboxes = await env.RELAY_DB.prepare(
+    `SELECT m.pair_id_hash, m.pair_epoch, m.channel, m.item_r2_key FROM rulebook_mailboxes m
+     JOIN pairs p ON p.pair_id_hash = m.pair_id_hash AND p.pair_epoch = m.pair_epoch
+     WHERE p.revoked_at IS NOT NULL`,
+  ).all<{ pair_id_hash: string; pair_epoch: number; channel: string; item_r2_key: string | null }>();
+  for (const row of revokedRulebookMailboxes.results) {
+    if (row.item_r2_key) await deleteCiphertext(env, row.item_r2_key);
+    await env.RELAY_DB.prepare(`DELETE FROM rulebook_mailboxes WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND channel = ?3`)
+      .bind(row.pair_id_hash, row.pair_epoch, row.channel)
+      .run();
+  }
+
   const removedNonces = await env.RELAY_DB.prepare(
     `DELETE FROM nonces WHERE seen_at <= ?1`,
   )
-    .bind(now - NONCE_REPLAY_WINDOW_SECONDS)
+    .bind(now - NONCE_RETENTION_SECONDS)
+    .run();
+
+  const active = await env.RELAY_DB.prepare(`SELECT COUNT(DISTINCT device_key_id) AS n FROM nonces WHERE seen_at > ?1`)
+    .bind(now - ACTIVE_DEVICE_WINDOW_SECONDS)
+    .first<{ n: number }>();
+  await env.RELAY_DB.prepare(
+    `INSERT INTO relay_stats (id, active_devices, computed_at) VALUES (1, ?1, ?2)
+     ON CONFLICT (id) DO UPDATE SET active_devices = excluded.active_devices, computed_at = excluded.computed_at`,
+  )
+    .bind(active?.n ?? 0, now)
     .run();
 
   const maxWindowSeconds = Math.max(...Object.values(QUOTA_LIMITS).map((limit) => limit.windowSeconds));
@@ -101,6 +139,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
 
   await sweepOrphanCatalogObjects(env);
   await sweepOrphanMailboxObjects(env);
+  await sweepOrphanRulebookObjects(env);
 
   logEvent("scheduled_cleanup_complete", {
     expiredInvitations: expiredInvitations.meta.changes ?? 0,
@@ -109,7 +148,10 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
     expiredObjects: expiredObjects.results.length,
     expiredMailboxSnapshots: expiredMailboxSnapshots.results.length,
     removedRevokedMailboxes: revokedMailboxes.results.length,
+    expiredRulebookItems: expiredRulebookItems.results.length,
+    removedRevokedRulebookMailboxes: revokedRulebookMailboxes.results.length,
     removedNonces: removedNonces.meta.changes ?? 0,
+    activeDevices: active?.n ?? 0,
     removedQuotaCounters: removedQuotaCounters.meta.changes ?? 0,
   });
 
@@ -144,6 +186,18 @@ async function sweepOrphanMailboxObjects(env: Env): Promise<void> {
   const listed = await env.RELAY_CATALOG_BUCKET.list({ prefix: "mailbox/", limit: 200 });
   for (const object of listed.objects) {
     const row = await env.RELAY_DB.prepare(`SELECT 1 FROM catalog_mailboxes WHERE snapshot_r2_key = ?1`)
+      .bind(object.key)
+      .first();
+    if (!row) {
+      await deleteCiphertext(env, object.key);
+    }
+  }
+}
+
+async function sweepOrphanRulebookObjects(env: Env): Promise<void> {
+  const listed = await env.RELAY_CATALOG_BUCKET.list({ prefix: "rulebook/", limit: 200 });
+  for (const object of listed.objects) {
+    const row = await env.RELAY_DB.prepare(`SELECT 1 FROM rulebook_mailboxes WHERE item_r2_key = ?1`)
       .bind(object.key)
       .first();
     if (!row) {

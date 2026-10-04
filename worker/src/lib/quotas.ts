@@ -23,6 +23,8 @@ export const QUOTA_LIMITS = {
   // Catalog mailbox key publish/fetch, status and consume (not upload, which catalogUploadBytes bounds).
   // Hourly Owner checks and debounced Sub publishes need a handful per hour; this only stops runaway loops.
   deviceMailboxOps: { windowSeconds: 3600, maxCount: 120 },
+  // collar/rulebook key publish/fetch and consume, both channels (uploads are bounded by rulebookUploadBytes).
+  deviceRulebookOps: { windowSeconds: 3600, maxCount: 120 },
   // collar/pairing + collar/pairing-recovery: unauthenticated capability reads that a guesser would hammer.
   // Codes are 80/128 random bits, so these are defense in depth, generous for honest polling.
   originInvitationLookup: { windowSeconds: 3600, maxCount: 120 },
@@ -32,6 +34,8 @@ export const QUOTA_LIMITS = {
   deviceCollarStatus: { windowSeconds: 3600, maxCount: 30 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
+  // The per-channel upload interval already allows at most 60 rulebooks or 6 reports per hour per pair.
+  rulebookUploadBytes: { windowSeconds: 3600, maxCount: 60, maxBytes: 2 * 1024 * 1024 },
   // Together these cap application traffic at 35k/day, under Workers Free's 100k/day request ceiling.
   // D1 Free's 100k/day row-write ceiling is the tighter one: on top of its own writes, a request updates
   // this counter, and a signed one also inserts (and the cron later deletes) a nonce and touches its

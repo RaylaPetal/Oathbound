@@ -48,9 +48,14 @@ public sealed class PanicHandler
     /// Extra resets that must run with every local revert.
     public Action? AfterLocalRevert { get; set; }
 
+    /// Panic only, not unpair: suspends rulebooks on every pairing.
+    public Action? OnPanic { get; set; }
+
     public void Panic()
     {
         RevertLocalState(LeashEnd.Panic);
+        if (OnPanic is { } onPanic)
+            RunStep("suspend rulebooks", onPanic);
         Plugin.Log.Information("Panic triggered: outfit reverted, title cleared, leash and movement lock released, all slot locks except the collar's and all restriction rules released. Every pairing and the collar remain.");
     }
 

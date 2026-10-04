@@ -215,6 +215,10 @@ public static class RelayCrypto
     public static byte[] BuildCatalogPushHkdfInfo(string pairIdHash, string receiveKeyId) =>
         Encoding.UTF8.GetBytes("oathbound-relay-catalog-push-v1" + pairIdHash + receiveKeyId);
 
+    /// Per-channel labels so a rulebook ciphertext can't be moved to the report channel or the catalog mailbox.
+    public static byte[] BuildRulebookHkdfInfo(string channel, string pairIdHash, string receiveKeyId) =>
+        Encoding.UTF8.GetBytes((channel == RulebookChannels.Rulebook ? "oathbound-relay-rulebook-push-v1" : "oathbound-relay-rulebook-report-v1") + pairIdHash + receiveKeyId);
+
     /// 128-bit mailbox receive key id.
     public static string RandomReceiveKeyId() => Base64UrlEncode(RandomBytes(16));
 

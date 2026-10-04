@@ -41,6 +41,7 @@ public class CollarWindow : Window, IDisposable
         ("collar", FontAwesomeIcon.Lock, "Collar"),
         ("follow", FontAwesomeIcon.Link, "Follow / Leash"),
         ("reactions", FontAwesomeIcon.Magic, "Reactions"),
+        ("rulebook", FontAwesomeIcon.Book, "Rulebook"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
         ("favorites", FontAwesomeIcon.Star, "Favorites"),
     ];
@@ -118,6 +119,33 @@ public class CollarWindow : Window, IDisposable
             lastContentHeight = ImGui.GetCursorPosY();
     }
 
+    /// Right-aligned on the name's line when it fits, else on its own line, so it never pushes the name aside.
+    private void DrawRelayActivity()
+    {
+        if (plugin.RelayActivity.Current is not { } count)
+            return;
+        var text = $"{count} active";
+        var dot = ImGui.GetTextLineHeight() * 0.35f;
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var width = dot * 2 + spacing + ImGui.CalcTextSize(text).X;
+        var right = ImGui.GetContentRegionMax().X;
+
+        ImGui.SameLine();
+        if (ImGui.GetCursorPosX() + spacing + width > right)
+            ImGui.NewLine();
+        ImGui.SetCursorPosX(right - width);
+
+        var start = ImGui.GetCursorScreenPos();
+        var center = start + new Vector2(dot, ImGui.GetTextLineHeight() / 2);
+        ImGui.GetWindowDrawList().AddCircleFilled(center, dot, ImGui.GetColorU32(Theme.Success));
+        ImGui.Dummy(new Vector2(dot * 2, ImGui.GetTextLineHeight()));
+        var hovered = ImGui.IsItemHovered();
+        ImGui.SameLine(0, spacing);
+        ImGui.TextDisabled(text);
+        if (hovered || ImGui.IsItemHovered())
+            ImGui.SetTooltip("Oathbound players whose plugin checked in with the relay in the last half hour or so. Counts installs, never who they are.");
+    }
+
     private void DrawCharacterHeader()
     {
         var pending = plugin.PairingService.Pending;
@@ -139,6 +167,7 @@ public class CollarWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.UserCircle, character.Name ?? "Character loading…");
         ImGui.PopStyleColor();
         TutorialService.Anchor(TutorialAnchors.MainCharacter);
+        DrawRelayActivity();
 
         if (character.IsAvailable)
         {

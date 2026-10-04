@@ -15,6 +15,13 @@ public readonly record struct PeerUnpairedNotice(PluginRole PeerRole);
 
 /// Watches incoming chat for pairing lifecycle tells (`collarinvite`, `collarpairack`, `collarunpair`), the leash-off notice
 /// (`collarleash`), and Sub-side trigger commands from a paired peer's verified sender.
+/// The rulebook's reserved Owner command words, gated by the rulebook itself.
+public interface IRulebookCommandSink
+{
+    LocalTestResult DeckDraw(string rest, PairingState? sourcePairing);
+    LocalTestResult Ledger(string rest, PairingState? sourcePairing);
+}
+
 public sealed class ChatCommandListener : IDisposable
 {
     private const string PairingAckKeyword = "collarpairack";
@@ -23,6 +30,7 @@ public sealed class ChatCommandListener : IDisposable
     private const string CatalogRequestKeyword = "collarcatalogreq";
     private const string CatalogPermissionDeniedKeyword = "collarcatalogdenied";
     private const string LeashOffNoticeKeyword = ChatComposer.LeashOffNoticeKeyword;
+    private const string RulebookNudgeKeyword = ChatComposer.RulebookNudgeKeyword;
 
     /// Channels a trigger command may arrive on. Pairing lifecycle messages stay tell-only.
     private static readonly XivChatType[] AllowedTriggerChatTypes =
@@ -36,7 +44,14 @@ public sealed class ChatCommandListener : IDisposable
     ];
 
     /// First tokens that route to the Owner's override grammar; Sub aliases can't use them.
-    public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport"];
+    public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport",
+        Rulebook.ConsequenceValidator.DeckWord, Rulebook.ConsequenceValidator.LedgerWord];
+
+    /// Set once by Plugin; the rulebook service is built after this listener.
+    public IRulebookCommandSink? RulebookSink { get; set; }
+
+    /// A verified `collarrulebook` from the Owner of this Sub-side pairing.
+    public event Action<PairingState>? RulebookNudgeReceived;
 
     private readonly PluginConfig config;
     private readonly PairingService pairing;
@@ -110,6 +125,8 @@ public sealed class ChatCommandListener : IDisposable
             if (TryHandleCatalogPermissionDeniedMessage(text, message.Sender))
                 return;
             if (TryHandleLeashOffNoticeMessage(text, message.Sender))
+                return;
+            if (TryHandleRulebookNudgeMessage(text, message.Sender))
                 return;
         }
 
@@ -286,6 +303,35 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
+    /// Only the Owner of an active Sub-side pairing counts; the nudge carries nothing and only triggers a mailbox check.
+    private bool TryHandleRulebookNudgeMessage(string text, SeString sender)
+    {
+        if (!text.Trim().Equals(RulebookNudgeKeyword, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var (name, world) = ExtractNameAndWorld(sender);
+        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.SubSide) is not { IsPaired: true } subPairing)
+            return true;
+        RulebookNudgeReceived?.Invoke(subPairing);
+        return true;
+    }
+
+    /// Runs a rulebook consequence through the same dispatch as a tell from `pairing`, so every permission check
+    /// applies. Re-checks the allowlist here too, so nothing outside it can run even from a tampered config.
+    public LocalTestResult RunRulebookCommand(string commandText, PairingState pairing)
+    {
+        if (Rulebook.ConsequenceValidator.Check(commandText) is { } refused)
+            return LocalTestResult.Fail(refused);
+        try
+        {
+            return Resolve(commandText.Trim(), pairing);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Error(ex, "A rulebook consequence threw.");
+            return LocalTestResult.Fail($"Threw an exception: {ex.Message}");
+        }
+    }
+
     /// Only a paired Sub counts. The Owner is told only if their estimate still showed the Sub leashed.
     private bool TryHandleLeashOffNoticeMessage(string text, SeString sender)
     {
@@ -368,6 +414,10 @@ public sealed class ChatCommandListener : IDisposable
             case "revert":
                 // No outer gate: each category below checks its own permission.
                 return HandleForceRevert(rest);
+            case Rulebook.ConsequenceValidator.DeckWord:
+                return RulebookSink is { } deckSink ? deckSink.DeckDraw(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.");
+            case Rulebook.ConsequenceValidator.LedgerWord:
+                return RulebookSink is { } ledgerSink ? ledgerSink.Ledger(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.");
         }
 
         return ResolveAlias(commandText, sourcePairing);
@@ -569,6 +619,17 @@ public sealed class ChatCommandListener : IDisposable
                 : LocalTestResult.Fail("Restraint unlock failed - nothing was force-locked.");
         }
 
+        const string timerPrefix = "timer ";
+        if (rest.StartsWith(timerPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            // No lock option on this form; refusing one keeps a timed command from being misread.
+            if (restraintLock.IsTimed)
+                return LocalTestResult.Fail("\"restraint timer\" doesn't take a lockfor: option.");
+            return RestraintCommand.TryParseTimerAdjust(rest[timerPrefix.Length..], out var delta)
+                ? restraints.AdjustTimedLock(delta)
+                : LocalTestResult.Fail("\"restraint timer\" expects +<seconds> or -<seconds>, 60 to 604800.");
+        }
+
         const string lockPrefix = "lock ";
         if (rest.StartsWith(lockPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -606,7 +667,7 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Fail("\"restraint wear\" was malformed - expected \"wear <slot> <itemId> \\\"<label>\\\" rules:...\".");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", or \"unlock\" (an apply form may be preceded by \"lockfor:<seconds>\").");
+        return LocalTestResult.Fail($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", \"timer +|-<seconds>\", or \"unlock\" (an apply form may be preceded by \"lockfor:<seconds>\").");
     }
 
     private LocalTestResult HandleForceToy(string rest)

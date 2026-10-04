@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/rulebook-key.schema.json",
+  "title": "RulebookKey",
+  "description": "A recipient's current receive key for one direction of a pair/epoch's rulebook mailbox, signed with the recipient's device key so the sender can verify it before encrypting to it. channel \"rulebook\" is published by the Sub (the Owner encrypts rulebooks to it); channel \"report\" is published by the Owner (the Sub encrypts activity reports to it). Rotated on every consume (the next key travels in the consume request body), so each receive key decrypts at most one delivered item.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type", "schemaVersion", "channel", "pairIdHash", "pairEpoch", "receiveKeyId",
+    "recipientDeviceKeyId", "receivePublicKey", "createdAt", "signature"
+  ],
+  "properties": {
+    "type": { "const": "rulebook-key" },
+    "schemaVersion": { "const": 1 },
+    "channel": { "enum": ["rulebook", "report"] },
+    "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+    "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+    "receiveKeyId": {
+      "type": "string",
+      "description": "Random 128-bit id for this receive key, base64url without padding. Not a secret.",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "recipientDeviceKeyId": {
+      "$ref": "common.schema.json#/$defs/deviceKeyId",
+      "description": "The pair's Sub device for channel \"rulebook\", the pair's Owner device for channel \"report\"."
+    },
+    "receivePublicKey": {
+      "$ref": "common.schema.json#/$defs/ecPublicKeyJwk",
+      "description": "Recipient's ECDH P-256 receive public key. Never the recipient's signing key."
+    },
+    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+    "signature": { "$ref": "common.schema.json#/$defs/ecdsaSignature" }
+  }
+}

@@ -19,14 +19,29 @@ public sealed class EmoteWatcher
     /// Read after Poll on the same tick.
     public IReadOnlyList<EmoteEvent> ThisTick => thisTick;
 
+    /// The local player's own emote started this tick, if any. Kept apart so nothing reacts to its own emotes.
+    public (uint EmoteId, ulong TargetObjectId)? OwnThisTick { get; private set; }
+    private (ushort EmoteId, ulong TargetId)? ownLast;
+
     public unsafe void Poll()
     {
         thisTick.Clear();
+        OwnThisTick = null;
         var localPlayer = Plugin.ObjectTable.LocalPlayer;
         if (localPlayer is null)
         {
             lastState.Clear();
+            ownLast = null;
             return;
+        }
+
+        if (localPlayer.Address != nint.Zero)
+        {
+            var me = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)localPlayer.Address;
+            var own = (me->EmoteController.EmoteId, (ulong)me->EmoteController.Target);
+            if (ownLast is { } before && own.EmoteId != 0 && before != own)
+                OwnThisTick = (own.EmoteId, own.Item2);
+            ownLast = own;
         }
 
         var seen = new HashSet<ulong>();

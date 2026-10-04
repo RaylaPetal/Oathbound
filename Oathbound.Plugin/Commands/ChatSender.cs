@@ -22,6 +22,7 @@ public sealed class ChatSender
             return false;
         }
 
+        PluginOutput.RecordChat(text);
         ECommons.Automation.Chat.SendMessage(text);
         Sent?.Invoke(text);
         return true;

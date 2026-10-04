@@ -91,6 +91,53 @@ describe("cross-runtime crypto vectors", () => {
     expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
     expect(await sha256Hex(ciphertext.buffer as ArrayBuffer)).toBe(v.ciphertextDigestSha256Hex);
   });
+
+  it("canonicalizes and verifies a recipient-signed rulebook-key envelope", async () => {
+    const v = vectors.rulebookKeySignature;
+    expect(toCanonicalJson(v.unsigned)).toBe(v.canonical);
+    const ok = await verifyEcdsaSignature(vectors.ecdsaSignRequest.signingPublicKeyJwk as never, v.signatureBase64Url, v.canonical);
+    expect(ok).toBe(true);
+  });
+
+  for (const [name, label] of [
+    ["ecdhHkdfAesGcmRulebookPush", "oathbound-relay-rulebook-push-v1"],
+    ["ecdhHkdfAesGcmRulebookReport", "oathbound-relay-rulebook-report-v1"],
+  ] as const) {
+    it(`derives the ${label} AES key from the receive/ephemeral keys and decrypts the published ciphertext`, async () => {
+      const e = vectors.ecdhHkdfAesGcmCatalogEnvelope;
+      const v = vectors[name];
+      const clean = (j: { kty: string; crv: string; x: string; y: string }) => ({ kty: j.kty, crv: j.crv, x: j.x, y: j.y });
+      const ecdh = { name: "ECDH", namedCurve: "P-256" };
+      // The recipient side of the exchange: its receive private key with the sender's ephemeral public key.
+      const receivePrivate = await crypto.subtle.importKey("jwk", e.ownerEphemeralPrivateKeyJwk as JsonWebKey, ecdh, false, ["deriveBits"]);
+      const receivePublic = await crypto.subtle.importKey("jwk", clean(e.ownerEphemeralPublicKeyJwk), ecdh, true, []);
+      const senderPublic = await crypto.subtle.importKey("jwk", clean(e.subEphemeralPublicKeyJwk), ecdh, true, []);
+      const shared = await crypto.subtle.deriveBits({ name: "ECDH", public: senderPublic } as never, receivePrivate, 256);
+
+      const receiveRaw = new Uint8Array((await crypto.subtle.exportKey("raw", receivePublic)) as ArrayBuffer);
+      const senderRaw = new Uint8Array((await crypto.subtle.exportKey("raw", senderPublic)) as ArrayBuffer);
+      const combined = new Uint8Array(receiveRaw.length + senderRaw.length);
+      combined.set(receiveRaw, 0);
+      combined.set(senderRaw, receiveRaw.length);
+      const salt = await crypto.subtle.digest("SHA-256", combined);
+      expect(Buffer.from(salt).toString("hex")).toBe(v.saltSha256Hex);
+      expect(v.infoUtf8).toBe(label + vectors.rulebookKeySignature.unsigned.pairIdHash + vectors.rulebookKeySignature.unsigned.receiveKeyId);
+
+      const hkdfKey = await crypto.subtle.importKey("raw", shared, "HKDF", false, ["deriveBits"]);
+      const aesKeyBytes = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: new TextEncoder().encode(v.infoUtf8) }, hkdfKey, 256);
+      expect(Buffer.from(aesKeyBytes).toString("hex")).toBe(v.derivedAesKeyHex);
+
+      const key = await crypto.subtle.importKey("raw", aesKeyBytes, "AES-GCM", false, ["decrypt"]);
+      const ciphertext = Uint8Array.from(Buffer.from(v.ciphertextWithTagBase64Url, "base64url"));
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: Uint8Array.from(Buffer.from(v.nonceBase64Url, "base64url")), additionalData: new TextEncoder().encode(v.additionalAuthenticatedDataCanonicalJson), tagLength: 128 },
+        key,
+        ciphertext,
+      );
+      expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
+      expect(await sha256Hex(ciphertext.buffer as ArrayBuffer)).toBe(v.ciphertextDigestSha256Hex);
+    });
+  }
   // collar/pairing + collar/pairing-recovery: the code-derived values are computed independently here (not
   // by relay code - the relay never derives them) so any drift between the protocol text, the vectors and
   // WebCrypto's HKDF/AES-GCM shows up. The plugin reproduces the same values with the BCL (manual check).

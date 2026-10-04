@@ -103,6 +103,9 @@ public class PairingState
     /// Compared against the relay's delivery receipt so a push that never reached the Owner is published again.
     public int LastPublishedMailboxSnapshotId { get; set; }
 
+    /// Reset when the pairing ends.
+    public Rulebook.RulebookPairingState Rulebook { get; set; } = new();
+
     /// UI only; never controls pairing.
     public string? LastRevocationDeliveryStatus { get; set; }
     public long LastRevocationDeliveryUpdatedAt { get; set; }
@@ -366,6 +369,9 @@ public class PermissionSet
 
     /// Also requires ToyControlAcknowledged before it can be enabled.
     public bool ToyControl { get; set; }
+
+    /// Rulebook consequences fire with no click from either person; needs RulebookAcknowledged.
+    public bool Rulebook { get; set; }
 }
 
 /// Gagged always garbles chat while active; animations on any kind are optional cosmetics.
@@ -705,6 +711,12 @@ public class PluginConfig : IPluginConfiguration
 
     /// Not cleared by SubRuntimeState.Reset(), so a trigger can't re-fire right after panic.
     public bool ToyTriggersSuspended { get; set; }
+
+    /// Separate from TosAcknowledged: rulebook consequences happen without a click from either person.
+    public bool RulebookAcknowledged { get; set; }
+
+    /// Set by panic, cleared only by the Sub's Resume.
+    public bool RulebookSuspended { get; set; }
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Action? SaveOverride { get; set; }

@@ -25,6 +25,7 @@ public sealed class TutorialNavigator
 
     public void Main() => plugin.CollarWindow.OpenMainWindow();
     public void Module(string moduleId) => plugin.ModuleWindow.Show(moduleId);
+    public void RulebookTab(string tab) => plugin.ModuleWindow.ShowRulebookTab(tab);
     public void Settings(SettingsTab tab) => plugin.SettingsWindow.ShowTab(tab);
     public void Favorites() => plugin.FavoritesWindow.IsOpen = true;
     public void SubControl() => plugin.SubControlWindow.IsOpen = true;

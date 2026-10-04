@@ -118,6 +118,51 @@ internal sealed class MailboxConsumeResponseBody
     [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
 }
 
+internal sealed class RulebookRefBody
+{
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "";
+}
+
+internal sealed class RulebookPublishKeyBody
+{
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "";
+    [JsonPropertyName("key")] public RulebookKeyEnvelope Key { get; set; } = new();
+}
+
+internal sealed class RulebookUploadBody
+{
+    [JsonPropertyName("envelope")] public RulebookItemEnvelope Envelope { get; set; } = new();
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
+}
+
+internal sealed class RulebookConsumeBody
+{
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "";
+    [JsonPropertyName("sequence")] public int Sequence { get; set; }
+    [JsonPropertyName("nextKey")] public RulebookKeyEnvelope NextKey { get; set; } = new();
+}
+
+internal sealed class RulebookConsumeResponseBody
+{
+    [JsonPropertyName("envelope")] public RulebookItemEnvelope Envelope { get; set; } = new();
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
+}
+
+/// The recipient's current receive key plus the delivery receipt for one rulebook channel.
+public sealed class RulebookKeyInfo
+{
+    [JsonPropertyName("key")] public RulebookKeyEnvelope Key { get; set; } = new();
+    [JsonPropertyName("waitingSequence")] public int? WaitingSequence { get; set; }
+    [JsonPropertyName("lastConsumedSequence")] public int? LastConsumedSequence { get; set; }
+    [JsonPropertyName("lastSequence")] public int LastSequence { get; set; }
+}
+
 /// The Owner's current receive key plus the delivery receipt.
 public sealed class CatalogMailboxKeyInfo
 {
@@ -255,6 +300,25 @@ public sealed class RelayClient : IDisposable
     public Task<CatalogMailboxStatus> FetchMailboxStatusAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
         SendSignedAsync<CatalogMailboxStatus>(HttpMethod.Post, "/v1/catalog/mailbox/status",
             new MailboxPairRefBody { PairIdHash = pairIdHash, PairEpoch = pairEpoch }, ct);
+
+    public Task<RulebookKeyEnvelope> PublishRulebookKeyAsync(RulebookKeyEnvelope key, CancellationToken ct) =>
+        SendSignedAsync<RulebookKeyEnvelope>(HttpMethod.Post, "/v1/rulebook/key",
+            new RulebookPublishKeyBody { PairIdHash = key.PairIdHash, PairEpoch = key.PairEpoch, Channel = key.Channel, Key = key }, ct);
+
+    public Task<RulebookKeyInfo> FetchRulebookKeyAsync(string pairIdHash, int pairEpoch, string channel, CancellationToken ct) =>
+        SendSignedAsync<RulebookKeyInfo>(HttpMethod.Post, "/v1/rulebook/key/fetch",
+            new RulebookRefBody { PairIdHash = pairIdHash, PairEpoch = pairEpoch, Channel = channel }, ct);
+
+    public Task<RulebookItemEnvelope> UploadRulebookItemAsync(RulebookItemEnvelope envelope, byte[] ciphertext, CancellationToken ct) =>
+        SendSignedAsync<RulebookItemEnvelope>(HttpMethod.Post, "/v1/rulebook/upload",
+            new RulebookUploadBody { Envelope = envelope, CiphertextBase64Url = RelayCrypto.Base64UrlEncode(ciphertext) }, ct);
+
+    public async Task<(RulebookItemEnvelope Envelope, byte[] Ciphertext)> ConsumeRulebookItemAsync(string pairIdHash, int pairEpoch, string channel, int sequence, RulebookKeyEnvelope nextKey, CancellationToken ct)
+    {
+        var body = await SendSignedAsync<RulebookConsumeResponseBody>(HttpMethod.Post, "/v1/rulebook/consume",
+            new RulebookConsumeBody { PairIdHash = pairIdHash, PairEpoch = pairEpoch, Channel = channel, Sequence = sequence, NextKey = nextKey }, ct).ConfigureAwait(false);
+        return (body.Envelope, RelayCrypto.Base64UrlDecode(body.CiphertextBase64Url));
+    }
 
     public async Task<(CatalogPushEnvelope Envelope, byte[] Ciphertext)> ConsumeMailboxSnapshotAsync(string pairIdHash, int pairEpoch, int snapshotId, CatalogMailboxKeyEnvelope nextKey, CancellationToken ct)
     {

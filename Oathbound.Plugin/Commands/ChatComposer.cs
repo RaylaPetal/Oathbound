@@ -93,6 +93,11 @@ public sealed class ChatComposer
         $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOffWord} {reason.ToNoticeWord()}";
 
     public const string LeashOffNoticeKeyword = "collarleash";
+
+    /// Carries nothing; asks the Sub's plugin to check the rulebook mailbox now.
+    public string ComposeRulebookNudge(string name, string world) => $"/tell {name}@{world} {RulebookNudgeKeyword}";
+
+    public const string RulebookNudgeKeyword = "collarrulebook";
     public const string LeashOffWord = "off";
 
     /// `direction` is this device's side in the pairing that ended, not its Role.

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/rulebook-report.schema.json",
+  "title": "RulebookReport",
+  "description": "Authenticated envelope for a Sub-generated encrypted rulebook activity report left in a pair's rulebook mailbox, encrypted to the Owner's current channel \"report\" receive key. sequence must be greater than every sequence the relay has accepted on this channel for the pair epoch.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type", "schemaVersion", "pairIdHash", "pairEpoch", "receiveKeyId",
+    "sequence", "senderDeviceKeyId", "recipientDeviceKeyId",
+    "createdAt", "expiresAt", "algorithm", "ciphertextDigest",
+    "ciphertextSizeBytes", "nonce", "senderEphemeralPublicKey", "signature"
+  ],
+  "properties": {
+    "type": { "const": "rulebook-report" },
+    "schemaVersion": { "const": 1 },
+    "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+    "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+    "receiveKeyId": { "$ref": "rulebook-key.schema.json#/properties/receiveKeyId" },
+    "sequence": { "$ref": "common.schema.json#/$defs/monotonicSequence" },
+    "senderDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
+    "recipientDeviceKeyId": { "$ref": "common.schema.json#/$defs/deviceKeyId" },
+    "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+    "expiresAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds",
+      "description": "MUST NOT exceed createdAt + rulebookMailboxExpirySeconds (see constants.json)."
+    },
+    "algorithm": { "$ref": "common.schema.json#/$defs/aeadAlgorithm" },
+    "ciphertextDigest": { "$ref": "common.schema.json#/$defs/sha256Hex" },
+    "ciphertextSizeBytes": { "type": "integer", "minimum": 1 },
+    "nonce": { "$ref": "common.schema.json#/$defs/aeadNonce" },
+    "senderEphemeralPublicKey": {
+      "$ref": "common.schema.json#/$defs/ecPublicKeyJwk",
+      "description": "Sub's per-upload ephemeral ECDH public key, combined with the receive key named by receiveKeyId. Salt is SHA-256(receivePublicKeyRawUncompressed || senderEphemeralPublicKeyRawUncompressed); HKDF info is \"oathbound-relay-rulebook-report-v1\" || pairIdHash || receiveKeyId; AAD is JCS of this envelope with ciphertextDigest/nonce/signature removed and ciphertextSizeBytes set to 0; plaintext is gzip-compressed before encryption."
+    },
+    "signature": { "$ref": "common.schema.json#/$defs/ecdsaSignature" }
+  }
+}

@@ -165,7 +165,12 @@ public sealed class ReactionService : IDisposable
         Run("item", () => EquipItem(rule));
         Run("mod", () => EnableMod(rule));
         Run("moodle", () => { if (rule.MoodleId is { } id) moodles.ApplyStatus(id); });
-        Run("chat", () => { if (!string.IsNullOrWhiteSpace(rule.ChatMessage)) Chat.SendMessage(rule.ChatMessage.Trim()); });
+        Run("chat", () =>
+        {
+            if (string.IsNullOrWhiteSpace(rule.ChatMessage)) return;
+            PluginOutput.RecordChat(rule.ChatMessage.Trim());
+            Chat.SendMessage(rule.ChatMessage.Trim());
+        });
     }
 
     private static void Run(string what, Action action)

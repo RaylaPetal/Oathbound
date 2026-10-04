@@ -47,14 +47,16 @@
       "curve": "P-256 (ECDH)",
       "ephemeralPerUse": true,
       "note": "The Owner's ephemeral ECDH key travels in catalog-request; the Sub's ephemeral ECDH key travels in catalog-response. Neither is reused across requests.",
-      "pushNote": "catalog-push: the Owner publishes a signed catalog-mailbox-key receive key (rotated on every consume, so each decrypts at most one delivered snapshot); the Sub pairs it with a fresh ephemeral key per upload."
+      "pushNote": "catalog-push: the Owner publishes a signed catalog-mailbox-key receive key (rotated on every consume, so each decrypts at most one delivered snapshot); the Sub pairs it with a fresh ephemeral key per upload.",
+      "rulebookNote": "rulebook-push / rulebook-report: same scheme as catalog-push in each direction. The recipient (Sub for channel \"rulebook\", Owner for channel \"report\") publishes a signed rulebook-key, rotated on every consume; the sender pairs it with a fresh ephemeral key per upload."
     },
     "kdf": {
       "algorithm": "HKDF-SHA256",
       "salt": "SHA-256(ownerEphemeralPublicKeyRawUncompressed || subEphemeralPublicKeyRawUncompressed)",
       "info": "\"oathbound-relay-catalog-v1\" || pairIdHash || requestId, UTF-8 concatenation",
       "outputLengthBytes": 32,
-      "pushInfo": "\"oathbound-relay-catalog-push-v1\" || pairIdHash || receiveKeyId, UTF-8 concatenation (catalog-push only; catalog-response keeps the info above)"
+      "pushInfo": "\"oathbound-relay-catalog-push-v1\" || pairIdHash || receiveKeyId, UTF-8 concatenation (catalog-push only; catalog-response keeps the info above)",
+      "rulebookInfo": "\"oathbound-relay-rulebook-push-v1\" (rulebook-push) or \"oathbound-relay-rulebook-report-v1\" (rulebook-report) || pairIdHash || receiveKeyId, UTF-8 concatenation; salt is SHA-256(receivePublicKeyRaw || senderEphemeralPublicKeyRaw)"
     },
     "aead": {
       "algorithm": "AES-256-GCM",
@@ -85,7 +87,12 @@
     "backupCiphertextMaxBytes": 32768,
     "collarCheckinIntervalSeconds": 7200,
     "collarBrokenGraceSeconds": 60,
-    "collarStaleSeconds": 172800
+    "collarStaleSeconds": 172800,
+    "rulebookMailboxExpirySeconds": 1209600,
+    "rulebookCiphertextMaxBytes": 65536,
+    "rulebookReportCiphertextMaxBytes": 32768,
+    "rulebookMinUploadIntervalSeconds": 60,
+    "rulebookReportMinUploadIntervalSeconds": 600
   },
   "pairingCode": {
     "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",

@@ -5,6 +5,7 @@ import { RelayError } from "../lib/errors";
 import { type CollarState, isMemberOfPair, latestPair, pairAtEpoch } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
+import { rulebookMailboxSummary } from "./rulebook";
 import { asRecord, isHex64, isNonNegInt, isUnixSeconds, requireField } from "../lib/validate";
 
 /**
@@ -41,7 +42,16 @@ export async function fetchPair(request: Request, env: Env, pairIdHash: string):
     collarStateAt: pair.collar_state_at ?? null,
     collarCheckinAt: pair.collar_checkin_at ?? null,
     catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
+    rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
+    ...(await relayActivity(env)),
   });
+}
+
+/** Null until the cron has run once. */
+async function relayActivity(env: Env): Promise<{ relayActiveDevices: number | null; relayActiveDevicesAt: number | null }> {
+  const row = await env.RELAY_DB.prepare(`SELECT active_devices, computed_at FROM relay_stats WHERE id = 1`)
+    .first<{ active_devices: number; computed_at: number }>();
+  return { relayActiveDevices: row?.active_devices ?? null, relayActiveDevicesAt: row?.computed_at ?? null };
 }
 
 function isCollarState(value: unknown): value is CollarState {

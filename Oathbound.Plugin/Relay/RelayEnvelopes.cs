@@ -71,6 +71,26 @@ public sealed class PairEnvelope
     [JsonPropertyName("collarCheckinAt")] public long? CollarCheckinAt { get; set; }
     /// Null only from a relay that predates the field, which puts automatic catalog sync back on its hourly checks.
     [JsonPropertyName("catalogMailbox")] public CatalogMailboxSummary? CatalogMailbox { get; set; }
+    /// Null from a relay that predates rulebooks; rulebook work is skipped then.
+    [JsonPropertyName("rulebookMailbox")] public RulebookMailboxSummary? RulebookMailbox { get; set; }
+    /// Installs that checked in with the relay recently; null from an older relay or before its first count.
+    [JsonPropertyName("relayActiveDevices")] public int? RelayActiveDevices { get; set; }
+    [JsonPropertyName("relayActiveDevicesAt")] public long? RelayActiveDevicesAt { get; set; }
+}
+
+public sealed class RulebookMailboxSummary
+{
+    [JsonPropertyName("rulebook")] public RulebookChannelSummary Rulebook { get; set; } = new();
+    [JsonPropertyName("report")] public RulebookChannelSummary Report { get; set; } = new();
+}
+
+public sealed class RulebookChannelSummary
+{
+    [JsonPropertyName("exists")] public bool Exists { get; set; }
+    [JsonPropertyName("receiveKeyId")] public string? ReceiveKeyId { get; set; }
+    [JsonPropertyName("waitingSequence")] public int? WaitingSequence { get; set; }
+    [JsonPropertyName("lastConsumedSequence")] public int? LastConsumedSequence { get; set; }
+    [JsonPropertyName("lastUploadAt")] public long? LastUploadAt { get; set; }
 }
 
 public sealed class CatalogMailboxSummary
@@ -181,6 +201,83 @@ public static class CatalogPushAad
             ["pairEpoch"] = envelope.PairEpoch,
             ["receiveKeyId"] = envelope.ReceiveKeyId,
             ["snapshotId"] = envelope.SnapshotId,
+            ["senderDeviceKeyId"] = envelope.SenderDeviceKeyId,
+            ["recipientDeviceKeyId"] = envelope.RecipientDeviceKeyId,
+            ["createdAt"] = envelope.CreatedAt,
+            ["expiresAt"] = envelope.ExpiresAt,
+            ["algorithm"] = envelope.Algorithm,
+            ["ciphertextSizeBytes"] = 0,
+            ["senderEphemeralPublicKey"] = new Dictionary<string, object?>
+            {
+                ["kty"] = envelope.SenderEphemeralPublicKey.Kty,
+                ["crv"] = envelope.SenderEphemeralPublicKey.Crv,
+                ["x"] = envelope.SenderEphemeralPublicKey.X,
+                ["y"] = envelope.SenderEphemeralPublicKey.Y,
+            },
+        };
+        return System.Text.Encoding.UTF8.GetBytes(CanonicalJson.Serialize(dict));
+    }
+}
+
+public static class RulebookChannels
+{
+    /// Owner -> Sub: the recipient is the Sub.
+    public const string Rulebook = "rulebook";
+    /// Sub -> Owner: the recipient is the Owner.
+    public const string Report = "report";
+
+    public static string ItemType(string channel) => channel == Rulebook ? "rulebook-push" : "rulebook-report";
+}
+
+/// Signed with the recipient's device key (the Sub for channel rulebook, the Owner for channel report).
+public sealed class RulebookKeyEnvelope
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "rulebook-key";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "";
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("receiveKeyId")] public string ReceiveKeyId { get; set; } = "";
+    [JsonPropertyName("recipientDeviceKeyId")] public string RecipientDeviceKeyId { get; set; } = "";
+    [JsonPropertyName("receivePublicKey")] public EcPublicKeyJwk ReceivePublicKey { get; set; } = new();
+    [JsonPropertyName("createdAt")] public long CreatedAt { get; set; }
+    [JsonPropertyName("signature")] public string? Signature { get; set; }
+}
+
+/// rulebook-push and rulebook-report share this shape; Type tells them apart.
+public sealed class RulebookItemEnvelope
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "rulebook-push";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("receiveKeyId")] public string ReceiveKeyId { get; set; } = "";
+    [JsonPropertyName("sequence")] public int Sequence { get; set; }
+    [JsonPropertyName("senderDeviceKeyId")] public string SenderDeviceKeyId { get; set; } = "";
+    [JsonPropertyName("recipientDeviceKeyId")] public string RecipientDeviceKeyId { get; set; } = "";
+    [JsonPropertyName("createdAt")] public long CreatedAt { get; set; }
+    [JsonPropertyName("expiresAt")] public long ExpiresAt { get; set; }
+    [JsonPropertyName("algorithm")] public string Algorithm { get; set; } = "ECDH-P256+HKDF-SHA256+AES-256-GCM";
+    [JsonPropertyName("ciphertextDigest")] public string CiphertextDigest { get; set; } = "";
+    [JsonPropertyName("ciphertextSizeBytes")] public int CiphertextSizeBytes { get; set; }
+    [JsonPropertyName("nonce")] public string Nonce { get; set; } = "";
+    [JsonPropertyName("senderEphemeralPublicKey")] public EcPublicKeyJwk SenderEphemeralPublicKey { get; set; } = new();
+    [JsonPropertyName("signature")] public string? Signature { get; set; }
+}
+
+/// Built like CatalogPushAad (vectors: ecdhHkdfAesGcmRulebookPush, ecdhHkdfAesGcmRulebookReport).
+public static class RulebookItemAad
+{
+    public static byte[] Build(RulebookItemEnvelope envelope)
+    {
+        var dict = new Dictionary<string, object?>
+        {
+            ["type"] = envelope.Type,
+            ["schemaVersion"] = envelope.SchemaVersion,
+            ["pairIdHash"] = envelope.PairIdHash,
+            ["pairEpoch"] = envelope.PairEpoch,
+            ["receiveKeyId"] = envelope.ReceiveKeyId,
+            ["sequence"] = envelope.Sequence,
             ["senderDeviceKeyId"] = envelope.SenderDeviceKeyId,
             ["recipientDeviceKeyId"] = envelope.RecipientDeviceKeyId,
             ["createdAt"] = envelope.CreatedAt,

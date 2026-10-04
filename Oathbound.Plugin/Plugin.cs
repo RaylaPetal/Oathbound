@@ -42,6 +42,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
     [PluginService] internal static IGameConfig GameConfig { get; private set; } = null!;
     [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
+    [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
 
     private const string CommandName = "/ob";
     private const string PanicCommandName = "/obpanic";
@@ -122,11 +123,14 @@ public sealed class Plugin : IDalamudPlugin
     public CatalogSyncRelayService CatalogSyncRelayService { get; }
     public CatalogMailboxService CatalogMailboxService { get; }
     public CatalogAutoSync CatalogAutoSync { get; }
+    public RulebookMailboxService RulebookMailboxService { get; }
+    public Rulebook.RulebookService RulebookService { get; }
     public ChatComposer ChatComposer { get; }
     public ChatSender ChatSender { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
     public OwnerCollarStatusStore OwnerCollarStatus { get; }
+    public RelayActivity RelayActivity { get; } = new();
     private readonly CollarStatusReporter collarStatusReporter;
     public StatusIndicatorState StatusIndicators { get; }
     private readonly LeashRenderer leashRenderer;
@@ -205,6 +209,7 @@ public sealed class Plugin : IDalamudPlugin
         OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
         OwnerCollarStatus = new OwnerCollarStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
+        RevocationService.PairStatusFetched += RelayActivity.Update;
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
@@ -232,6 +237,11 @@ public sealed class Plugin : IDalamudPlugin
 
         PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
+
+        RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
+        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, () => relayBackgroundWorkCts.Token);
+        RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
+        PanicHandler.OnPanic = RulebookService.OnPanic;
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -373,7 +383,10 @@ public sealed class Plugin : IDalamudPlugin
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
         RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
+        RevocationService.PairStatusFetched -= RelayActivity.Update;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
+        RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
+        RulebookService.Dispose();
         OwnerStatusEstimates.Dispose();
         leashOffNotifier.Dispose();
         leashRenderer.Dispose();
@@ -501,6 +514,7 @@ public sealed class Plugin : IDalamudPlugin
                 RecoveryCodeWindow.IsOpen = true;
         }
         CatalogAutoSync.OnFrameworkUpdate();
+        RulebookService.OnFrameworkUpdate();
         UpdateToyStatusDtr();
         Configuration.FlushPendingSave();
     }

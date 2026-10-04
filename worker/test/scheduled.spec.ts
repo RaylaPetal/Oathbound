@@ -119,4 +119,69 @@ describe("scheduled cleanup", () => {
     expect(await env.RELAY_DB.prepare(`SELECT 1 FROM catalog_mailboxes WHERE pair_id_hash = 'mbx-revoked'`).first()).toBeNull();
     expect(await env.RELAY_CATALOG_BUCKET.head("mailbox/mbx-revoked/0/1")).toBeNull();
   });
+
+  it("drops expired rulebook items per channel, removes revoked pairs' rulebook mailboxes, and sweeps orphaned rulebook objects", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const past = now - 3600;
+    const insertPair = (hash: string, revokedAt: number | null) =>
+      env.RELAY_DB.prepare(
+        `INSERT INTO pairs (pair_id_hash, pair_epoch, owner_device_key_id, sub_device_key_id, created_at, revoked_at) VALUES (?1, 0, 'o', 's', ?2, ?3)`,
+      )
+        .bind(hash, past, revokedAt)
+        .run();
+    const insertMailbox = async (hash: string, channel: string, expiresAt: number) => {
+      const r2Key = `rulebook/${hash}/0/${channel}/1`;
+      await env.RELAY_DB.prepare(
+        `INSERT INTO rulebook_mailboxes (pair_id_hash, pair_epoch, channel, receive_key_id, receive_key_envelope, key_published_at, last_upload_at,
+           last_sequence, item_sequence, item_r2_key, item_envelope, item_created_at, item_expires_at)
+         VALUES (?1, 0, ?2, 'key-id', '{}', ?3, ?3, 1, 1, ?4, '{}', ?3, ?5)`,
+      )
+        .bind(hash, channel, past, r2Key, expiresAt)
+        .run();
+      await env.RELAY_CATALOG_BUCKET.put(r2Key, new Uint8Array([1]));
+      return r2Key;
+    };
+
+    await insertPair("rb-live", null);
+    const expiredKey = await insertMailbox("rb-live", "rulebook", past);
+    const liveKey = await insertMailbox("rb-live", "report", now + 3600);
+    await env.RELAY_CATALOG_BUCKET.put("rulebook/rb-live/0/report/0", new Uint8Array([1])); // replaced but never deleted
+
+    await insertPair("rb-revoked", past);
+    const revokedKey = await insertMailbox("rb-revoked", "rulebook", now + 3600);
+
+    await runScheduledCleanup(env);
+
+    const expired = await env.RELAY_DB.prepare(`SELECT receive_key_id, item_sequence FROM rulebook_mailboxes WHERE pair_id_hash = 'rb-live' AND channel = 'rulebook'`).first();
+    expect(expired).toEqual({ receive_key_id: "key-id", item_sequence: null });
+    expect(await env.RELAY_CATALOG_BUCKET.head(expiredKey)).toBeNull();
+
+    const live = await env.RELAY_DB.prepare(`SELECT item_sequence FROM rulebook_mailboxes WHERE pair_id_hash = 'rb-live' AND channel = 'report'`).first<{ item_sequence: number }>();
+    expect(live?.item_sequence).toBe(1);
+    expect(await env.RELAY_CATALOG_BUCKET.head(liveKey)).not.toBeNull();
+    expect(await env.RELAY_CATALOG_BUCKET.head("rulebook/rb-live/0/report/0")).toBeNull();
+
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM rulebook_mailboxes WHERE pair_id_hash = 'rb-revoked'`).first()).toBeNull();
+    expect(await env.RELAY_CATALOG_BUCKET.head(revokedKey)).toBeNull();
+  });
+
+  it("counts devices active within the window once each, and keeps their nonces long enough to see them", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const insert = (device: string, nonce: string, seenAt: number) =>
+      env.RELAY_DB.prepare(`INSERT INTO nonces (device_key_id, nonce, seen_at) VALUES (?1, ?2, ?3)`).bind(device, nonce, seenAt).run();
+    await env.RELAY_DB.prepare(`DELETE FROM nonces`).run();
+    await insert("active-a", "n1", now - 60);
+    await insert("active-a", "n2", now - 1500);
+    await insert("active-b", "n3", now - 1700);
+    await insert("gone", "n4", now - 3000);
+
+    await runScheduledCleanup(env);
+
+    const stats = await env.RELAY_DB.prepare(`SELECT active_devices, computed_at FROM relay_stats WHERE id = 1`).first<{ active_devices: number; computed_at: number }>();
+    expect(stats?.active_devices).toBe(2);
+    expect(stats?.computed_at).toBeGreaterThanOrEqual(now);
+    // Past the 600s replay window, but still inside the activity window: kept.
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n3'`).first()).not.toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n4'`).first()).toBeNull();
+  });
 });

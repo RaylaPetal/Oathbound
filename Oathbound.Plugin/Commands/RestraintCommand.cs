@@ -380,6 +380,42 @@ public sealed class RestraintCommand
         runtimeState.RestraintsLockExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
     }
 
+    public const int MinTimerAdjustSeconds = 60;
+    public const int MaxTimerAdjustSeconds = 604800;
+
+    /// `+<seconds>` or `-<seconds>`.
+    public static bool TryParseTimerAdjust(string text, out int deltaSeconds)
+    {
+        deltaSeconds = 0;
+        var t = text.Trim();
+        if (t.Length < 2 || (t[0] != '+' && t[0] != '-'))
+            return false;
+        if (!int.TryParse(t[1..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var seconds)
+            || seconds is < MinTimerAdjustSeconds or > MaxTimerAdjustSeconds)
+            return false;
+        deltaSeconds = t[0] == '-' ? -seconds : seconds;
+        return true;
+    }
+
+    /// Shifts a Timed lock's end time; a Permanent lock or no lock is left alone. Releases at once if the new end has passed.
+    public LocalTestResult AdjustTimedLock(int deltaSeconds)
+    {
+        if (!runtimeState.RestraintsForceLocked || runtimeState.RestraintsLockExpiresAtUtc is not { } expiresAt)
+            return LocalTestResult.Fail("Restraints aren't under a timed lock - nothing changed.");
+        var now = DateTime.UtcNow;
+        var shifted = expiresAt.AddSeconds(deltaSeconds);
+        if (shifted > now + RestraintLock.MaxDuration)
+            shifted = now + RestraintLock.MaxDuration;
+        if (shifted <= now)
+        {
+            Plugin.Log.Information("Timed restraints lock shortened past its end - releasing restraints.");
+            ForceUnlock();
+            return LocalTestResult.Ok("Restraint timer ran out - restraints released.");
+        }
+        runtimeState.RestraintsLockExpiresAtUtc = shifted;
+        return LocalTestResult.Ok($"Restraint timer now ends in {RestraintLock.Format(shifted - now)}.");
+    }
+
     public bool ForceUnlock()
     {
         // Slot locks survive reloads but device/claim bookkeeping doesn't, so release every layer unconditionally.

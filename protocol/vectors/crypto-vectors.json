@@ -176,5 +176,51 @@
     "additionalAuthenticatedDataUtf8": "oathbound-backup-v1|BiKZ3l173Gguxoqz2iihC0YGq7UqBv2vqVZCqZRn8CM",
     "plaintextUtf8": "{\"schemaVersion\":1,\"sample\":\"backup\"}",
     "ciphertextWithTagBase64Url": "L2mSaPA10gx0GRPsTIijYMzj7HfKCNKjBnBE_xaeGwopA04tOa6EkPzkUp-YcMWv9AH36WA"
+  },
+  "rulebookKeySignature": {
+    "description": "rulebook-key envelope (channel \"rulebook\", so published by the Sub) signed by the ecdsaSignRequest key standing in for the recipient's device key. `canonical` is JCS of the envelope without `signature`; the receive key is ecdhHkdfAesGcmCatalogEnvelope's owner ephemeral key. Only verification success is asserted across runtimes (ECDSA is randomized).",
+    "unsigned": {
+      "type": "rulebook-key",
+      "schemaVersion": 1,
+      "channel": "rulebook",
+      "pairIdHash": "65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f",
+      "pairEpoch": 3,
+      "receiveKeyId": "rbKeyIDrbKeyIDrbKeyIDr",
+      "recipientDeviceKeyId": "369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add",
+      "receivePublicKey": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "62O6DLPjQNPyMIJmcbA5NlTchtovEzaFP8eiB6x40cQ",
+        "y": "rG5CJixxa3cWgTrTFEiSpZxecT-muaQUdQkheRPqCc0"
+      },
+      "createdAt": 1700003000
+    },
+    "canonical": "{\"channel\":\"rulebook\",\"createdAt\":1700003000,\"pairEpoch\":3,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"receiveKeyId\":\"rbKeyIDrbKeyIDrbKeyIDr\",\"receivePublicKey\":{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"62O6DLPjQNPyMIJmcbA5NlTchtovEzaFP8eiB6x40cQ\",\"y\":\"rG5CJixxa3cWgTrTFEiSpZxecT-muaQUdQkheRPqCc0\"},\"recipientDeviceKeyId\":\"369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add\",\"schemaVersion\":1,\"type\":\"rulebook-key\"}",
+    "signatureBase64Url": "qQUtHNVgaLSbuQ_33Cy_hKAYXUe-cKsQKbl6_cwWalFF0CEwDHLJ16ejCfhabI2EgtcQYoVnKX3J60Z3I7BHCQ",
+    "verifiesWithPublicKey": true
+  },
+  "ecdhHkdfAesGcmRulebookPush": {
+    "description": "rulebook-push encryption: ECDH between the recipient's receive key (ecdhHkdfAesGcmCatalogEnvelope's owner ephemeral key, named by rulebookKeySignature.unsigned.receiveKeyId) and the sender's per-upload ephemeral key (its sub ephemeral key), salt SHA-256(receiveRaw || senderRaw), HKDF-SHA256 with the rulebook-push info label, and AES-256-GCM over a sample plaintext bound to rulebook-push metadata as AAD (ciphertextDigest/nonce/signature removed, ciphertextSizeBytes 0). Real uploads gzip the plaintext first; this vector encrypts it uncompressed.",
+    "saltSha256Hex": "959f8d8ccbfb1f2e6a1d0cfc72805d873ca68b94720ed2cdbf40e634178d5101",
+    "infoUtf8": "oathbound-relay-rulebook-push-v165628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59frbKeyIDrbKeyIDrbKeyIDr",
+    "derivedAesKeyHex": "0870b67a60289da50907320f1a1dc8e83b16ea303f694920f2697374760ea3ba",
+    "nonceBase64Url": "cnVsZWJvb2tOb25j",
+    "additionalAuthenticatedDataCanonicalJson": "{\"algorithm\":\"ECDH-P256+HKDF-SHA256+AES-256-GCM\",\"ciphertextSizeBytes\":0,\"createdAt\":1700003100,\"expiresAt\":1701212700,\"pairEpoch\":3,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"receiveKeyId\":\"rbKeyIDrbKeyIDrbKeyIDr\",\"recipientDeviceKeyId\":\"f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5\",\"schemaVersion\":1,\"senderDeviceKeyId\":\"369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add\",\"senderEphemeralPublicKey\":{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"RMSWdueu7KFvkDguI8jNM9bBlo68dkF9XsWXFvP5XHs\",\"y\":\"9yAYneLqXPN2muh-OXTiasvOXO5Q0QJW8Cj1pVoX38M\"},\"sequence\":5,\"type\":\"rulebook-push\"}",
+    "plaintextUtf8": "{\"rulebook\":\"sample rulebook\"}",
+    "ciphertextWithTagBase64Url": "CSamnxrEn786Qae5fROet1Qe0EeNtaipZfnai67Gk7T1mLOuXM-q0C_xQ2-VJQ",
+    "ciphertextDigestSha256Hex": "499b021930ff5f6825f7f95d4c7ecb0dd0574bb19323bf53e5f7ba66bd2d8ab0",
+    "roundTripDecryptMatchesPlaintext": true
+  },
+  "ecdhHkdfAesGcmRulebookReport": {
+    "description": "rulebook-report encryption: ECDH between the recipient's receive key (ecdhHkdfAesGcmCatalogEnvelope's owner ephemeral key, named by rulebookKeySignature.unsigned.receiveKeyId) and the sender's per-upload ephemeral key (its sub ephemeral key), salt SHA-256(receiveRaw || senderRaw), HKDF-SHA256 with the rulebook-report info label, and AES-256-GCM over a sample plaintext bound to rulebook-report metadata as AAD (ciphertextDigest/nonce/signature removed, ciphertextSizeBytes 0). Real uploads gzip the plaintext first; this vector encrypts it uncompressed.",
+    "saltSha256Hex": "959f8d8ccbfb1f2e6a1d0cfc72805d873ca68b94720ed2cdbf40e634178d5101",
+    "infoUtf8": "oathbound-relay-rulebook-report-v165628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59frbKeyIDrbKeyIDrbKeyIDr",
+    "derivedAesKeyHex": "8bac20da8fb78b7a060c4b3e5c6c79838454ceecf623a2001baeee945ff04a21",
+    "nonceBase64Url": "cmVwb3J0Tm9uY2Ux",
+    "additionalAuthenticatedDataCanonicalJson": "{\"algorithm\":\"ECDH-P256+HKDF-SHA256+AES-256-GCM\",\"ciphertextSizeBytes\":0,\"createdAt\":1700003100,\"expiresAt\":1701212700,\"pairEpoch\":3,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"receiveKeyId\":\"rbKeyIDrbKeyIDrbKeyIDr\",\"recipientDeviceKeyId\":\"369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add\",\"schemaVersion\":1,\"senderDeviceKeyId\":\"f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5\",\"senderEphemeralPublicKey\":{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"RMSWdueu7KFvkDguI8jNM9bBlo68dkF9XsWXFvP5XHs\",\"y\":\"9yAYneLqXPN2muh-OXTiasvOXO5Q0QJW8Cj1pVoX38M\"},\"sequence\":5,\"type\":\"rulebook-report\"}",
+    "plaintextUtf8": "{\"report\":\"sample report\"}",
+    "ciphertextWithTagBase64Url": "eRWQpcpRF7rhJZLyzSVEZEbXKHXpya6fWeSS2WvZBqCWbCHVCYDl7RMD",
+    "ciphertextDigestSha256Hex": "7805c682c5142448ff8b832f5c9145947d28319d4dbbbd0cc2c3998d5af10da7",
+    "roundTripDecryptMatchesPlaintext": true
   }
 }

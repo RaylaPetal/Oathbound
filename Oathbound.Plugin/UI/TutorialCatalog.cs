@@ -172,6 +172,18 @@ public static class TutorialCatalog
             new("Your reactions", "Each reaction can play an animation, use an item, turn on a mod, add a moodle or send a chat line. Test actions tries them on you now.", S("reactionList"), n => n.Module("reactions"), "No reactions yet."),
             new("Mods turned on by reactions", "Mods a reaction switched on, so you can see them and turn them back off.", S("reactionActiveMods"), n => n.Module("reactions"), "Shown while a reaction has a mod on."),
         ],
+        ["rulebook"] =
+        [
+            Help("rulebook", "Write rules that keep running while you're away: oaths, a deck of cards, places, your presence and a ledger."),
+            new("Send", "Sends your rulebook to your Sub, encrypted. They review it and accept it before anything runs.", S("rbPublish"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
+            new("What's happening", "Their client reports back here by itself: oaths kept or broken, cards drawn, the ledger. Draw a card or award points from here too.", S("rbReport"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
+            new("Oaths", "Something they swear to - no deaths next duty, a curfew, staying out of a city. Keeping or breaking it runs what you set.", S("rbOaths"), n => n.RulebookTab(ModuleWindow.RulebookOathsTab)),
+            new("Automatic draws", "Pick what draws a card: bad things draw a punishment, a kept oath draws a reward.", S("rbDeckDraws"), n => n.RulebookTab(ModuleWindow.RulebookDeckTab)),
+            new("Cards", "Your punishments and rewards. Each shows its chance of coming up.", S("rbDeck"), n => n.RulebookTab(ModuleWindow.RulebookDeckTab)),
+            new("Places", "Run something when they enter or leave a place.", S("rbPlaces"), n => n.RulebookTab(ModuleWindow.RulebookPlacesTab)),
+            new("Presence", "Run something when your character comes near them, or leaves.", S("rbPresence"), n => n.RulebookTab(ModuleWindow.RulebookPresenceTab)),
+            new("Ledger", "A running score. A threshold runs something when it's reached.", S("rbLedger"), n => n.RulebookTab(ModuleWindow.RulebookLedgerTab)),
+        ],
         ["sync"] =
         [
             Help("sync", "Get your Sub's outfits, animations, moodles and restraints into your modules."),
@@ -272,6 +284,16 @@ public static class TutorialCatalog
             new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
         ],
         ["reactions"] = OwnerTours["reactions"],
+        ["rulebook"] =
+        [
+            Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and you can switch any rule off."),
+            new("New version", "When your Owner publishes, review what changed here and accept or decline it.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
+            new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
+            new("Your oaths", "Oaths you swore, and how long they have left.", S("rbSubOpen"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Ledger", "Your score and the cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Rules", "Uncheck any rule to switch it off. Your Owner sees which ones are off.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Activity", "Everything the rulebook did, newest first.", S("rbSubActivity"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+        ],
         ["sync"] =
         [
             Help("sync", "Share what you've allowed with your Owner, so it appears in their modules."),

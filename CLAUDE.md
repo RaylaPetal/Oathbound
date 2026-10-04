@@ -11,7 +11,7 @@ short alias words, and everything is applied locally by the Sub's own Glamourer/
 IPC calls. See `README.md` for the full feature/consent-model writeup and `ffxiv-collar-system-design.md` for
 the original feasibility research.
 
-**Pairing, recovery backups and encrypted catalog sync are the one exception** and go through a Cloudflare
+**Pairing, recovery backups, encrypted catalog sync and encrypted rulebooks are the one exception** and go through a Cloudflare
 Worker relay (`worker/`) - see Architecture below. The default pairing flow is pairing by code
 (`Oathbound.Plugin/Relay/CodePairingService.cs`, no tells, asynchronous, both people confirm each other's
 character); the older tell-referenced handshake in `Relay/PairingService.cs` stays as the fallback for peers on
@@ -198,9 +198,11 @@ model is a constraint on any new feature here, not just documentation.
 Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
 Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
 a leash ends on its side (`LeashOffNotifier`), a user-configured Reactions chat reply, and lifecycle tells tied
-to a user action (pairing ack, unpair, catalog request/denied). Only `ChatSender` transmits chat. Peer-notice
+to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
+rulebooks (`Rulebook/`) run consequences on their own, but only through `ChatCommandListener.RunRulebookCommand`
+and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never chat, teleport, leash or collar). Only `ChatSender` transmits chat. Peer-notice
 tells are trigger-less keywords (`collarinvite`, `collarpairack`, `collarunpair`, `collarcatalogreq`,
-`collarcatalogdenied`, `collarleash`) composed in `ChatComposer` and matched in `ChatCommandListener`, always
+`collarcatalogdenied`, `collarleash`, `collarrulebook`) composed in `ChatComposer` and matched in `ChatCommandListener`, always
 verified against the tell's sender and a paired `PairingState` of the right direction - fail closed otherwise.
 
 The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner

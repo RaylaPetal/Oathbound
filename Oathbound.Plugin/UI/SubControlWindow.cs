@@ -85,7 +85,22 @@ public sealed class SubControlWindow : Window, IDisposable
 
         DrawCollarSection(canSend);
         DrawToyControlSection(canSend);
+        DrawRulebookSection(canSend);
         DrawTeleportRow(canSend);
+    }
+
+    /// Only does anything once the Sub has accepted a rulebook; their client ignores it otherwise.
+    private void DrawRulebookSection(bool canSend)
+    {
+        if (!ImGui.CollapsingHeader("Rulebook###subControlCategory_Rulebook"))
+            return;
+
+        ImGui.Indent();
+        DrawSendRow("Draw a reward", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Reward), canSend);
+        DrawSendRow("Draw a punishment", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Punishment), canSend);
+        DrawSendRow("Merit +1", $"{Rulebook.ConsequenceValidator.LedgerWord} +1", canSend);
+        DrawSendRow("Demerit -1", $"{Rulebook.ConsequenceValidator.LedgerWord} -1", canSend);
+        ImGui.Unindent();
     }
 
     private static bool MatchesGestureFilter(QuickCommand cmd, string filter) =>

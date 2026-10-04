@@ -393,6 +393,7 @@ public sealed class PairingService
     {
         if (!pairing.IsPaired) return;
         pairing.Paired = false;
+        pairing.Rulebook = new();
         config.SaveNow();
         PairingEnded?.Invoke();
         // Ending an unrelated pairing never touches the collar.
@@ -435,6 +436,7 @@ public sealed class PairingService
         pairing.PeerPublicKeyY = null;
         pairing.PairIdHash = null;
         pairing.Paired = false;
+        pairing.Rulebook = new();
         config.SaveNow();
         PairingEnded?.Invoke();
         if (config.CollarOwningPairingId == pairing.Id)

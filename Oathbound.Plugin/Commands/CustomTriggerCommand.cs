@@ -124,6 +124,7 @@ public sealed class CustomTriggerCommand
                     if (!(config.Permissions.CustomChatMessages && config.CustomChatAcknowledged)) { skipped.Add("chat (permission/acknowledgement)"); break; }
                     if (action.ChatText.Trim().Length > 0)
                     {
+                        PluginOutput.RecordChat(action.ChatText);
                         Chat.SendMessage(action.ChatText);
                         applied.Add("chat");
                     }

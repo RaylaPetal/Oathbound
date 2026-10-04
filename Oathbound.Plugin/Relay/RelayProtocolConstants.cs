@@ -19,4 +19,9 @@ public static class RelayProtocolConstants
     public const int CollarCheckinIntervalSeconds = 7200;
     public const int CollarBrokenGraceSeconds = 60;
     public const int CollarStaleSeconds = 172800;
+    public const int RulebookMailboxExpirySeconds = 1209600;
+    public const int RulebookCiphertextMaxBytes = 65536;
+    public const int RulebookReportCiphertextMaxBytes = 32768;
+    public const int RulebookMinUploadIntervalSeconds = 60;
+    public const int RulebookReportMinUploadIntervalSeconds = 600;
 }

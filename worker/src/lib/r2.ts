@@ -13,6 +13,10 @@ export function r2KeyForMailboxSnapshot(pairIdHash: string, pairEpoch: number, s
   return `mailbox/${pairIdHash}/${pairEpoch}/${snapshotId}`;
 }
 
+export function r2KeyForRulebookItem(pairIdHash: string, pairEpoch: number, channel: string, sequence: number): string {
+  return `rulebook/${pairIdHash}/${pairEpoch}/${channel}/${sequence}`;
+}
+
 /** Content type and max size are both server-controlled; nothing from the caller reaches R2 metadata unchecked. */
 export async function putCiphertext(env: Env, key: string, bytes: Uint8Array): Promise<void> {
   if (bytes.byteLength > CATALOG_CIPHERTEXT_MAX_BYTES) {

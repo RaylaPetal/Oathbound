@@ -33,6 +33,35 @@
         "lastConsumedSnapshotId": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
         "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
       }
+    },
+    "relayActiveDevices": {
+      "description": "Distinct devices that signed any relay request in the last pairStatusPollIntervalSeconds + 300 seconds, as of relayActiveDevicesAt (recomputed by the cron every 15 minutes). An anonymous count of installs; null until first computed.",
+      "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+    },
+    "relayActiveDevicesAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+    "rulebookMailbox": {
+      "description": "The pair epoch's rulebook mailbox state for each direction: channel rulebook (Owner to Sub) and channel report (Sub to Owner). A channel's exists is false when its recipient has never published a receive key.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rulebook", "report"],
+      "properties": {
+        "rulebook": { "$ref": "#/$defs/rulebookChannel" },
+        "report": { "$ref": "#/$defs/rulebookChannel" }
+      }
+    }
+  },
+  "$defs": {
+    "rulebookChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "receiveKeyId": { "$ref": "rulebook-key.schema.json#/properties/receiveKeyId" },
+        "waitingSequence": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
+        "lastConsumedSequence": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
+        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
+      }
     }
   }
 }

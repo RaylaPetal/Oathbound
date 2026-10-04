@@ -305,6 +305,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "reactions":
                 DrawReactionsModule();
                 break;
+            case "rulebook":
+                DrawRulebookModule(isOwner);
+                break;
         }
     }
 
@@ -821,6 +824,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGuiCheckbox("Toy control", permissions.ToyControl, out var newToyControl))
                 SavePermission(() => permissions.ToyControl = newToyControl);
             IconGlyph.HelpMarker("Lets a paired Owner remotely vibrate or run a pattern on a toy you have connected via Intiface Central, until it stops itself, you stop it, or a maximum duration elapses. Directly actuates a physical device, not just in-game state - the single heaviest automation footprint in this plugin - see the README's Automation risk section.");
+        }
+
+        group.Dispose();
+        group = Section.Begin("permRulebook", "Rulebook (own acknowledgement)");
+        if (!config.RulebookAcknowledged)
+            IconGlyph.WrappedColored(Theme.Warning, "Needs its own acknowledgement on the ToS tab first.");
+
+        using (ImRaii.Disabled(!config.RulebookAcknowledged))
+        {
+            if (ImGuiCheckbox("Rulebook", permissions.Rulebook, out var newRulebook))
+                SavePermission(() => permissions.Rulebook = newRulebook);
+            IconGlyph.HelpMarker("Lets a rulebook you accepted run by itself: oaths, card draws, place and presence rules and the ledger. Each consequence still needs its own permission above. Turning this off voids your open oaths.");
         }
         group.Dispose();
     }
