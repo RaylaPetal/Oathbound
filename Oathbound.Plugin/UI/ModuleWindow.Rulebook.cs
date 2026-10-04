@@ -353,7 +353,9 @@ public sealed partial class ModuleWindow
                 foreach (var card in cards)
                 {
                     var chance = total > 0 ? card.Weight * 100f / total : 0;
-                    DrawRuleRow(card.Id, card.Name, "card", $"{chance:0}% chance{(card.Once ? ", only once" : "")}: {ConsequenceText.Describe(card.Consequence)}.", null, () => draft.Deck.Remove(card));
+                    DrawRuleRow(card.Id, card.Name, "card",
+                        [("Does", RuleText.Cap(ConsequenceText.Describe(card.Consequence))), ("Chance", $"{chance:0}%{(card.Once ? ", only once" : "")}")],
+                        null, () => draft.Deck.Remove(card));
                 }
                 using (ImRaii.Disabled(draft.Deck.Count >= RulebookLimits.MaxDeckCards))
                 {
@@ -432,7 +434,27 @@ public sealed partial class ModuleWindow
     private static string? StatusOf(RulebookPairingState state, string oathId) =>
         state.LastReport?.Oaths.FirstOrDefault(o => o.Id == oathId) is { } reported ? OathStatusText(reported.Status, reported.ScopeEndsAt) : null;
 
-    private void DrawRuleRow(string id, string name, string kind, string summary, string? status, Action remove)
+    /// Label column on the left, wrapped text on the right, so each part of a rule reads on its own line.
+    private static void DrawRuleLines(IReadOnlyList<(string Label, string Text)> lines)
+    {
+        if (!ImGui.BeginTable("##ruleLines", 2))
+            return;
+        ImGui.TableSetupColumn("label", ImGuiTableColumnFlags.WidthFixed, Scaled(78));
+        ImGui.TableSetupColumn("text", ImGuiTableColumnFlags.WidthStretch);
+        foreach (var (label, text) in lines)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextColored(Theme.TextMuted, label);
+            ImGui.TableNextColumn();
+            ImGui.PushTextWrapPos(0);
+            ImGui.TextUnformatted(text);
+            ImGui.PopTextWrapPos();
+        }
+        ImGui.EndTable();
+    }
+
+    private void DrawRuleRow(string id, string name, string kind, List<(string Label, string Text)> lines, string? status, Action remove)
     {
         ImGui.PushID(id);
         var editing = rbEditingId == id;
@@ -442,7 +464,7 @@ public sealed partial class ModuleWindow
         else
             ImGui.TextUnformatted(string.IsNullOrWhiteSpace(name) ? $"(unnamed {kind})" : name);
         ImGui.PopTextWrapPos();
-        IconGlyph.WrappedDisabled(summary);
+        DrawRuleLines(lines);
         if (status is not null)
             IconGlyph.WrappedColored(Theme.AccentHover, status);
         if (ImGui.SmallButton(editing ? "Close" : "Edit"))
@@ -756,7 +778,7 @@ public sealed partial class ModuleWindow
         var range = rule.RangeYalms;
         ItemWidth(160);
         if (ImGui.SliderFloat("Range (yalms)", ref range, RulebookLimits.MinRangeYalms, RulebookLimits.MaxRangeYalms, "%.0f")) { rule.RangeYalms = range; changed = true; }
-        IconGlyph.HelpMarker("How close you have to be. You count as arrived after 3 seconds within range, and gone after 10 seconds out of it.");
+        IconGlyph.HelpMarker("How close you have to be. You count as arrived half a second after coming within range, and gone a second after moving a little past it (a quarter of the range more, at least 1 yalm). Each of arrive and leave can only fire once per cooldown.");
         Section.SubHeading("When you arrive");
         changed |= DrawConsequenceEditor("arrive", rule.Arrive);
         Section.SubHeading("When you leave");
@@ -1103,7 +1125,7 @@ public sealed partial class ModuleWindow
         var config = plugin.Configuration;
         var service = plugin.RulebookService;
         var state = pairing.Rulebook;
-        IconGlyph.WrappedDisabled($"Rules {pairing.PeerName} wrote for you. Nothing runs until you accept it, and you can switch any rule off at any time.");
+        IconGlyph.WrappedDisabled($"Rules {pairing.PeerName} wrote for you. Nothing runs until you accept it, and you can switch any rule off except an oath you swore to.");
 
         if (config.RulebookSuspended)
         {
@@ -1154,8 +1176,7 @@ public sealed partial class ModuleWindow
                         continue;
                     ImGui.PushID(id);
                     ImGui.TextUnformatted(string.IsNullOrWhiteSpace(oath.Name) ? "Oath" : oath.Name);
-                    IconGlyph.WrappedDisabled($"Swear to {OathText.Describe(oath)}.");
-                    IconGlyph.WrappedDisabled(char.ToUpperInvariant(OathText.Outcomes(oath)[0]) + OathText.Outcomes(oath)[1..]);
+                    DrawRuleLines(OathText.Lines(oath));
                     IconGlyph.WrappedDisabled($"Offer ends {Until(s.OfferedUnixSeconds + (long)RulebookService.OfferLifetime.TotalSeconds)}.");
                     if (ImGui.SmallButton("I swear"))
                         service.AcceptOath(pairing, id);
@@ -1217,7 +1238,7 @@ public sealed partial class ModuleWindow
         using (Section.Begin("rbSubRules", "Rules"))
         {
             IconGlyph.WrappedDisabled("Uncheck a rule to switch it off. An oath you've sworn stays on until it ends.");
-            foreach (var (id, kind, name, summary) in RuleText.All(accepted, pairing.PeerName ?? "your Owner"))
+            foreach (var (id, kind, name, _, lines) in RuleText.All(accepted, pairing.PeerName ?? "your Owner"))
             {
                 if (id == DrawOnSettings.RuleId && !accepted.DrawOn.Any)
                     continue;
@@ -1237,7 +1258,8 @@ public sealed partial class ModuleWindow
                     ImGui.SameLine();
                     IconGlyph.HelpMarker($"You swore to this oath. Only {pairing.PeerName ?? "your Owner"} can change or remove it. Panic still ends it.");
                 }
-                IconGlyph.WrappedDisabled(summary);
+                DrawRuleLines(lines);
+                ImGui.Spacing();
                 ImGui.PopID();
             }
         }
@@ -1269,13 +1291,13 @@ public sealed partial class ModuleWindow
         else
         {
             var blocker = service.PerformBlocker(pairing, oathId);
-            var what = string.IsNullOrEmpty(terms.AnimationId) ? OathText.EmoteName(terms.EmoteId) : terms.AnimationLabel;
             using (ImRaii.Disabled(blocker is not null))
             {
-                if (ImGui.SmallButton($"Perform {what}"))
+                if (ImGui.SmallButton($"Perform ({OathText.Hold(terms)})"))
                     rbPerformError = service.Perform(pairing, oathId);
             }
-            IconGlyph.HelpMarker($"Plays it at {pairing.PeerName} and holds you in place for {RestraintLock.Format(TimeSpan.FromSeconds(terms.HoldSeconds))}. It counts once the hold ends; panic or a stop before then doesn't count.");
+            var full = string.IsNullOrEmpty(terms.AnimationId) ? "" : $"\n\nAnimation: {terms.AnimationLabel}";
+            IconGlyph.HelpMarker($"Plays {OathText.Greeting(terms)} at {pairing.PeerName} and holds you in place for {OathText.Hold(terms)}. It counts once the hold ends; panic or a stop before then doesn't count.{full}");
             if (blocker is not null && blocker != "Done for now.")
                 IconGlyph.WrappedDisabled(blocker);
             if (rbPerformError is not null)
@@ -1301,7 +1323,9 @@ public sealed partial class ModuleWindow
                 IconGlyph.WrappedColored(Theme.Warning, $"Changed {rule.Kind.ToLowerInvariant()}: {rule.Name}");
             else
                 continue;
-            IconGlyph.WrappedDisabled(rule.Summary);
+            ImGui.PushID(id);
+            DrawRuleLines(rule.Lines);
+            ImGui.PopID();
             any = true;
         }
         foreach (var (id, rule) in before.Where(kv => !after.ContainsKey(kv.Key)))

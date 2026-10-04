@@ -18,8 +18,12 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 {
     public static readonly TimeSpan OfferLifetime = TimeSpan.FromDays(7);
     private const int MaxActivity = 100;
-    private static readonly TimeSpan ArriveAfter = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan DepartAfter = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ArriveAfter = TimeSpan.FromSeconds(0.5);
+    private static readonly TimeSpan DepartAfter = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan PresenceTickInterval = TimeSpan.FromMilliseconds(250);
+    /// Leaving needs this much past the range, so standing on the edge doesn't flip arrive/leave back and forth.
+    private const float DepartMarginFraction = 0.25f;
+    private const float MinDepartMarginYalms = 1f;
     private static readonly TimeSpan ReportInterval = TimeSpan.FromSeconds(RelayProtocolConstants.RulebookReportMinUploadIntervalSeconds + 5);
 
     private readonly PluginConfig config;
@@ -40,6 +44,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly Dictionary<Guid, DateTime> reportRetryAfter = new();
     private readonly HashSet<Guid> wasRunning = new();
     private DateTime nextSecondTick = DateTime.MinValue;
+    private DateTime nextPresenceTick = DateTime.MinValue;
 
     private sealed class PresenceState
     {
@@ -113,6 +118,15 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         Queue.Pump();
 
         var now = DateTime.UtcNow;
+        // Walking through a few yalms takes about a second, so presence can't wait for the once-a-second tick.
+        if (now >= nextPresenceTick)
+        {
+            nextPresenceTick = now + PresenceTickInterval;
+            foreach (var pairing in SubPairings())
+                if (pairing.Rulebook.Accepted is not null && IsRunning(pairing))
+                    TickPresence(pairing, now);
+        }
+
         if (now < nextSecondTick)
             return;
         nextSecondTick = now.AddSeconds(1);
@@ -124,10 +138,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             {
                 ExpireOffers(pairing);
                 if (IsRunning(pairing))
-                {
                     TickOaths(pairing);
-                    TickPresence(pairing, now);
-                }
             }
             // From the first version received, so the Owner also learns about a pending review, a decline,
             // the permission being off or a panic pause before anything was ever accepted.
@@ -239,6 +250,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         var outcome = Queue.Enqueue(new ConsequenceQueue.Item(pairing.Id, ruleId, label, commands.ToList()), cooldownKey, cooldownSeconds);
         if (outcome == ConsequenceQueue.Outcome.Capped)
             Log(pairing, RulebookEventKind.ConsequenceDropped, ruleId, $"{label}: dropped - more than {ConsequenceQueue.CapCount} consequences in 10 minutes.");
+        else if (outcome == ConsequenceQueue.Outcome.CoolingDown)
+            Log(pairing, RulebookEventKind.ConsequenceSkipped, ruleId, $"{label}: skipped - its cooldown ({Math.Max(cooldownSeconds, RulebookLimits.MinCooldownSeconds)}s) hasn't passed yet.");
     }
 
     // ---- Rulebook versions (Sub) ----
@@ -651,7 +664,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (config.FindPairingById(pairingId) is not { } current || !IsRunning(current) ||
                 !current.Rulebook.Oaths.TryGetValue(oathId, out var st) || st.Status != OathStatus.Open || st.Terms is not { } now)
                 return;
-            CountRitual(current, oathId, st, now, $"greeted {current.PeerName} with {OathText.Greeting(now).TrimEnd(',')}, held {Commands.RestraintLock.Format(TimeSpan.FromSeconds(now.HoldSeconds))}");
+            CountRitual(current, oathId, st, now, $"greeted {current.PeerName} with {OathText.Greeting(now)}, held {OathText.Hold(now)}");
         }
 
         if (!string.IsNullOrEmpty(terms.AnimationId))
@@ -880,6 +893,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (!presence.TryGetValue(key, out var p))
                 presence[key] = p = new PresenceState();
             var inRange = distance is { } d && d <= rule.RangeYalms;
+            var margin = Math.Max(MinDepartMarginYalms, rule.RangeYalms * DepartMarginFraction);
+            var gone = distance is not { } far || far > rule.RangeYalms + margin;
             var name = string.IsNullOrWhiteSpace(rule.Name) ? "Presence rule" : rule.Name;
             if (inRange)
             {
@@ -896,6 +911,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 p.InRangeSince = null;
                 if (!p.Arrived)
                     continue;
+                if (!gone)
+                {
+                    p.OutOfRangeSince = null;
+                    continue;
+                }
                 p.OutOfRangeSince ??= now;
                 if (now - p.OutOfRangeSince >= DepartAfter)
                 {

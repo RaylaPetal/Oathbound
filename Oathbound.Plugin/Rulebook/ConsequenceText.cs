@@ -33,10 +33,10 @@ public static partial class ConsequenceText
                 }
             case "gesture":
                 {
-                    var name = Commands.LockTimerOption.StripSeconds(rest, out var hold).Trim();
+                    var name = AnimationNames.Short(Unquote(LockTimerOption.StripSeconds(rest, out var hold)));
                     return hold is { } seconds
-                        ? $"play gesture {Unquote(name)}, held for {Commands.RestraintLock.Format(TimeSpan.FromSeconds(seconds))}"
-                        : $"play gesture {Unquote(name)}";
+                        ? $"play {name}, held {RestraintLock.Format(TimeSpan.FromSeconds(seconds))}"
+                        : $"play {name}";
                 }
             case "moodle":
                 {
@@ -113,7 +113,31 @@ public static partial class ConsequenceText
     private static partial Regex QuotedPattern();
 }
 
-/// One plain sentence for an oath's condition and scope.
+/// Catalog labels read "mod — group — option — /trigger"; people only need the option, without pack numbering,
+/// [author] tags or (emote list) suffixes.
+public static partial class AnimationNames
+{
+    public static string Short(string label)
+    {
+        var parts = label.Split(" — ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        if (parts.Count > 1 && parts[^1].StartsWith('/'))
+            parts.RemoveAt(parts.Count - 1);
+        var name = parts.Count > 1 ? parts[^1] : parts.FirstOrDefault() ?? label;
+        var cleaned = Whitespace().Replace(Noise().Replace(LeadingNumber().Replace(name, ""), ""), " ").Trim(' ', '-', '*');
+        return cleaned.Length > 0 ? cleaned : label.Trim();
+    }
+
+    [GeneratedRegex(@"^\s*\d+\s*[.)]\s*")]
+    private static partial Regex LeadingNumber();
+
+    [GeneratedRegex(@"\[[^\]]*\]|\([^)]*\)")]
+    private static partial Regex Noise();
+
+    [GeneratedRegex(@"\s{2,}")]
+    private static partial Regex Whitespace();
+}
+
+/// An oath's condition and scope as one phrase, and its outcomes as labeled lines.
 public static class OathText
 {
     public static string Describe(Oath oath)
@@ -126,7 +150,7 @@ public static class OathText
             OathCondition.StayInPlaces => $"stay in {Places(oath)}",
             OathCondition.AvoidPlaces => $"stay out of {Places(oath)}",
             OathCondition.Curfew => $"don't be logged in between {Clock(oath.CurfewStartMinutes)} and {Clock(oath.CurfewEndMinutes)}",
-            OathCondition.GreetOwner => $"greet your Owner with {Greeting(oath)} {Repeat(oath)}",
+            OathCondition.GreetOwner => $"greet your Owner with {Greeting(oath)}{(string.IsNullOrEmpty(oath.AnimationId) ? "" : $" (held {Hold(oath)})")} {Repeat(oath)}",
             OathCondition.MessageOwner => $"send your Owner a tell{Containing(oath.Phrase)} {Repeat(oath)}",
             OathCondition.CheckIn => $"log in at least once {Every(oath.PeriodDays)}",
             OathCondition.SayGoodnight => $"tell your Owner goodnight{Containing(oath.Phrase)} before you log off",
@@ -139,16 +163,16 @@ public static class OathText
         return $"{condition} {scope}";
     }
 
-    private static string Duration(Oath oath) => Commands.RestraintLock.Format(System.TimeSpan.FromMinutes(oath.DurationMinutes));
+    private static string Duration(Oath oath) => RestraintLock.Format(TimeSpan.FromMinutes(oath.DurationMinutes));
+
+    public static string Hold(Oath oath) => RestraintLock.Format(TimeSpan.FromSeconds(oath.HoldSeconds));
 
     /// "day" for daily rituals, "stretch" for longer repeats.
     public static string Unit(Oath oath) => oath.PeriodDays == 1 ? "day" : "stretch";
 
-    /// The emote by its command, or a modded animation by name with its hold (only Perform plays those).
+    /// The emote by its command, or a modded animation by its short name.
     public static string Greeting(Oath oath) =>
-        string.IsNullOrEmpty(oath.AnimationId)
-            ? EmoteName(oath.EmoteId)
-            : $"the animation \"{oath.AnimationLabel}\", held {Commands.RestraintLock.Format(System.TimeSpan.FromSeconds(oath.HoldSeconds))},";
+        string.IsNullOrEmpty(oath.AnimationId) ? EmoteName(oath.EmoteId) : AnimationNames.Short(oath.AnimationLabel);
 
     private static string Repeat(Oath oath) =>
         $"{(oath.TimesPerPeriod == 1 ? "once" : oath.TimesPerPeriod == 2 ? "twice" : $"{oath.TimesPerPeriod} times")} {Every(oath.PeriodDays)}";
@@ -166,91 +190,122 @@ public static class OathText
         return string.IsNullOrWhiteSpace(command) ? row?.Name.ExtractText() ?? "a gesture" : command;
     }
 
-    public static string Outcomes(Oath oath)
+    /// "Swear to", then when each outcome applies and what it does, then per-time scoring.
+    public static List<(string Label, string Text)> Lines(Oath oath)
     {
-        static string Part(System.Collections.Generic.IReadOnlyList<string> commands, int ledger)
+        static string Part(IReadOnlyList<string> commands, int ledger)
         {
-            var text = commands.Count == 0 ? "" : ConsequenceText.Describe(commands);
+            var parts = commands.Select(ConsequenceText.Describe).ToList();
             if (ledger != 0)
-                text += (text.Length > 0 ? "; " : "") + $"{(ledger > 0 ? "+" : "")}{ledger} ledger";
-            return text.Length == 0 ? "nothing" : text;
+                parts.Add($"{Signed(ledger)} ledger");
+            return parts.Count == 0 ? "nothing" : string.Join("; ", parts);
         }
-        static string Signed(int v) => $"{(v > 0 ? "+" : "")}{v}";
 
+        var lines = new List<(string, string)> { ("Swear to", RuleText.Cap(Describe(oath))) };
         var kept = Part(oath.Kept, oath.KeptLedger);
         var broken = Part(oath.Broken, oath.BrokenLedger);
         if (OathConditions.IsRitual(oath.Condition))
         {
             var unit = Unit(oath);
-            var text = $"after {Duration(oath)}, if no {unit} was missed: {kept}. If any {unit} was missed: {broken}.";
+            lines.Add(("Kept", $"After {Duration(oath)} with no {unit} missed: {kept}"));
+            lines.Add(("Broken", $"At the end, if any {unit} was missed: {broken}"));
+            var each = new List<string>();
             if (oath.LedgerPerDone != 0)
-                text += $" Each time done: {Signed(oath.LedgerPerDone)} ledger.";
+                each.Add($"{Signed(oath.LedgerPerDone)} ledger when done");
             if (oath.LedgerPerMissed != 0)
-                text += $" Each one missed: {Signed(oath.LedgerPerMissed)} ledger.";
-            return text;
+                each.Add($"{Signed(oath.LedgerPerMissed)} ledger for each one missed");
+            if (each.Count > 0)
+                lines.Add(("Each time", RuleText.Cap(string.Join(", ", each))));
         }
-        var now = broken == "nothing" ? broken : $"{broken}, right away";
-        return oath.Scope == OathScope.NextDuty
-            ? $"if kept through the duty: {kept}. If broken: {now}."
-            : $"if kept for the full {Duration(oath)}: {kept}. If broken: {now}.";
+        else
+        {
+            lines.Add(("Kept", oath.Scope == OathScope.NextDuty ? $"When the duty is completed: {kept}" : $"After the full {Duration(oath)}: {kept}"));
+            lines.Add(("Broken", $"Right away: {broken}"));
+        }
+        return lines;
     }
 
+    private static string Signed(int v) => $"{(v > 0 ? "+" : "")}{v}";
+
     private static string Places(Oath oath) =>
-        oath.Places.Count == 0 ? "(no places)" : string.Join(", ", System.Linq.Enumerable.Select(oath.Places, RulebookPlaces.Describe));
+        oath.Places.Count == 0 ? "(no places)" : string.Join(", ", oath.Places.Select(RulebookPlaces.Describe));
 
     public static string Clock(int minutes) => $"{minutes / 60:00}:{minutes % 60:00}";
 }
 
-/// One summary line per rule; the Sub's review diff and the Owner's lists both use these.
+/// Each rule as a few labeled lines; the Sub's rules list, the review diff and the Owner's lists all use these.
 public static class RuleText
 {
-    public static string Place(PlaceRule r) =>
-        $"In {string.Join(", ", System.Linq.Enumerable.Select(r.Places, RulebookPlaces.Describe))}: on entering, {ConsequenceText.Describe(r.Enter)}; on leaving, {ConsequenceText.Describe(r.Leave)}. Cooldown {r.CooldownSeconds}s.";
+    public static List<(string Label, string Text)> Place(PlaceRule r) =>
+    [
+        ("Where", Cap(string.Join(", ", r.Places.Select(RulebookPlaces.Describe)))),
+        ("On entering", Cap(ConsequenceText.Describe(r.Enter))),
+        ("On leaving", Cap(ConsequenceText.Describe(r.Leave))),
+        ("Cooldown", $"{r.CooldownSeconds}s"),
+    ];
 
-    public static string Presence(PresenceRule r, string owner) =>
-        $"When {owner} comes within {r.RangeYalms:0} yalms: {ConsequenceText.Describe(r.Arrive)}; when they leave: {ConsequenceText.Describe(r.Depart)}. Cooldown {r.CooldownSeconds}s.";
+    public static List<(string Label, string Text)> Presence(PresenceRule r, string owner) =>
+    [
+        ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms"),
+        ("Arrives", Cap(ConsequenceText.Describe(r.Arrive))),
+        ("Leaves", Cap(ConsequenceText.Describe(r.Depart))),
+        ("Cooldown", $"{r.CooldownSeconds}s"),
+    ];
 
-    public static string Threshold(LedgerThreshold t)
+    public static List<(string Label, string Text)> Threshold(LedgerThreshold t)
     {
-        var what = ConsequenceText.Describe(t.Consequence);
+        var parts = t.Consequence.Select(ConsequenceText.Describe).ToList();
         if (t.DrawCard)
+            parts.Add($"draw a {CardPiles.Word(t.Pile)} card");
+        var lines = new List<(string, string)>
         {
-            var draw = $"draw a {CardPiles.Word(t.Pile)} card";
-            what = t.Consequence.Count == 0 ? draw : what + "; " + draw;
-        }
-        var reset = t.ResetTo is { } to ? $", then reset to {to}" : "";
-        return $"When the ledger is {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}: {what}{reset}.";
+            ("When", $"The ledger is {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}"),
+            ("Does", Cap(parts.Count == 0 ? "nothing" : string.Join("; ", parts))),
+        };
+        if (t.ResetTo is { } to)
+            lines.Add(("Then", $"Reset the ledger to {to}"));
+        return lines;
     }
 
-    public static string Card(DeckCard c) =>
-        $"{(c.Pile == CardPile.Reward ? "Reward" : "Punishment")}, weight {c.Weight}{(c.Once ? ", once" : "")}: {ConsequenceText.Describe(c.Consequence)}.";
+    public static List<(string Label, string Text)> Card(DeckCard c) =>
+    [
+        ("Does", Cap(ConsequenceText.Describe(c.Consequence))),
+        ("Pile", $"{(c.Pile == CardPile.Reward ? "Reward" : "Punishment")}, weight {c.Weight}{(c.Once ? ", only once" : "")}"),
+    ];
 
-    public static string DrawOn(DrawOnSettings d)
+    public static List<(string Label, string Text)> DrawOn(DrawOnSettings d)
     {
-        var bad = new System.Collections.Generic.List<string>();
+        var bad = new List<string>();
         if (d.OathBroken) bad.Add("an oath is broken");
         if (d.Wipe) bad.Add("the party wipes");
         if (d.Death) bad.Add("your character dies");
-        var parts = new System.Collections.Generic.List<string>();
-        if (bad.Count > 0) parts.Add($"a punishment card when {string.Join(", ", bad)}");
-        if (d.OathKept) parts.Add("a reward card when an oath is kept");
-        return parts.Count == 0 ? "Never draws by itself." : $"Draws {string.Join("; ", parts)}. Cooldown {d.CooldownSeconds}s.";
+        var lines = new List<(string, string)>();
+        if (bad.Count > 0) lines.Add(("Punishment", $"When {string.Join(", ", bad)}"));
+        if (d.OathKept) lines.Add(("Reward", "When an oath is kept"));
+        if (lines.Count == 0)
+            return [("", "Never draws by itself.")];
+        lines.Add(("Cooldown", $"{d.CooldownSeconds}s"));
+        return lines;
     }
 
-    public static string Oath(Oath o) => $"{OathText.Describe(o)} - {OathText.Outcomes(o)}";
+    public static List<(string Label, string Text)> Oath(Oath o) => OathText.Lines(o);
 
-    /// Every rule of a document by id, with a kind label and summary, for diffs and switch lists.
-    public static System.Collections.Generic.List<(string Id, string Kind, string Name, string Summary)> All(RulebookDocument doc, string owner)
+    /// Every rule of a document by id, with a kind label and its lines; Summary joins them for change detection.
+    public static List<(string Id, string Kind, string Name, string Summary, List<(string Label, string Text)> Lines)> All(RulebookDocument doc, string owner)
     {
-        var list = new System.Collections.Generic.List<(string, string, string, string)>();
-        foreach (var o in doc.Oaths) list.Add((o.Id, "Oath", Name(o.Name, "Oath"), Oath(o)));
-        foreach (var c in doc.Deck) list.Add((c.Id, "Card", Name(c.Name, "Card"), Card(c)));
-        foreach (var p in doc.Places) list.Add((p.Id, "Place rule", Name(p.Name, "Place rule"), Place(p)));
-        foreach (var p in doc.Presence) list.Add((p.Id, "Presence rule", Name(p.Name, "Presence rule"), Presence(p, owner)));
-        foreach (var t in doc.Thresholds) list.Add((t.Id, "Ledger threshold", Name(t.Name, "Threshold"), Threshold(t)));
-        list.Add((DrawOnSettings.RuleId, "Deck", "Deck draws on events", DrawOn(doc.DrawOn)));
+        var list = new List<(string, string, string, string, List<(string, string)>)>();
+        void Add(string id, string kind, string name, List<(string Label, string Text)> lines) =>
+            list.Add((id, kind, name, string.Join("\n", lines.Select(l => $"{l.Label}: {l.Text}")), lines));
+        foreach (var o in doc.Oaths) Add(o.Id, "Oath", Name(o.Name, "Oath"), Oath(o));
+        foreach (var c in doc.Deck) Add(c.Id, "Card", Name(c.Name, "Card"), Card(c));
+        foreach (var p in doc.Places) Add(p.Id, "Place rule", Name(p.Name, "Place rule"), Place(p));
+        foreach (var p in doc.Presence) Add(p.Id, "Presence rule", Name(p.Name, "Presence rule"), Presence(p, owner));
+        foreach (var t in doc.Thresholds) Add(t.Id, "Ledger threshold", Name(t.Name, "Threshold"), Threshold(t));
+        Add(DrawOnSettings.RuleId, "Deck", "Deck draws on events", DrawOn(doc.DrawOn));
         return list;
     }
+
+    public static string Cap(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     private static string Name(string name, string fallback) => string.IsNullOrWhiteSpace(name) ? $"({fallback.ToLowerInvariant()} without a name)" : name;
 }
