@@ -277,10 +277,10 @@ public class SettingsWindow : Window, IDisposable
         {
             if (ImGui.BeginTable("pairingsTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.SizingStretchProp))
             {
-                ImGui.TableSetupColumn("Side", ImGuiTableColumnFlags.WidthFixed, 80f);
+                ImGui.TableSetupColumn("Side", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("Owned by").X);
                 ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthStretch, 2f);
                 ImGui.TableSetupColumn("Trigger phrase", ImGuiTableColumnFlags.WidthStretch, 1f);
-                ImGui.TableSetupColumn("##unpair", ImGuiTableColumnFlags.WidthFixed, 64f);
+                ImGui.TableSetupColumn("##unpair", ImGuiTableColumnFlags.WidthFixed, Layout.ButtonWidth("Unpair"));
                 ImGui.TableHeadersRow();
 
                 foreach (var p in activePairings)
@@ -290,19 +290,20 @@ public class SettingsWindow : Window, IDisposable
 
                     ImGui.TableNextColumn();
                     var owns = p.Direction == PairingDirection.OwnerSide;
-                    IconGlyph.WrappedColored(owns ? Theme.Accent : Theme.Success, owns ? "Owns" : "Owned by");
+                    ImGui.TextColored(owns ? Theme.Accent : Theme.Success, owns ? "Owns" : "Owned by");
 
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted($"{p.PeerName}@{p.PeerWorld}");
+                    ImGui.TextWrapped($"{p.PeerName}@{p.PeerWorld}");
+                    // Wrapping text after SameLine in a narrow cell breaks it one character per line.
                     if (config.ActivePairingId == p.Id)
                     {
-                        ImGui.SameLine();
-                        IconGlyph.WrappedDisabled("(active)");
+                        Layout.ContinueRowOrWrap(ImGui.CalcTextSize("(active)").X);
+                        ImGui.TextDisabled("(active)");
                     }
 
                     ImGui.TableNextColumn();
                     var (phrase, source) = TriggerPhraseInEffect(config, p);
-                    ImGui.TextUnformatted(phrase);
+                    ImGui.TextWrapped(phrase);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(source);
 
