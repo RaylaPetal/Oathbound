@@ -27,11 +27,10 @@ public static class OwnerStatusView
                     ? $"restrained (unlocks in {Commands.RestraintLock.Format(until - DateTime.UtcNow)})"
                     : "restrained");
             if (estimate.Leashed) parts.Add("leashed");
-            IconGlyph.WrappedColored(Theme.Success, $"Estimated state: {string.Join(", ", parts)}");
-            ImGui.SameLine();
+            Layout.TextWithActions($"Estimated state: {string.Join(", ", parts)}", Layout.ActionsWidth("Clear estimate"), t => ImGui.TextColored(Theme.Success, t));
             if (ImGui.SmallButton("Clear estimate##ownerStatusClear"))
                 plugin.OwnerStatusEstimates.Clear(pairing.Id);
         }
-        IconGlyph.HelpMarker("An estimate from the commands you sent - it drives the icons and leash line you see. The leash is the one exception: your Sub's client tells yours when their leash comes off on their side. For everything else, your client can't see your Sub's panic, their own releases, or a command their client refused; use Clear estimate if it's stale.");
+        IconGlyph.HelpMarker("Based on what you sent - your client can't see your Sub's side. Clear it if it's wrong.");
     }
 }

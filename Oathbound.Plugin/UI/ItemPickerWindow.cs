@@ -134,7 +134,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Choose any item valid for this slot - it does not need to be equipped or owned.");
         ImGui.Separator();
 
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+        ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##itemPickerSearch", "Search item name...", ref search, 128);
 
         var filter = search.Trim();
@@ -149,8 +149,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
 
         foreach (var (itemId, name) in visible)
         {
-            ImGui.TextUnformatted(name);
-            ImGui.SameLine();
+            Layout.TextWithActions(name, Layout.ButtonWidth("Choose"));
             if (ImGui.SmallButton($"Choose##itemPicker_{itemId}"))
             {
                 onChosen?.Invoke(itemId, name);

@@ -90,7 +90,7 @@ public class SettingsWindow : Window, IDisposable
             var state = status.Get(dependency.Id);
             var color = state == DependencyState.Ready ? Theme.Success : Theme.StatusMissing;
 
-            var width = ImGui.CalcTextSize(dependency.Name).X + 18f;
+            var width = ImGui.CalcTextSize(dependency.Name).X + Layout.Scaled(18f);
             if (used > 0f && used + spacing + width <= available)
                 ImGui.SameLine();
             else
@@ -101,7 +101,7 @@ public class SettingsWindow : Window, IDisposable
             using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
             using (ImRaii.PushColor(ImGuiCol.Text, color))
                 ImGui.TextUnformatted(FontAwesomeIcon.Circle.ToIconString());
-            ImGui.SameLine(0f, 4f);
+            ImGui.SameLine(0f, Layout.Scaled(4f));
             ImGui.TextUnformatted(dependency.Name);
             ImGui.EndGroup();
 
@@ -132,8 +132,6 @@ public class SettingsWindow : Window, IDisposable
             DrawIdentityCard(config);
             using (Section.Begin("recoveryCard"))
                 recoveryView.Draw();
-            using (Section.Begin("worldVisualsCard"))
-                DrawWorldVisualsCard(config);
             using (Section.Begin("tutorialCard"))
                 DrawTutorialCard(config);
             ImGui.EndTabItem();
@@ -143,7 +141,7 @@ public class SettingsWindow : Window, IDisposable
         if (ImGui.BeginTabItem("Permissions", TabFlags(requested, SettingsTab.Permissions)))
         {
             if (config.Role == PluginRole.Owner)
-                IconGlyph.WrappedDisabled("Permissions only apply while you're set to Sub - they're what a Sub accepts from a paired Owner. Switch your role in Identity & Pairing to configure them.");
+                IconGlyph.WrappedDisabled("Permissions only apply to Subs. Switch your role in Identity & Pairing to set them.");
             else
                 using (Section.Begin("permissionsCard"))
                     plugin.ModuleWindow.DrawPermissionsCard();
@@ -178,7 +176,7 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.FlaskVial, "Test an Owner command");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Type the exact text an Owner would send after \"/tell you\" - trigger phrase included - and run it locally. No pairing or peer needed, and nothing is sent or received.");
+        IconGlyph.WrappedDisabled("Type what an Owner would send after \"/tell you\" and run it on yourself. Nothing is sent.");
 
         var aliases = config.Aliases;
         var savedTriggers = new List<(string Label, string Command)>
@@ -210,7 +208,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.TextUnformatted("Choose one of your triggers");
         testCustomTriggerIndex = Math.Clamp(testCustomTriggerIndex, 0, savedTriggers.Count - 1);
         var triggerNames = savedTriggers.Select(t => t.Label).ToArray();
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+        ImGui.SetNextItemWidth(-1);
         ImGui.Combo("##testSavedTrigger", ref testCustomTriggerIndex, triggerNames, triggerNames.Length);
         var selectedCommand = $"{config.TriggerPhrase.Trim()} {savedTriggers[testCustomTriggerIndex].Command}".Trim();
         if (ImGui.SmallButton("Put in test box"))
@@ -363,10 +361,10 @@ public class SettingsWindow : Window, IDisposable
             return;
         var label = delivery switch
         {
-            "delivered" => "Last unpair relay notice was delivered.",
-            "pending" => "Local unpair completed; relay notification is pending retry.",
-            "expired" => "Local unpair completed; its relay notification expired before delivery.",
-            _ => "Local unpair completed; its relay notification failed.",
+            "delivered" => "Your last unpair reached them.",
+            "pending" => "Unpaired here; still letting them know.",
+            "expired" => "Unpaired here; they weren't notified in time.",
+            _ => "Unpaired here; they couldn't be notified.",
         };
         IconGlyph.WrappedColored(delivery == "delivered" ? Theme.Success : Theme.Warning, label);
     }
@@ -383,7 +381,7 @@ public class SettingsWindow : Window, IDisposable
             var roleLabel = request.SenderRole == PluginRole.Owner ? "your Owner" : "your Sub";
             var expiresIn = TimeSpan.FromSeconds(Math.Max(0, request.ExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             var invitationExpired = request.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            IconGlyph.WrappedColored(Theme.Warning, $"Invitation by tell from {request.Name}@{request.World} (verified sender, signature checked) - they say they'll be {roleLabel}. Expires in {expiresIn.Minutes}m {expiresIn.Seconds}s.");
+            IconGlyph.WrappedColored(Theme.Warning, $"Invitation from {request.Name}@{request.World} - they'll be {roleLabel}. Expires in {expiresIn.Minutes}m {expiresIn.Seconds}s.");
             if (request.SenderRole == config.Role)
                 IconGlyph.WrappedColored(Theme.Danger, $"You're both set to {config.Role} - one of you should switch Role, or nothing will ever trigger.");
             using (ImRaii.Disabled(acceptingInvitation || invitationExpired))
@@ -414,16 +412,13 @@ public class SettingsWindow : Window, IDisposable
 
         ImGui.Spacing();
         if (plugin.RelayClient.LastReachable is false)
-            IconGlyph.WrappedColored(Theme.Warning, "The relay was unreachable on the last attempt - pairing needs it, but existing pairings, commands and panic keep working.");
-        else
-            IconGlyph.WrappedDisabled("Pairing goes through Oathbound's own secure relay.");
-        IconGlyph.HelpMarker("Pairing, recovery backups and encrypted catalog sync use Oathbound's fixed Cloudflare relay; it never sees character names or command contents. The endpoint can't be changed by plugin configuration.");
+            IconGlyph.WrappedColored(Theme.Warning, "Couldn't reach Oathbound's server last time. Pairing needs it, but commands and panic still work.");
     }
 
     private void DrawTellPairing(PluginConfig config)
     {
         var pairingService = plugin.PairingService;
-        ImGui.TextWrapped("Enter who to pair with, exactly as you'd address a tell, then Send. Both of you need to be online and able to send tells.");
+        ImGui.TextWrapped("Enter who to pair with as you'd address a tell. You both need to be online.");
         if (config.Role == PluginRole.Switch)
         {
             if (ImGui.RadioButton("Invite as Owner (they'll be your Sub)", inviteAsOwnerSide)) inviteAsOwnerSide = true;
@@ -447,7 +442,7 @@ public class SettingsWindow : Window, IDisposable
                 }
             }
         }
-        IconGlyph.HelpMarker("Creates a single-use relay invitation (expires in 15 minutes) and sends its reference in one tell. They accept it, an acknowledgement tell comes back automatically, and you're both paired.");
+        IconGlyph.HelpMarker("Sends a pairing invitation by tell. It expires in 15 minutes.");
         if (confirmingInviteReplace && pairingService.DescribeOutstandingInvitation() is { } outstandingInvite)
         {
             IconGlyph.WrappedColored(Theme.Danger, $"You already have an unconfirmed invitation outstanding to {outstandingInvite.Target}. Sending a new one abandons it - if they accept it later, nothing will happen on your side.");
@@ -478,7 +473,7 @@ public class SettingsWindow : Window, IDisposable
         using (ImRaii.Disabled(subLocked))
         {
             var roleIndex = config.Role switch { PluginRole.Owner => 1, PluginRole.Switch => 2, _ => 0 };
-            ImGui.SetNextItemWidth(160f);
+            Layout.ItemWidth(160);
             if (ImGui.Combo("Role", ref roleIndex, RoleNames, RoleNames.Length))
             {
                 config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
@@ -486,11 +481,11 @@ public class SettingsWindow : Window, IDisposable
                 plugin.Tutorial.StartOverviewIfUnseen(config.Role);
             }
         }
-        IconGlyph.HelpMarker("Which side(s) of a pairing you can hold. A Sub reacts to command tells and applies them locally; an Owner sends them; a Switch can be both at once. Every category tab shows its Sub or Owner view based on the active pairing.");
+        IconGlyph.HelpMarker("Sub receives commands, Owner sends them, Switch can do both.");
 
         using (ImRaii.Disabled(subLocked))
         {
-            ImGui.SetNextItemWidth(160f);
+            Layout.ItemWidth(160);
             if (ImGui.InputText("Trigger phrase", ref triggerPhraseInput, 32))
             {
                 config.TriggerPhrase = triggerPhraseInput;
@@ -504,7 +499,7 @@ public class SettingsWindow : Window, IDisposable
 
         ImGui.Spacing();
         var linkshellNumber = config.LinkshellNumber;
-        ImGui.SetNextItemWidth(80f);
+        Layout.ItemWidth(80);
         if (ImGui.InputInt("Linkshell number", ref linkshellNumber))
         {
             config.LinkshellNumber = Math.Clamp(linkshellNumber, 1, 8);
@@ -513,13 +508,13 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.HelpMarker("Which of your 8 linkshells outgoing commands use when the header's channel selector is set to Linkshell.");
 
         var cwlsNumber = config.CrossWorldLinkshellNumber;
-        ImGui.SetNextItemWidth(80f);
+        Layout.ItemWidth(80);
         if (ImGui.InputInt("Cross-world Linkshell number", ref cwlsNumber))
         {
             config.CrossWorldLinkshellNumber = Math.Clamp(cwlsNumber, 1, 8);
             config.Save();
         }
-        IconGlyph.HelpMarker("Which of your 8 cross-world linkshells outgoing commands use when the header's channel selector is set to Cross-world Linkshell.");
+        IconGlyph.HelpMarker("Which cross-world linkshell commands use when that channel is picked.");
     }
 
     private async System.Threading.Tasks.Task SendInvitationAsync(string target)
@@ -559,7 +554,7 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.Fingerprint, "Device Identity");
         var fingerprint = identity.DeviceKeyId is { Length: >= 16 } id ? id[..16] : identity.DeviceKeyId ?? "(none)";
         ImGui.TextUnformatted($"Fingerprint: {fingerprint}...");
-        IconGlyph.HelpMarker("Identifies this installation to the relay - never your character. Regenerated only on an explicit reset below.");
+        IconGlyph.HelpMarker("Identifies this install, never your character.");
 
         if (!OperatingSystem.IsWindows())
         {
@@ -576,7 +571,7 @@ public class SettingsWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.TextMuted, $"Available again in {(int)remaining.TotalMinutes}m {remaining.Seconds}s.");
         if (confirmingIdentityReset)
         {
-            IconGlyph.WrappedColored(Theme.Danger, "This ends every relay-assisted pairing this device holds and cannot be undone. Are you sure?");
+            IconGlyph.WrappedColored(Theme.Danger, "This ends every pairing on this device and can't be undone. Are you sure?");
             using (ImRaii.Disabled(!identity.CanReset))
             {
                 if (ImGui.Button("Confirm reset"))
@@ -591,75 +586,11 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// Only changes what this client draws; the leash keeps working with its line hidden.
-    private void DrawWorldVisualsCard(PluginConfig config)
-    {
-        IconGlyph.Text(FontAwesomeIcon.Eye, "In-world visuals");
-        ImGui.Separator();
-        ImGui.TextWrapped("Only you and your paired Owner/Sub see these - nobody else, and nothing extra is sent.");
-
-        var showIcons = config.ShowStatusIcons;
-        if (ImGui.Checkbox("Show status icons on nameplates", ref showIcons))
-        {
-            config.ShowStatusIcons = showIcons;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Gagged, restrained and leashed icons next to the name. On an Owner's screen these are an estimate from the commands you sent (the leash icon also clears when your Sub's leash comes off on their side).");
-
-        var showLeash = config.ShowLeashLine;
-        if (ImGui.Checkbox("Show leash line", ref showLeash))
-        {
-            config.ShowLeashLine = showLeash;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("A line from the Sub's neck to the Owner's hand while leashed. Hiding it doesn't release the leash.");
-
-        using (ImRaii.Disabled(!config.ShowLeashLine))
-            DrawLeashAppearance(config);
-    }
-
-    private static void DrawLeashAppearance(PluginConfig config)
-    {
-        using var indent = ImRaii.PushIndent();
-
-        var color = config.LeashColor;
-        if (ImGui.ColorEdit3("Leash color", ref color, ImGuiColorEditFlags.NoInputs))
-        {
-            config.LeashColor = color;
-            config.Save();
-        }
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Reset##leashAppearance"))
-        {
-            config.LeashColor = PluginConfig.DefaultLeashColor;
-            config.LeashBrightness = 1f;
-            config.LeashOpacity = 1f;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Only changes how the leash looks on your own screen; nothing is sent to your partner, who picks their own. Reset restores the default crimson.");
-
-        var brightness = (int)MathF.Round(config.LeashBrightness * 100f);
-        ImGui.SetNextItemWidth(200f);
-        if (ImGui.SliderInt("Brightness##leash", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
-        {
-            config.LeashBrightness = brightness / 100f;
-            config.Save();
-        }
-
-        var opacity = (int)MathF.Round(config.LeashOpacity * 100f);
-        ImGui.SetNextItemWidth(200f);
-        if (ImGui.SliderInt("Opacity##leash", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
-        {
-            config.LeashOpacity = opacity / 100f;
-            config.Save();
-        }
-    }
-
     private void DrawTutorialCard(PluginConfig config)
     {
         IconGlyph.Text(FontAwesomeIcon.GraduationCap, "Guided tutorial");
         ImGui.Separator();
-        ImGui.TextWrapped("Replays the guided overview for your active pairing's direction (or Role, with nothing active). Every module also has its own tour behind the ? in its title bar.");
+        ImGui.TextWrapped("Replays the overview tour. Each module also has its own tour behind the ? in its title bar.");
 
         if (ImGui.Button("Rerun Tutorial"))
             plugin.Tutorial.StartOverview(config.ResolveActiveDirection());

@@ -70,8 +70,8 @@ public sealed class AnimationPickerWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Choose the exact named option and trigger for this alias.");
         ImGui.Separator();
 
-        const float buttonWidth = 82;
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X - buttonWidth - ImGui.GetStyle().ItemSpacing.X));
+        var buttonWidth = Layout.Scaled(82);
+        ImGui.SetNextItemWidth(Math.Max(1f, ImGui.GetContentRegionAvail().X - buttonWidth - ImGui.GetStyle().ItemSpacing.X));
         ImGui.InputTextWithHint("##animationPickerSearch", "Search mod, group, animation, command, or pose...", ref search, 128);
         ImGui.SameLine();
         if (ImGui.Button("Rescan", new Vector2(buttonWidth, 0))) plugin.GestureCommand.Rescan();
@@ -124,21 +124,24 @@ public sealed class AnimationPickerWindow : Window, IDisposable
                         ImGui.Indent();
                         if (entry.Trigger is null)
                         {
-                            IconGlyph.WrappedDisabled("Enable this Penumbra option only (idle/walk)");
+                            const string triggerlessLabel = "Enable this Penumbra option only (idle/walk)";
                             if (includeTriggerless)
                             {
-                                ImGui.SameLine();
+                                Layout.TextWithActions(triggerlessLabel, Layout.ActionsWidth("Choose"), t => ImGui.TextDisabled(t));
                                 if (ImGui.SmallButton($"Choose##pickerChoose_{entry.Id}"))
                                 {
                                     onSelected?.Invoke(entry);
                                     IsOpen = false;
                                 }
                             }
+                            else
+                            {
+                                IconGlyph.WrappedDisabled(triggerlessLabel);
+                            }
                         }
                         else
                         {
-                            IconGlyph.WrappedColored(Theme.Accent, entry.Trigger.Label);
-                            ImGui.SameLine();
+                            Layout.TextWithActions(entry.Trigger.Label, Layout.ActionsWidth("Choose"), t => ImGui.TextColored(Theme.Accent, t));
                             if (ImGui.SmallButton($"Choose##pickerChoose_{entry.Id}"))
                             {
                                 onSelected?.Invoke(entry);

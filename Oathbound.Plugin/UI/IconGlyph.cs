@@ -24,7 +24,7 @@ public static class IconGlyph
 
     public static void HelpMarker(string tooltip)
     {
-        ImGui.SameLine();
+        Layout.ContinueRowOrWrap(ImGui.CalcTextSize("(?)").X);
         ImGui.TextDisabled("(?)");
         if (!ImGui.IsItemHovered())
             return;

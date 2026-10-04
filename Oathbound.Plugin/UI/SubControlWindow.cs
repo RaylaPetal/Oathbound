@@ -53,7 +53,7 @@ public sealed class SubControlWindow : Window, IDisposable
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (!isOwnerMode)
         {
-            IconGlyph.WrappedDisabled("Sub Control is an Owner-side concept - open it while paired as Owner to see and send every command configured for your Sub.");
+            IconGlyph.WrappedDisabled("Sub Control is for Owners - open it while paired as Owner.");
             return;
         }
 
@@ -114,7 +114,7 @@ public sealed class SubControlWindow : Window, IDisposable
             return;
 
         ImGui.Indent();
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+        ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint($"##subControlSearch_{label}", $"Search {label}...", ref search, 128);
 
         var filter = search.Trim();
@@ -164,7 +164,7 @@ public sealed class SubControlWindow : Window, IDisposable
             if (rows.Count > ModSearchThreshold)
             {
                 var modFilter = modSearches.GetValueOrDefault(mod.Key, "");
-                ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+                ImGui.SetNextItemWidth(-1);
                 if (ImGui.InputTextWithHint($"##subControlAnimModSearch_{mod.Key}", $"Search {mod.Key}...", ref modFilter, 128))
                     modSearches[mod.Key] = modFilter;
                 var trimmed = modFilter.Trim();

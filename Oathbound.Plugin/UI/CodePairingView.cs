@@ -24,7 +24,7 @@ public sealed class CodePairingView
     public void Draw(PluginConfig config)
     {
         var service = plugin.CodePairingService;
-        ImGui.TextWrapped("Create a code and give it to the other person any way you like (Discord, /say, in person), or enter a code someone gave you. No tells are sent, and you don't both need to be online at the same time.");
+        ImGui.TextWrapped("Create a code and share it however you like, or enter a code someone gave you. You don't both need to be online.");
         ImGui.Spacing();
 
         DrawOutgoing(config, service);
@@ -38,8 +38,7 @@ public sealed class CodePairingView
             IconGlyph.WrappedColored(Theme.Danger, error);
         if (service.Notice is { Length: > 0 } notice)
         {
-            IconGlyph.WrappedColored(Theme.Warning, notice);
-            ImGui.SameLine();
+            Layout.TextWithActions(notice, Layout.ActionsWidth("OK"), t => ImGui.TextColored(Theme.Warning, t));
             if (ImGui.SmallButton("OK##codePairingNotice"))
                 service.DismissNotice();
         }
@@ -60,7 +59,7 @@ public sealed class CodePairingView
                 if (ImGui.Button(busy ? "Creating..." : "Create pairing code"))
                     CreateCode(config);
             }
-            IconGlyph.HelpMarker("Makes a single-use code that works for 7 days. When they enter it, you'll be asked to confirm it's really them before the pairing starts.");
+            IconGlyph.HelpMarker("A single-use code that lasts 7 days. You'll confirm who entered it before pairing.");
             return;
         }
 
@@ -115,11 +114,11 @@ public sealed class CodePairingView
                 if (ImGui.Button("Decline##codeDecline"))
                     service.DeclinePreview();
             }
-            IconGlyph.HelpMarker("Accepting sends them your character name and world (encrypted - the relay can't read it). The pairing starts once they confirm it's you, the next time they're online.");
+            IconGlyph.HelpMarker("Sends them your character name and world. Pairing starts once they confirm it's you.");
             return;
         }
 
-        ImGui.SetNextItemWidth(220f);
+        Layout.ItemWidth(220);
         ImGui.InputTextWithHint("##pairingCodeInput", "K7QM-3XRP-9DTA-WV2E", ref codeInput, 32);
         ImGui.SameLine();
         using (ImRaii.Disabled(busy || codeInput.Trim().Length == 0))

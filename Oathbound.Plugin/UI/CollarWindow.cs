@@ -5,6 +5,7 @@ using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 
@@ -72,10 +73,13 @@ public class CollarWindow : Window, IDisposable
         var titleBarHeight = ImGui.GetFrameHeight();
         var bottomPadding = ImGui.GetStyle().WindowPadding.Y;
         var height = titleBarHeight + lastContentHeight + bottomPadding;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(MinWidth, height), MaximumSize = new Vector2(float.MaxValue, height) };
+        // Dalamud multiplies SizeConstraints by the global scale, but `height` is already measured in screen pixels.
+        var scale = ImGuiHelpers.GlobalScale;
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(MinWidth, height / scale), MaximumSize = new Vector2(float.MaxValue, height / scale) };
 
-        if (LastSize.Y > 0 && (Math.Abs(LastSize.Y - height) > 0.5f || LastSize.X < MinWidth))
-            ImGui.SetNextWindowSize(new Vector2(Math.Max(LastSize.X, MinWidth), height), ImGuiCond.Always);
+        var minWidth = MinWidth * scale;
+        if (LastSize.Y > 0 && (Math.Abs(LastSize.Y - height) > 0.5f || LastSize.X < minWidth))
+            ImGui.SetNextWindowSize(new Vector2(Math.Max(LastSize.X, minWidth), height), ImGuiCond.Always);
     }
 
     public override void PostDraw() => Theme.PopWindowStyle();
@@ -163,7 +167,7 @@ public class CollarWindow : Window, IDisposable
             using (ImRaii.Disabled(invitationExpired))
                 if (ImGui.Button("Accept"))
                     Plugin.FireAndForget(plugin.PairingService.AcceptPendingAsync(System.Threading.CancellationToken.None));
-            IconGlyph.HelpMarker("Trusts this sender as your paired peer from now on. Either direction can be ended any time from Settings' Unpair section - panic no longer does this, it only reverts your current outfit/title/movement-lock/restraint state (a locked collar stays on).");
+            IconGlyph.HelpMarker("Pairs you with this person. You can unpair any time from Settings.");
             ImGui.SameLine();
             if (ImGui.Button("Reject"))
                 plugin.PairingService.DismissPending();
@@ -194,14 +198,14 @@ public class CollarWindow : Window, IDisposable
             ImGui.Spacing();
             ImGui.Separator();
             var channelIndex = (int)config.OutgoingChannel;
-            ImGui.SetNextItemWidth(200f);
+            Layout.ItemWidth(200);
             if (ImGui.Combo("Send commands via##outgoingChannel", ref channelIndex, ChatChannelNames, ChatChannelNames.Length))
             {
                 config.OutgoingChannel = (ChatChannel)channelIndex;
                 config.Save();
             }
             TutorialService.Anchor(TutorialAnchors.MainChannel);
-            IconGlyph.HelpMarker("Which channel your commands are sent on, for every Sub you own. They listen on all of these already, so nothing needs to change on their side. Linkshell/Cross-world Linkshell number is set in Settings.");
+            IconGlyph.HelpMarker("The chat channel your commands go out on. Your Sub listens on all of them.");
             DrawTeleportHeaderAction();
         }
 
@@ -219,7 +223,7 @@ public class CollarWindow : Window, IDisposable
         if (pairedEntries.Count == 0 && notices.Count == 0)
         {
             IconGlyph.WrappedColored(Theme.TextMuted, "Not paired");
-            IconGlyph.WrappedDisabled("Send or accept a relay invitation from Settings when you're ready.");
+            IconGlyph.WrappedDisabled("Pair from Settings when you're ready.");
             return;
         }
 
@@ -227,7 +231,7 @@ public class CollarWindow : Window, IDisposable
         {
             var activeIndex = Math.Max(0, pairedEntries.FindIndex(p => p.Id == config.ActivePairingId));
             var labels = pairedEntries.Select(PairingLabel).ToArray();
-            ImGui.SetNextItemWidth(320f);
+            Layout.ItemWidth(320);
             if (ImGui.Combo("Active pairing", ref activeIndex, labels, labels.Length))
             {
                 config.ActivePairingId = pairedEntries[activeIndex].Id;
@@ -263,7 +267,7 @@ public class CollarWindow : Window, IDisposable
             if (status.State == Relay.CollarStatusReporter.Broken)
             {
                 IconGlyph.WrappedColored(Theme.StatusMissing, $"{pairing.PeerName}'s collar is unlocked");
-                IconGlyph.HelpMarker($"Their plugin reported at {status.StateAt.ToLocalTime():g} that the collar came off without you unlocking it - for example Glamourer stopped working, or the lock couldn't be put back. It clears once their collar is locked again.");
+                IconGlyph.HelpMarker($"Their collar came off without you unlocking it ({status.StateAt.ToLocalTime():g}). This clears once it's locked again.");
             }
             else if (OwnerCollarStatusStore.IsStale(status) && status.CheckinAt is { } checkin)
             {
@@ -385,7 +389,7 @@ public class CollarWindow : Window, IDisposable
     {
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
         if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - Send is disabled until an Owner-side pairing is active (select one in the header, or pair from Settings' handshake if you have none). Copy still works any time.");
+            IconGlyph.WrappedColored(Theme.Warning, "No Sub to send to yet - pick an Owner-side pairing in the header, or pair in Settings. Copy still works.");
         return canSend;
     }
 

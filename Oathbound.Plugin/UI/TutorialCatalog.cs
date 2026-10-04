@@ -90,7 +90,6 @@ public static class TutorialCatalog
             new("Pairing", "Pair with someone by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
             new("Recovery code", "Keeps your pairings safe if you reinstall or move PCs. Write it down somewhere private.", S("recoveryCard"), n => n.Settings(SettingsTab.Identity)),
             new("Acknowledgements", "Some features automate your character more than others. Each one has to be acknowledged here before it can be used.", S("tosCard"), n => n.Settings(SettingsTab.Tos)),
-            new("In-world visuals", "The leash line and the status icons next to your Sub's name. Turn either off here; it only changes what you see.", S("worldVisualsCard"), n => n.Settings(SettingsTab.Identity)),
             new("Test Commands", "Run a command on yourself, exactly as if it arrived in a tell, without anyone sending it.", S("testCommandCard"), n => n.Settings(SettingsTab.Test)),
             new("Every module has a tour", "Open any module and click the ? in its title bar for a tour of that module. Rerun this overview from Settings any time.", TutorialAnchors.MainNav, n => n.Main()),
             new("The safeword", "/obpanic takes everything off the person who types it, except a locked collar - only its Owner or unpairing removes that. It never needs the other person."),
@@ -163,6 +162,7 @@ public static class TutorialCatalog
         [
             Help("follow", "Put your Sub on a leash."),
             new("Commands", "Leash with a length, or unleash. A leashed Sub moves freely inside the length and is pulled along when you walk further. It stays on through teleports and houses until you unleash.", S("followQuickCommands"), n => n.Module("follow")),
+            new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
             Star(),
         ],
         ["reactions"] =
@@ -203,7 +203,6 @@ public static class TutorialCatalog
             new("Recovery code", "Keeps your pairings safe if you reinstall or move PCs. Write it down somewhere private.", S("recoveryCard"), n => n.Settings(SettingsTab.Identity)),
             new("Permissions", "Nothing applies to you unless its category is on here. Turn each one on only when you're comfortable.", S("permissionsCard"), n => n.Settings(SettingsTab.Permissions)),
             new("Acknowledgements", "The heavier features - animations, leash, restraints, teleport, custom chat, toys - each need an acknowledgement here first.", S("tosCard"), n => n.Settings(SettingsTab.Tos)),
-            new("In-world visuals", "The leash line and status icons. Turn either off here; it only changes what you see.", S("worldVisualsCard"), n => n.Settings(SettingsTab.Identity)),
             new("Test Commands", "Try a command on yourself exactly as if your Owner sent it - nobody else is involved.", S("testCommandCard"), n => n.Settings(SettingsTab.Test)),
             new("Every module has a tour", "Open any module and click the ? in its title bar for a tour of that module. Rerun this overview from Settings any time.", TutorialAnchors.MainNav, n => n.Main()),
             new("The safeword", "/obpanic takes everything off you - outfit, title, animation, leash, restraints, toys - except a locked collar. It works any time, without your Owner."),
@@ -270,6 +269,7 @@ public static class TutorialCatalog
             new("Fixed words", "The leash and unleash words your Owner uses.", S("leashFixed"), n => n.Module("follow")),
             new("Leash length", "The longest leash you'll accept. A longer one is shortened to this.", S("leashLimit"), n => n.Module("follow")),
             new("Attached moodle", "A status shown while you're leashed.", S("leashMoodle"), n => n.Module("follow")),
+            new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
         ],
         ["reactions"] = OwnerTours["reactions"],
         ["sync"] =

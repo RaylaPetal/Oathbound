@@ -30,7 +30,7 @@ public sealed class RecoveryView
         var backup = plugin.BackupService;
         IconGlyph.Text(FontAwesomeIcon.Key, "Recovery code");
         ImGui.Separator();
-        ImGui.TextWrapped("Your recovery code restores your pairings after a reinstall or on a new PC - your partners won't need to do anything. Keep it somewhere safe: without it, a lost install can't be restored and you'd have to pair again.");
+        ImGui.TextWrapped("Restores your pairings after a reinstall or on a new PC. Keep it somewhere safe.");
         ImGui.Spacing();
 
         if (backup.HasCode)
@@ -84,7 +84,7 @@ public sealed class RecoveryView
 
         ImGui.Spacing();
         ImGui.TextUnformatted("Restore from a recovery code");
-        ImGui.SetNextItemWidth(300f);
+        Layout.ItemWidth(300);
         ImGui.InputTextWithHint("##restoreCode", "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XX", ref restoreInput, 48);
         ImGui.SameLine();
         using (ImRaii.Disabled(restoring || restoreInput.Trim().Length == 0))
@@ -92,7 +92,7 @@ public sealed class RecoveryView
             if (ImGui.Button(restoring ? "Restoring..." : "Restore"))
                 StartRestore(replaceConfirmed: false);
         }
-        IconGlyph.HelpMarker("Brings back your identity and pairings from the backup on the relay. Don't restore the same code on two PCs at once - the last one restored is the one that works.");
+        IconGlyph.HelpMarker("Restores your identity and pairings. Don't use the same code on two PCs.");
 
         if (needsReplaceConfirm)
         {
@@ -173,7 +173,7 @@ public sealed class RecoveryCodeWindow : Window
     public override void Draw()
     {
         var code = plugin.BackupService.GetFormattedCode();
-        ImGui.TextWrapped("This code restores your Oathbound identity and pairings if you reinstall the plugin or move to a new PC. It's the only way to get them back - save it somewhere safe, like a password manager.");
+        ImGui.TextWrapped("Restores your pairings after a reinstall or on a new PC. Save it somewhere safe, like a password manager.");
         ImGui.Spacing();
         using (ImRaii.PushColor(ImGuiCol.Text, Theme.Accent))
             ImGui.TextUnformatted(code ?? "(unavailable)");

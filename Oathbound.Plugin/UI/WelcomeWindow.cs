@@ -41,7 +41,7 @@ public sealed class WelcomeWindow : Window, IDisposable
         var roleIndex = config.Role switch { PluginRole.Owner => 1, PluginRole.Switch => 2, _ => 0 };
         if (ImGui.Combo("Role", ref roleIndex, RoleNames, RoleNames.Length))
             config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
-        IconGlyph.HelpMarker("Sub reacts to trigger tells and applies commands locally - only a Sub-side pairing actually gates anything. Owner is mostly informational. Switch can be both at once. You can change this later in Settings.");
+        IconGlyph.HelpMarker("Sub receives commands, Owner sends them, Switch can do both. You can change this later.");
 
         ImGui.Spacing();
         ImGui.InputTextWithHint("Trigger phrase", "e.g. command", ref triggerPhraseInput, 32);

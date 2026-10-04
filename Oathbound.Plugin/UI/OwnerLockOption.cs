@@ -40,7 +40,7 @@ public static class OwnerLockOption
 
     private const string HelpText = "Permanent: stays locked until you send `restraint unlock` (or your Sub panics). Timed: your Sub's restraints come off by themselves when the time runs out - the timer keeps counting even if your Sub logs out. Sending another restraint command replaces the timer. Needs your Sub on a plugin version that understands timers - older versions ignore the whole command.";
 
-    private const float InlineFieldWidth = 100f;
+    private static float InlineFieldWidth => Layout.Scaled(100f);
 
     /// So a caller can shorten the label before it instead of pushing the picker off the window.
     public static float InlineWidth(QuickCommand cmd)
@@ -56,7 +56,7 @@ public static class OwnerLockOption
     public static void DrawInline(string id, QuickCommand cmd, PluginConfig config)
     {
         var mode = cmd.LockSeconds is null ? 0 : 1;
-        ImGui.SameLine();
+        Layout.ContinueRowOrWrap(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
         if (ImGui.Combo($"##ownerLockInline_{id}", ref mode, ModeNames, ModeNames.Length))
         {
@@ -70,7 +70,7 @@ public static class OwnerLockOption
         if (cmd.LockSeconds is not { } seconds)
             return;
         var minutes = Math.Max(1, seconds / 60);
-        ImGui.SameLine();
+        Layout.ContinueRowOrWrap(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
         if (ImGui.InputInt($"##ownerLockInlineMinutes_{id}", ref minutes, 15, 60))
         {
@@ -88,7 +88,7 @@ public static class OwnerLockOption
     {
         var before = lockSeconds;
         var mode = lockSeconds is null ? 0 : 1;
-        ImGui.SetNextItemWidth(120);
+        Layout.ItemWidth(120);
         if (ImGui.Combo($"Lock##ownerLock_{id}", ref mode, ModeNames, ModeNames.Length))
             lockSeconds = mode == 0 ? null : DefaultTimedMinutes * 60;
         IconGlyph.HelpMarker(HelpText);
@@ -96,7 +96,7 @@ public static class OwnerLockOption
         if (lockSeconds is { } seconds)
         {
             var minutes = Math.Max(1, seconds / 60);
-            ImGui.SetNextItemWidth(120);
+            Layout.ItemWidth(120);
             if (ImGui.InputInt($"Minutes##ownerLockMinutes_{id}", ref minutes, 15, 60))
             {
                 var clamped = Math.Clamp(minutes, (int)RestraintLock.MinDuration.TotalMinutes, (int)RestraintLock.MaxDuration.TotalMinutes);

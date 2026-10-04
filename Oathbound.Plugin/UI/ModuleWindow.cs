@@ -10,6 +10,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Glamourer.Api.Enums;
+using static Oathbound.Plugin.UI.Layout;
 
 namespace Oathbound.Plugin.UI;
 
@@ -238,7 +239,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (DependencyGates.ModuleBlockedReason(plugin, activeModule) is { } blockedReason)
         {
             IconGlyph.WrappedColored(Theme.StatusMissing, blockedReason);
-            IconGlyph.WrappedDisabled("Install or enable it from /xlplugins - this window comes back on its own once it's detected. Settings shows every dependency's status.");
+            IconGlyph.WrappedDisabled("Install or enable it from /xlplugins. This window updates once it's detected.");
             return;
         }
 
@@ -277,7 +278,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     using (Section.Begin("ctqRevert", "Revert"))
                     {
                         DrawFixedQuickRow("Revert custom triggers", "customtrigger revert", canSend, FixedActionIds.CustomTriggerRevert);
-                        IconGlyph.HelpMarker("Undoes what Custom Triggers applied on your Sub since the last revert: their title, outfit, animation, moodles and restraints. Leash, toys, the collar and anything you sent on its own stay as they are. A chat message that was already sent can't be taken back.");
+                        IconGlyph.HelpMarker("Undoes the title, outfit, animation, moodles and restraints your Custom Triggers applied. Sent chat can't be taken back.");
                     }
                     using (Section.Begin("ctqSaved", "Saved"))
                         DrawSavedAliasCommands(canSend);
@@ -296,6 +297,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "follow":
                 if (isOwner) DrawFollowQuickSection(DrawOwnerCanSendBanner());
                 else DrawFollowLeashModule();
+                DrawLeashLineSection(plugin.Configuration);
                 break;
             case "sync":
                 DrawSyncTab(isOwner);
@@ -311,7 +313,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
         if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - Send is disabled until an Owner-side pairing is active (select one in the header, or pair from Settings' handshake if you have none). Copy still works any time.");
+            IconGlyph.WrappedColored(Theme.Warning, "No Sub to send to yet - pick an Owner-side pairing in the header, or pair in Settings. Copy still works.");
         return canSend;
     }
 
@@ -353,7 +355,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             if (ImGui.CollapsingHeader("Offline / legacy file fallback##catalogFileFallback"))
             {
-                IconGlyph.WrappedDisabled("Use this only when relay sync is unavailable or when importing an older catalog file. Normal paired catalog updates use Cloudflare automatically.");
+                IconGlyph.WrappedDisabled("Only for importing a catalog file by hand. Sync normally happens automatically.");
                 DrawImportCommandsButton();
             }
         }
@@ -378,7 +380,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             plugin.MoodlesCommand.Rescan();
             plugin.RestraintCommand.RescanCatalog();
         }
-        IconGlyph.HelpMarker("Rescans Wardrobe, Animation, Moodles, and the explicitly shared Penumbra restraint folders. Captured item devices are left untouched.");
+        IconGlyph.HelpMarker("Rescans your designs, animations, moodles and shared restraint folders.");
         scanBox.Dispose();
 
         using (Section.Begin("scanWardrobe"))
@@ -399,7 +401,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
 
         using var exportBox = Section.Begin("subExport", "Offline / manual export");
-        IconGlyph.WrappedDisabled("Only needed if relay sync is unavailable. Export one file here to send your Owner manually.");
+        IconGlyph.WrappedDisabled("Only needed if automatic sync isn't working.");
 
         var hasAnythingToExport = plugin.OutfitCommand.LastScanTotalDesigns is not null || plugin.GestureCommand.LastScanTotalMods is not null ||
             plugin.MoodlesCommand.LastScanTotalStatuses is not null || config.RestraintMapping.Devices.Count > 0;
@@ -431,18 +433,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void DrawSubAutoSyncInfo(PluginConfig config)
     {
-        IconGlyph.WrappedDisabled("Whenever your catalog changes, it's shared with your paired Owner automatically through the Oathbound Cloudflare relay, end-to-end encrypted. No chat messages are sent. Changes go out a few minutes after you stop editing (at most twice an hour), and your Owner's plugin picks them up within about half an hour.");
+        IconGlyph.WrappedDisabled("Your catalog is shared with your Owner automatically whenever it changes.");
 
         if (ImGuiCheckbox("Automatically rescan every 15 minutes", config.AutoRescanCatalogs, out var autoRescan))
         {
             config.AutoRescanCatalogs = autoRescan;
             config.Save();
         }
-        IconGlyph.HelpMarker("Re-reads your Glamourer designs, Penumbra animation/restraint mods, and Moodles statuses at login and about every 15 minutes, using the selections below - so new additions reach your Owner without a manual rescan. A plugin that isn't loaded is skipped and keeps its previous list.");
+        IconGlyph.HelpMarker("Rescans at login and every 15 minutes, so new additions reach your Owner on their own.");
 
         if (!config.Permissions.RelayCatalogSync)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "\"Catalog sync (relay)\" is off in Permissions, so nothing is shared. Changes go out as soon as you turn it on.");
+            IconGlyph.WrappedColored(Theme.Warning, "\"Catalog sync\" is off in Permissions, so nothing is shared.");
             return;
         }
 
@@ -452,7 +454,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (pairing.LastPublishedCatalogUnixSeconds > 0)
                 IconGlyph.WrappedDisabled($"Last shared with {name}: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastPublishedCatalogUnixSeconds).LocalDateTime:g}.");
             else
-                IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out once their plugin has checked in (Owners on an older plugin can still use Request refresh).");
+                IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out once their plugin checks in.");
         }
     }
 
@@ -470,15 +472,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Tshirt, "Wardrobe design allowlist & scan");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("No folders = all saved designs. Add folders only when you want to restrict the catalog. Outfit aliases live in the main window's Outfit tab.");
-        IconGlyph.HelpMarker("With folders configured, only designs inside those Glamourer design-browser folder prefixes are scanned. Clear every folder to scan all saved designs.");
+        IconGlyph.WrappedDisabled("No folders = all designs. Add folders to limit what's shared.");
+        IconGlyph.HelpMarker("Only designs in these Glamourer folders are shared.");
 
         DrawAllowlistBody(config.WardrobeFolderAllowlist, ref newWardrobeAllowlistFolder, "wardrobe");
 
         ImGui.Spacing();
         if (ImGui.Button("Rescan wardrobe"))
             plugin.OutfitCommand.Rescan();
-        IconGlyph.HelpMarker("Re-reads your saved Glamourer designs. An empty folder list includes all designs; otherwise only matching folders are included.");
+        IconGlyph.HelpMarker("Re-reads your Glamourer designs.");
 
         DrawWardrobeScanFeedback();
     }
@@ -507,9 +509,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         if (ImGui.SmallButton("Copy names##wardrobe"))
             ImGui.SetClipboardText(string.Join("\n", wardrobe.LocalDesigns.Values.Select(d => d.Name)));
-        IconGlyph.HelpMarker("Copies the list below as plain text, one design per line - paste it to your Owner (Discord, voice-to-text, etc) so they know exactly what names they can reference with a direct override (\"outfit lock <name>\").");
+        IconGlyph.HelpMarker("Copies the list as text so you can send your Owner the names.");
 
-        using var _ = ImRaii.Child("wardrobeCatalog", new Vector2(0, 80), true);
+        using var _ = ImRaii.Child("wardrobeCatalog", new Vector2(0, Scaled(80)), true);
         foreach (var entry in wardrobe.LocalDesigns.Values)
             ImGui.BulletText(entry.Name);
     }
@@ -518,11 +520,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation mods to scan");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("No folders and no selected mods scans everything. Folders select a union; explicit mods narrow that union.");
+        IconGlyph.WrappedDisabled("With no folders or mods selected, everything is scanned.");
         DrawPenumbraFolderPicker("Animation folders", config.SelectedGestureFolders, config);
         ImGui.InputTextWithHint("##gestureModSearch", "Search mod names...", ref gestureModSearch, 128);
         var installed = plugin.GestureCommand.GetInstalledMods();
-        using (ImRaii.Child("gestureModPicker", new Vector2(0, 180), true))
+        using (ImRaii.Child("gestureModPicker", new Vector2(0, Scaled(180)), true))
         {
             foreach (var mod in installed.Where(m =>
                          (config.SelectedGestureFolders.Count == 0 || (m.SortPath is { } path && config.SelectedGestureFolders.Any(f =>
@@ -542,7 +544,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Spacing();
         if (ImGui.Button("Rescan animations"))
             plugin.GestureCommand.Rescan();
-        IconGlyph.HelpMarker("Reads every installed mod when none are selected, or only explicit selections otherwise. Disabled mods remain eligible and are enabled temporarily when played.");
+        IconGlyph.HelpMarker("Reads every installed mod, or only the ones you select.");
 
         DrawGestureScanFeedback();
     }
@@ -551,7 +553,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Lock, "Shared Penumbra restraints");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Only options below folders selected here are shared with your Owner. No folders means no Penumbra restraints are shared.");
+        IconGlyph.WrappedDisabled("Only restraint mods in these folders are shared with your Owner.");
         DrawPenumbraFolderPicker("Restraint folders", config.SelectedRestraintFolders, config);
         if (ImGui.Button("Rescan restraints")) plugin.RestraintCommand.RescanCatalog();
         var command = plugin.RestraintCommand;
@@ -561,7 +563,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 $"Matched {command.LastScanMatchedMods} mod(s); found {config.RestraintMapping.LocalCatalog.Count} restraint option(s).");
         if (config.SelectedRestraintFolders.Count == 0)
             IconGlyph.WrappedColored(Theme.Warning, "No folders selected: the shared Penumbra restraint catalog is empty.");
-        using var child = ImRaii.Child("restraintCatalogPreview", new Vector2(0, 100), true);
+        using var child = ImRaii.Child("restraintCatalogPreview", new Vector2(0, Scaled(100)), true);
         foreach (var entry in config.RestraintMapping.LocalCatalog.Values.OrderBy(x => x.ModName))
             ImGui.BulletText(entry.ModName);
     }
@@ -591,8 +593,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         foreach (var folder in selected.ToList())
         {
             var missing = !folders.Contains(folder, StringComparer.OrdinalIgnoreCase);
-            ImGui.TextUnformatted(missing ? $"{folder} (missing)" : folder);
-            ImGui.SameLine();
+            TextWithActions(missing ? $"{folder} (missing)" : folder, ButtonWidth("Remove"));
             if (ImGui.SmallButton($"Remove##{label}{folder}")) { selected.Remove(folder); config.Save(); }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip(folder);
         }
@@ -640,9 +641,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             ImGui.SetClipboardText(plugin.GestureCommand.ExportCatalog());
         }
-        IconGlyph.HelpMarker("Copies versioned entries containing the mod, animation option, tied trigger, and selections for the Owner's Add from clipboard action.");
+        IconGlyph.HelpMarker("Copies these animations for your Owner's Add from clipboard.");
 
-        using var _ = ImRaii.Child("gestureCatalog", new Vector2(0, 80), true);
+        using var _ = ImRaii.Child("gestureCatalog", new Vector2(0, Scaled(80)), true);
         foreach (var entry in gestureMapping.LocalCatalog.Values)
         {
             ImGui.BulletText(entry.DisplayLabel);
@@ -654,11 +655,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Moodles status scan");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Reads your own registered Moodles statuses (buffs/debuffs) directly - nothing to allowlist. Moodles apply/clear commands live in the main window's Moodles tab.");
+        IconGlyph.WrappedDisabled("Your Moodles statuses are read directly - nothing to set up.");
 
         if (ImGui.Button("Rescan Moodles statuses"))
             plugin.MoodlesCommand.Rescan();
-        IconGlyph.HelpMarker("Re-reads your registered statuses from your own Moodles plugin - run this after adding a new status before it'll show up for your Owner to reference.");
+        IconGlyph.HelpMarker("Re-reads your Moodles statuses. Run it after adding a new one.");
 
         DrawMoodlesScanFeedback();
     }
@@ -689,9 +690,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         if (ImGui.SmallButton("Copy names##moodles"))
             ImGui.SetClipboardText(string.Join("\n", moodlesMapping.LocalCatalog.Values.Select(s => s.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x)));
-        IconGlyph.HelpMarker("Copies the list below as plain text, one status per line - paste it to your Owner (Discord, voice-to-text, etc) so they know exactly what names they can reference with \"moodle apply <name>\".");
+        IconGlyph.HelpMarker("Copies the list as text so you can send your Owner the names.");
 
-        using var _ = ImRaii.Child("moodlesCatalog", new Vector2(0, 80), true);
+        using var _ = ImRaii.Child("moodlesCatalog", new Vector2(0, Scaled(80)), true);
         foreach (var entry in moodlesMapping.LocalCatalog.Values)
         {
             ImGui.PushID(entry.StatusId);
@@ -706,8 +707,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         for (var i = 0; i < allowlist.Count; i++)
         {
             ImGui.PushID(i);
-            ImGui.BulletText(allowlist[i]);
+            ImGui.Bullet();
             ImGui.SameLine();
+            TextWithActions(allowlist[i], ButtonWidth("Remove"));
             if (ImGui.SmallButton("Remove"))
             {
                 allowlist.RemoveAt(i);
@@ -719,7 +721,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
 
         ImGui.InputText($"##newFolder_{idSuffix}", ref newFolderInput, 128);
-        ImGui.SameLine();
+        ContinueRowOrWrap(ButtonWidth("Add folder"));
         if (ImGui.Button($"Add folder##{idSuffix}") && newFolderInput.Length > 0)
         {
             allowlist.Add(newFolderInput);
@@ -762,7 +764,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             if (ImGuiCheckbox("Animation", permissions.Gesture, out var newGesture))
                 SavePermission(() => permissions.Gesture = newGesture);
-            IconGlyph.HelpMarker("Lets a paired Owner temporarily enable a selected animation mod and immediately play its tied gesture. Disable this permission at any time to reject commands.");
+            IconGlyph.HelpMarker("Lets your Owner play your shared animations on you.");
             DrawPermissionDependencyNote(DependencyId.Penumbra);
 
             if (ImGuiCheckbox("Follow / Leash", permissions.Follow, out var newFollow))
@@ -784,23 +786,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
         group = Section.Begin("permCollarMoodles", "Collar & Moodles");
         if (ImGuiCheckbox("Collar", permissions.Collar, out var newCollar))
             SavePermission(() => permissions.Collar = newCollar);
-        IconGlyph.HelpMarker("Lets your configured collar item apply and lock automatically when you accept a pairing (Collar tab). Configuring an item alone does nothing without this enabled too.");
+        IconGlyph.HelpMarker("Locks your collar on automatically when you accept a pairing.");
 
         if (ImGuiCheckbox("Moodles", permissions.Moodles, out var newMoodles))
             SavePermission(() => permissions.Moodles = newMoodles);
-        IconGlyph.HelpMarker("Lets a paired Owner apply or clear a Moodle (status effect) from your own registered statuses via a trigger tell - applies immediately, no confirmation queue.");
+        IconGlyph.HelpMarker("Lets your Owner add or clear your Moodles statuses.");
         DrawPermissionDependencyNote(DependencyId.Moodles);
 
         group.Dispose();
         group = Section.Begin("permCatalog", "Catalog sync");
-        if (ImGuiCheckbox("Catalog sync (relay)", permissions.RelayCatalogSync, out var newRelayCatalogSync))
+        if (ImGuiCheckbox("Catalog sync", permissions.RelayCatalogSync, out var newRelayCatalogSync))
             SavePermission(() => permissions.RelayCatalogSync = newRelayCatalogSync);
-        IconGlyph.HelpMarker("Shares your catalog with your paired Owner automatically, end-to-end encrypted, a few minutes after it changes (at most twice an hour), and lets them request a refresh, instead of you sending a file manually. The relay never sees the plaintext. Off by default; manual file export/import always remains available regardless of this setting.");
+        IconGlyph.HelpMarker("Shares your catalog with your Owner automatically when it changes. Off by default.");
 
         group.Dispose();
         group = Section.Begin("permCustomChat", "Custom chat (own acknowledgement)");
         if (!config.CustomChatAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Custom chat messages require their own dedicated acknowledgement on the ToS tab first - separate from the general ToS checkbox.");
+            IconGlyph.WrappedColored(Theme.Warning, "Needs its own acknowledgement on the ToS tab first.");
 
         using (ImRaii.Disabled(!config.CustomChatAcknowledged))
         {
@@ -812,7 +814,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         group.Dispose();
         group = Section.Begin("permToyControl", "Toy control (own acknowledgement)");
         if (!config.ToyControlAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Toy control requires its own dedicated acknowledgement on the ToS tab first - separate from every other checkbox.");
+            IconGlyph.WrappedColored(Theme.Warning, "Needs its own acknowledgement on the ToS tab first.");
 
         using (ImRaii.Disabled(!config.ToyControlAcknowledged))
         {
@@ -832,7 +834,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("titleFixed", "Fixed words"))
         {
             DrawFixedWord("Clear title", ControlWords.ClearTitle);
-            IconGlyph.HelpMarker("The fixed word that removes your current Honorific title - separate from the named aliases below, which each apply a specific title. Not renamable, so your Owner always knows it.");
+            IconGlyph.HelpMarker("Removes your current title. It can't be renamed, so your Owner always knows it.");
         }
 
         var titles = config.Aliases.Titles;
@@ -937,11 +939,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.InputText("Alias##newOutfit", ref newOutfitAlias, 32);
             IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this outfit.");
             ImGui.Combo("Design##newOutfit", ref newOutfitDesignIndex, designNames, designNames.Length);
-            IconGlyph.HelpMarker("Which scanned Glamourer design this alias applies - any design inside your allowlisted folders (Settings) is fair game, no separate approval step. Rescan in Settings if the one you want isn't listed.");
+            IconGlyph.HelpMarker("The Glamourer design this alias applies. Rescan if it's missing.");
             if (DrawAttachedMoodlePicker("newOutfit", newOutfitMoodle, config, out var pickedOutfitMoodle, width: null))
                 newOutfitMoodle = pickedOutfitMoodle;
             ImGui.Checkbox("Lock##newOutfit", ref newOutfitLocked);
-            IconGlyph.HelpMarker("Lock the design's own equipment slots after applying, so only this plugin's release action can change them - every other slot stays freely editable.");
+            IconGlyph.HelpMarker("Locks the design's slots so only an unlock can change them.");
             DrawReservedWordWarning(newOutfitAlias);
             if (ImGui.Button("Add outfit alias") && newOutfitAlias.Length > 0 && !IsReserved(newOutfitAlias))
             {
@@ -966,8 +968,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var config = plugin.Configuration;
         IconGlyph.Text(FontAwesomeIcon.Handcuffs, "Restraints");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Choose scanned Penumbra mods and configure the restraints you want to share. Your Owner receives both these ready-made restraints and the complete scanned mod library for creating their own.");
-        IconGlyph.WrappedDisabled("Owner force-release is always `restraint unlock`. Each restraint's alias toggles it on and off when your Owner sends it on its own, and force-applies it after `restraint lock`.");
+        IconGlyph.WrappedDisabled("Pick restraint mods and set up the restraints your Owner can use.");
+        IconGlyph.WrappedDisabled("Each alias toggles its restraint. `restraint unlock` releases everything.");
 
         // Recomputed every frame so a Timed lock's countdown stays live.
         if (config.RestraintsForceLocked)
@@ -1017,7 +1019,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         var formBox = Section.Begin("deviceForm", editingDeviceId is null ? "New rules-only restraint" : "Edit rules-only restraint");
         ImGui.InputText("Alias##newDevice", ref newDeviceName, 32);
-        IconGlyph.HelpMarker("The word your Owner uses for this restraint. For example, with an alias of \"armcuffs\": sending \"armcuffs\" toggles it on/off, and \"restraint lock armcuffs\" force-applies it.");
+        IconGlyph.HelpMarker("The word your Owner sends to toggle this restraint.");
         DrawReservedWordWarning(newDeviceName);
         if (DrawAttachedMoodlePicker("newDevice", newDeviceMoodle, config, out var pickedDeviceMoodle, width: null))
             newDeviceMoodle = pickedDeviceMoodle;
@@ -1073,16 +1075,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("detectedRestraintMods", "Detected restraint mods"))
         {
             ImGui.InputTextWithHint("##subRestraintSearch", "Search scanned restraint mods...", ref subRestraintSearch, 128);
-            using (ImRaii.Child("subRestraintModBrowser", new Vector2(0, 130), true))
+            using (ImRaii.Child("subRestraintModBrowser", new Vector2(0, Scaled(130)), true))
             {
                 foreach (var entry in config.RestraintMapping.LocalCatalog.Values
                              .Where(x => string.IsNullOrWhiteSpace(subRestraintSearch) || x.ModName.Contains(subRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase))
                              .OrderBy(x => x.ModName))
                 {
-                    ImGui.TextUnformatted(entry.ModName);
-                    ImGui.SameLine();
                     var alreadyConfiguredCount = configured.Count(x => x.CatalogId == entry.Id);
-                    if (ImGui.SmallButton($"{(alreadyConfiguredCount > 0 ? "Choose again" : "Choose")}##subRestraint_{entry.Id}"))
+                    var chooseLabel = alreadyConfiguredCount > 0 ? "Choose again" : "Choose";
+                    TextWithActions(entry.ModName, ButtonWidth(chooseLabel));
+                    if (ImGui.SmallButton($"{chooseLabel}##subRestraint_{entry.Id}"))
                     {
                         // The same mod can be configured more than once, so each gets a distinct name.
                         var name = alreadyConfiguredCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyConfiguredCount + 1})";
@@ -1110,16 +1112,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
             {
                 var key = $"submod:{created.Id}";
                 var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
-                ImGui.TextUnformatted(created.Name);
-                ImGui.SameLine();
-                if (ImGui.SmallButton($"{(expandedSubModKey == key ? "Close" : "Configure")}##{key}"))
+                var toggleLabel = expandedSubModKey == key ? "Close" : "Configure";
+                TextWithActions(created.Name, ActionsWidth(toggleLabel, "Delete"));
+                if (ImGui.SmallButton($"{toggleLabel}##{key}"))
                 {
                     if (expandedSubModKey == key)
                         CloseSubModEditor();
                     else
                         OpenSubModEditor(key, FromRules(created.Rules));
                 }
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Delete"));
                 if (ImGui.SmallButton($"Delete##{key}"))
                 {
                     configured.Remove(created);
@@ -1154,14 +1156,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
                         created.Alias = aliasBuffer.Trim();
                         config.Save();
                     }
-                    IconGlyph.HelpMarker("Optional short word for your Owner: sending it on its own toggles this restraint on/off, and \"restraint lock <alias>\" force-applies it. Leave empty if your Owner only uses the restraint from their imported list.");
+                    IconGlyph.HelpMarker("Optional word your Owner sends to toggle this restraint.");
                     DrawReservedWordWarning(created.Alias);
                     if (created.Alias.Length > 0
                         && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))
                             || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))))
                         IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias - only one of them will respond to it.");
-                    ImGui.TextUnformatted($"Glamourer item: {(created.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}");
-                    ImGui.SameLine();
+                    TextWithActions($"Glamourer item: {(created.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
                     if (ImGui.SmallButton($"Choose item...##{key}"))
                     {
                         var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
@@ -1260,13 +1261,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
             cells.Add(() =>
             {
                 DrawBoundAnimationPicker("Arms Cuffed", ref edit.ArmsCuffed, edit.ArmsCuffedAnimationId, id => edit.ArmsCuffedAnimationId = id, $"{idSuffix}Arms");
-                IconGlyph.HelpMarker("Temporarily activates the chosen animation and holds you in it until released, without affecting movement or actions.");
+                IconGlyph.HelpMarker("Holds you in the chosen animation until released.");
             });
         if (!rulesOnly || edit.LegsCuffed)
             cells.Add(() =>
             {
                 DrawBoundAnimationPicker("Legs Cuffed", ref edit.LegsCuffed, edit.LegsCuffedAnimationId, id => edit.LegsCuffedAnimationId = id, $"{idSuffix}Legs");
-                IconGlyph.HelpMarker("Temporarily activates the chosen animation and holds you in it until released, without affecting movement or actions.");
+                IconGlyph.HelpMarker("Holds you in the chosen animation until released.");
             });
         cells.Add(() =>
         {
@@ -1278,7 +1279,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             cells.Add(() =>
             {
                 DrawBoundAnimationPicker("Fully Restrain", ref edit.FullBodyCuffed, edit.FullBodyCuffedAnimationId, id => edit.FullBodyCuffedAnimationId = id, $"{idSuffix}FullBody");
-                IconGlyph.HelpMarker("Temporarily activates the chosen animation and holds you in it, and fully blocks movement input, until released - a fully custom-animation counterpart to forced pose.");
+                IconGlyph.HelpMarker("Holds you in the chosen animation and blocks movement until released.");
             });
         cells.Add(() =>
         {
@@ -1458,7 +1459,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("gestureAdd", "Add an animation alias"))
         {
             ImGui.InputText("Alias##newGesture", ref newGestureAlias, 32);
-            IconGlyph.HelpMarker("Short word the Owner types. With Animation permission enabled, this immediately enables the chosen animation temporarily and plays its tied trigger.");
+            IconGlyph.HelpMarker("Short word your Owner sends to play this animation.");
             DrawReservedWordWarning(newGestureAlias);
 
             if (ImGui.Button(selectedAliasGesture is null ? "Add animation..." : "Change animation..."))
@@ -1514,7 +1515,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("moodleFixed", "Fixed words"))
         {
             DrawFixedWord("Clear moodles", ControlWords.ClearMoodle);
-            IconGlyph.HelpMarker("The fixed word that clears your Moodles - except moodles still attached to an active outfit, restraint, leash or collar. Not renamable, so your Owner always knows it.");
+            IconGlyph.HelpMarker("Clears your Moodles, except ones attached to something active. It can't be renamed.");
         }
 
         var moodleAliases = config.Aliases.Moodles;
@@ -1575,7 +1576,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var config = plugin.Configuration;
         IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Bundle multiple actions - title, outfit, animation, moodle, restraint, chat - behind one alias. Each action still needs its own category permission (Chat also needs the dedicated Custom chat messages acknowledgement in Settings) or it's skipped when the trigger fires.");
+        IconGlyph.WrappedDisabled("Run several actions from one alias. Each action still needs its own permission.");
 
         var triggers = config.Aliases.CustomTriggers;
         using (Section.Begin("customTriggerList", "Your custom triggers"))
@@ -1614,7 +1615,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using var editorBox = Section.Begin("customTriggerEditor", editingCustomTriggerIndex is null ? "New trigger" : "Edit trigger");
         ImGui.InputText("Alias##newCustomTrigger", ref ctNewAlias, 32);
-        IconGlyph.HelpMarker("Short word the Owner types. Applies every permitted action below in order when triggered.");
+        IconGlyph.HelpMarker("Short word your Owner sends. Runs every allowed action below in order.");
         DrawReservedWordWarning(ctNewAlias);
 
         if (ctDraftActions.Count > 0)
@@ -1623,26 +1624,26 @@ public sealed partial class ModuleWindow : Window, IDisposable
             for (var i = 0; i < ctDraftActions.Count; i++)
             {
                 ImGui.PushID($"ctDraftAction_{i}");
-                DrawActionSummary(ctDraftActions[i]);
-                ImGui.SameLine();
+                // A restraint action only references a restraint; its rules/moodle are edited in the Restraints tab.
+                var editable = ctDraftActions[i].Kind != CustomTriggerActionKind.Restraint;
+                DrawActionSummary(ctDraftActions[i], DraftActionButtonsWidth(editable));
                 using (ImRaii.Disabled(i == 0))
                     if (ImGui.SmallButton("↑"))
                         MoveDraftAction(ctDraftActions, i, i - 1, ref editingCustomTriggerActionIndex);
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("↓"));
                 using (ImRaii.Disabled(i == ctDraftActions.Count - 1))
                     if (ImGui.SmallButton("↓"))
                         MoveDraftAction(ctDraftActions, i, i + 1, ref editingCustomTriggerActionIndex);
-                // A restraint action only references a restraint; its rules/moodle are edited in the Restraints tab.
-                if (ctDraftActions[i].Kind != CustomTriggerActionKind.Restraint)
+                if (editable)
                 {
-                    ImGui.SameLine();
+                    ContinueRowOrWrap(ButtonWidth("Edit"));
                     if (ImGui.SmallButton("Edit"))
                     {
                         LoadSubActionDraft(ctDraftActions[i]);
                         editingCustomTriggerActionIndex = i;
                     }
                 }
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Remove"));
                 if (ImGui.SmallButton("Remove"))
                 {
                     RemoveDraftAction(ctDraftActions, i, ref editingCustomTriggerActionIndex);
@@ -1746,7 +1747,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var deviceNames = restraintChoices.Select(d => d.Name).ToArray();
                 ctRestraintDeviceIndex = Math.Clamp(ctRestraintDeviceIndex, 0, deviceNames.Length - 1);
                 ImGui.Combo("Device##newCtRestraint", ref ctRestraintDeviceIndex, deviceNames, deviceNames.Length);
-                IconGlyph.HelpMarker("Toggles this device when the trigger fires - applies if inactive, releases if active, same as a plain restraint alias.");
+                IconGlyph.HelpMarker("Toggles this restraint when the trigger fires.");
                 if (ImGui.Button($"{(editingCustomTriggerActionIndex is null ? "Add action" : "Save action")}##newCtRestraintBtn"))
                 {
                     var device = restraintChoices[ctRestraintDeviceIndex];
@@ -1806,14 +1807,21 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private static string SummarizeCustomTriggerAction(CustomTriggerAction a) => CommandPresentation.Action(a);
 
-    private static void DrawActionSummary(CustomTriggerAction action)
+    /// With `actionsWidth`, leaves the cursor where that row's buttons go.
+    private static void DrawActionSummary(CustomTriggerAction action, float actionsWidth = 0f)
     {
         var summary = SummarizeCustomTriggerAction(action);
         ImGui.Bullet();
         ImGui.SameLine();
-        ImGui.TextWrapped(summary);
+        if (actionsWidth > 0f)
+            TextWithActions(summary, actionsWidth);
+        else
+            ImGui.TextWrapped(summary);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(summary);
     }
+
+    private static float DraftActionButtonsWidth(bool editable) =>
+        editable ? ActionsWidth("↑", "↓", "Edit", "Remove") : ActionsWidth("↑", "↓", "Remove");
 
     private static CustomTriggerAction CloneAction(CustomTriggerAction action) => new()
     {
@@ -1963,7 +1971,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var locked = plugin.RuntimeState.CollarForceLocked;
         IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Choose a Neck-slot collar, a left-hand ring, or both. They're applied and locked together automatically the moment you accept a pairing - not from this tab.");
+        IconGlyph.WrappedDisabled("Choose a Neck collar, a left ring, or both. They lock on when you accept a pairing.");
 
         if (locked)
             IconGlyph.WrappedColored(Theme.Danger, "Locked - applied at pairing. Only your Owner's \"collar unlock\" or ending that pairing releases it. Your safeword leaves the collar on.");
@@ -1973,15 +1981,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("collarItem", "Collar item"))
         {
             var collarChosenLabel = config.Collar.ItemId is { } collarItemId ? GetItemName(collarItemId) : "(none chosen)";
-            ImGui.TextUnformatted($"Item: {collarChosenLabel}");
-            ImGui.SameLine();
+            TextWithActions($"Item: {collarChosenLabel}", ButtonWidth("Choose item..."));
             if (ImGui.Button("Choose item...##collar"))
                 plugin.ItemPickerWindow.Open(ApiEquipSlot.Neck, (chosenId, _) => plugin.CollarCommand.ConfigureFromItem(chosenId));
-            IconGlyph.HelpMarker("Pick any Neck-slot item to save as your collar - it does not need to be equipped or owned.");
+            IconGlyph.HelpMarker("Any Neck item - it doesn't need to be owned.");
 
             if (config.Collar.HasNeckItem)
             {
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Clear"));
                 if (ImGui.Button("Clear"))
                     plugin.CollarCommand.ClearConfiguredCollar();
             }
@@ -1994,15 +2001,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("collarRing", "Ring"))
         {
             var ringChosenLabel = config.Collar.RingItemId is { } ringItemId ? GetItemName(ringItemId) : "(none chosen)";
-            ImGui.TextUnformatted($"Ring: {ringChosenLabel}");
-            ImGui.SameLine();
+            TextWithActions($"Ring: {ringChosenLabel}", ButtonWidth("Choose item..."));
             if (ImGui.Button("Choose item...##collarRing"))
                 plugin.ItemPickerWindow.Open(ApiEquipSlot.LFinger, (chosenId, _) => plugin.CollarCommand.ConfigureRingFromItem(chosenId));
-            IconGlyph.HelpMarker("Optional. A left-hand ring that locks and unlocks together with your collar - for partners or a wedding band. It does not need to be equipped or owned. While a restraint holds your left ring slot, the collar can't lock until it's removed.");
+            IconGlyph.HelpMarker("Optional ring that locks with your collar. It doesn't need to be owned.");
 
             if (config.Collar.HasRing)
             {
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Clear"));
                 if (ImGui.Button("Clear##collarRing"))
                     plugin.CollarCommand.ClearConfiguredRing();
             }
@@ -2011,8 +2017,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("collarMoodle", "Collar moodle"))
         {
             var collarMoodleLabel = config.Collar.MoodleStatusName is { } assignedMoodleName ? MoodlesTextFormat.StripMarkup(assignedMoodleName) : "(none assigned)";
-            ImGui.TextUnformatted($"Moodle: {collarMoodleLabel}");
-            IconGlyph.HelpMarker("Optional. Applied alongside your collar item when it locks, and periodically re-asserted for as long as the collar stays locked - removing it through Moodles' own UI won't make it stick. Your safeword leaves it on; it's cleared only when the pairing that collared you ends.");
+            TextWithActions($"Moodle: {collarMoodleLabel}", ImGui.CalcTextSize("(?)").X);
+            IconGlyph.HelpMarker("Optional status shown while your collar is locked. Your safeword leaves it on.");
 
             var collarMoodleStatuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
             // Clearing an existing assignment stays available without Moodles.
@@ -2028,9 +2034,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             {
                 var collarMoodleStatusNames = collarMoodleStatuses.Select(s => MoodlesTextFormat.StripMarkup(s.Name)).ToArray();
                 newCollarMoodleStatusIndex = Math.Clamp(newCollarMoodleStatusIndex, 0, collarMoodleStatusNames.Length - 1);
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.Combo("##newCollarMoodle", ref newCollarMoodleStatusIndex, collarMoodleStatusNames, collarMoodleStatusNames.Length);
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Assign"));
                 if (ImGui.SmallButton("Assign##collarMoodle"))
                 {
                     var chosen = collarMoodleStatuses[newCollarMoodleStatusIndex];
@@ -2042,7 +2048,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
             if (config.Collar.HasMoodleAssigned)
             {
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Clear"));
                 if (ImGui.SmallButton("Clear##collarMoodle"))
                 {
                     config.Collar.MoodleStatusId = null;
@@ -2063,7 +2069,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             IconGlyph.WrappedDisabled("The words your Owner sends to put the leash on or take it off.");
             DrawFixedWord("Leash", ControlWords.Leash);
-            IconGlyph.HelpMarker("Puts on a leash of the length your Owner picked, while the Follow / Leash permission is enabled. You move freely inside it, can't walk past its end, and get pulled along when your Owner walks farther away.");
+            IconGlyph.HelpMarker("Puts on a leash of your Owner's chosen length. You move freely inside it and get pulled along.");
             DrawFixedWord("Unleash", ControlWords.Unleash);
             IconGlyph.HelpMarker("Takes the leash off and gives you full control back.");
         }
@@ -2072,13 +2078,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             var follow = config.Aliases.Follow;
             var maxLength = follow.MaxLeashLengthYalms;
-            ImGui.SetNextItemWidth(200);
+            ItemWidth(200);
             if (ImGui.SliderInt("Longest leash I'll accept (yalms)##subLeashMax", ref maxLength, LengthOption.MinYalms, LengthOption.MaxYalms))
             {
                 follow.MaxLeashLengthYalms = Math.Clamp(maxLength, LengthOption.MinYalms, LengthOption.MaxYalms);
                 config.Save();
             }
-            IconGlyph.HelpMarker("If your Owner asks for a longer leash, it's shortened to this. Changing it while leashed applies right away.");
+            IconGlyph.HelpMarker("A longer leash from your Owner is shortened to this.");
         }
 
         using (Section.Begin("leashMoodle", "Attached moodle"))
@@ -2089,6 +2095,51 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 follow.AttachedMoodle = leashMoodle;
                 config.Save();
             }
+        }
+    }
+
+    /// Only changes what this client draws; the leash keeps working with its line hidden.
+    private static void DrawLeashLineSection(PluginConfig config)
+    {
+        using var box = Section.Begin("leashAppearance", "Leash line");
+        var showLeash = config.ShowLeashLine;
+        if (ImGui.Checkbox("Show leash line", ref showLeash))
+        {
+            config.ShowLeashLine = showLeash;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Only changes what you see. Hiding it doesn't release the leash.");
+
+        using var disabled = ImRaii.Disabled(!config.ShowLeashLine);
+        var color = config.LeashColor;
+        if (ImGui.ColorEdit3("Color##leash", ref color, ImGuiColorEditFlags.NoInputs))
+        {
+            config.LeashColor = color;
+            config.Save();
+        }
+        ContinueRowOrWrap(ButtonWidth("Reset"));
+        if (ImGui.SmallButton("Reset##leashAppearance"))
+        {
+            config.LeashColor = PluginConfig.DefaultLeashColor;
+            config.LeashBrightness = 1f;
+            config.LeashOpacity = 1f;
+            config.Save();
+        }
+
+        var brightness = (int)MathF.Round(config.LeashBrightness * 100f);
+        ItemWidth(200);
+        if (ImGui.SliderInt("Brightness##leash", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
+        {
+            config.LeashBrightness = brightness / 100f;
+            config.Save();
+        }
+
+        var opacity = (int)MathF.Round(config.LeashOpacity * 100f);
+        ItemWidth(200);
+        if (ImGui.SliderInt("Opacity##leash", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
+        {
+            config.LeashOpacity = opacity / 100f;
+            config.Save();
         }
     }
 
@@ -2162,7 +2213,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             resetImportsResult = "All imports reset to a blank slate.";
             importResult = null;
         }
-        IconGlyph.HelpMarker("Clears every import-sourced quick command (Title, Outfit, Animation, Moodles, Restraints) back out, leaving anything you added or scanned yourself in those same lists untouched; clears the entire Custom Trigger Bundle list - including any one-off commands you typed by hand, since imported bundles share that same list; and clears the browsable Animation/Restraints mod catalogs imported from your Sub, so a stale or duplicate entry from an earlier import can't linger until the next one.");
+        IconGlyph.HelpMarker("Clears everything imported from your Sub, including every bundle. Commands you added yourself stay.");
 
         if (importResult is not null)
         {
@@ -2182,10 +2233,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var mailbox = plugin.CatalogMailboxService;
         var pairing = plugin.Configuration.ActivePairing;
         IconGlyph.Text(FontAwesomeIcon.CloudDownloadAlt, "Cloud catalog sync");
-        IconGlyph.WrappedDisabled("Your Sub's catalog syncs automatically through the Oathbound Cloudflare relay, end-to-end encrypted: their plugin shares changes a few minutes after they stop editing, and this plugin picks them up within about half an hour. No chat messages or file transfers are needed.");
+        IconGlyph.WrappedDisabled("Your Sub's catalog arrives here automatically when it changes.");
         if (pairing is not { Direction: PairingDirection.OwnerSide })
         {
-            IconGlyph.WrappedDisabled("No Owner-side pairing is active - select one above, or pair from Settings first. The offline file fallback remains available below.");
+            IconGlyph.WrappedDisabled("No Owner-side pairing is active - pick one above or pair in Settings.");
             return;
         }
 
@@ -2197,7 +2248,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.Button(mailbox.IsChecking(pairing.Id) ? "Checking..." : "Check now"))
                 plugin.CatalogAutoSync.RequestOwnerCheck(pairing, force: true);
         }
-        IconGlyph.HelpMarker("Checks the relay right away for a newer catalog from your Sub and imports it if there is one. Otherwise this happens automatically about every 30 minutes.");
+        IconGlyph.HelpMarker("Checks for a newer catalog from your Sub now.");
 
         ImGui.SameLine();
         using (ImRaii.Disabled(relayService.RequestInFlight))
@@ -2205,12 +2256,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.Button(relayService.RequestInFlight ? "Requesting..." : "Request refresh"))
                 Plugin.FireAndForget(relayService.RequestRefreshAsync(pairing, System.Threading.CancellationToken.None));
         }
-        IconGlyph.HelpMarker("Manual fallback: asks your Sub's plugin to send its catalog right now over a chat tell. Needs your Sub to be online, and works even if their plugin is too old for automatic sync.");
+        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog by tell. They need to be online.");
 
         if (pairing.SubLastPublishedUnixSeconds is { } published)
             IconGlyph.WrappedDisabled($"Your Sub last shared changes: {DateTimeOffset.FromUnixTimeSeconds(published).LocalDateTime:g}.");
         if (pairing.LastAcceptedCatalogSyncUnixSeconds > 0)
-            IconGlyph.WrappedDisabled($"Last imported: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastAcceptedCatalogSyncUnixSeconds).LocalDateTime:g} (snapshot #{pairing.LastImportedSnapshotId}).");
+            IconGlyph.WrappedDisabled($"Last imported: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastAcceptedCatalogSyncUnixSeconds).LocalDateTime:g}.");
         if (pairing.LastMailboxCheckOkUnixSeconds > 0)
             IconGlyph.WrappedDisabled($"Last checked: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastMailboxCheckOkUnixSeconds).LocalDateTime:g}.");
 
@@ -2237,9 +2288,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return (Theme.Warning, "Out of date: not checked yet since this update - checking shortly.");
         var sinceOk = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(lastOk);
         if (sinceOk > TimeSpan.FromHours(2))
-            return (Theme.Warning, $"Out of date: couldn't reach the relay since {DateTimeOffset.FromUnixTimeSeconds(lastOk).LocalDateTime:g}. Your Sub may have changed things since.");
+            return (Theme.Warning, $"Out of date: couldn't check for updates since {DateTimeOffset.FromUnixTimeSeconds(lastOk).LocalDateTime:g}.");
         if (pairing.SubLastPublishedUnixSeconds is null)
-            return (Theme.Warning, "No automatic updates from your Sub yet: their plugin may be too old, or their \"Catalog sync (relay)\" permission is off. Request refresh still works.");
+            return (Theme.Warning, "No updates from your Sub yet - their \"Catalog sync\" permission may be off.");
         return (Theme.Success, "Up to date.");
     }
 
@@ -2263,18 +2314,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Separator();
     }
 
-    /// Ignores any "##id" suffix.
-    private static float ButtonWidth(string visibleLabel) =>
-        ImGui.CalcTextSize(visibleLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
-
-    /// Continues the row with SameLine() if the next control fits, otherwise wraps.
-    private static void ContinueRowOrWrap(float nextControlWidth)
-    {
-        ImGui.SameLine();
-        if (ImGui.GetContentRegionAvail().X < nextControlWidth)
-            ImGui.NewLine();
-    }
-
     /// The collar applies at pairing acceptance or via `collar lock`; only the fixed rows are needed.
     private void DrawCollarQuickSection(bool canSend)
     {
@@ -2282,10 +2321,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Separator();
         using var commands = Section.Begin("collarQuick", "Commands");
         DrawFixedQuickRow("Collar lock", "collar lock", canSend, FixedActionIds.CollarLock);
-        IconGlyph.HelpMarker("(Re-)attaches your Sub's configured collar item and locks it - the same thing that happens automatically at pairing, triggered manually. Use this to re-lock after \"Collar unlock,\" or to apply it for the first time if it wasn't configured/enabled yet when pairing was accepted.");
+        IconGlyph.HelpMarker("Puts your Sub's collar on and locks it.");
 
         DrawFixedQuickRow("Collar unlock", "collar unlock", canSend, FixedActionIds.CollarUnlock);
-        IconGlyph.HelpMarker("Releases your Sub's locked collar - it stays equipped, just no longer locked. Your Sub's safeword doesn't unlock it; only this or ending the pairing does.");
+        IconGlyph.HelpMarker("Unlocks your Sub's collar. It stays on, just unlocked.");
     }
 
     private void DrawMoodlesQuickSection(bool canSend)
@@ -2331,20 +2370,20 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("restraintQuickCommands", "Commands"))
         {
             DrawFixedQuickRow("Restraint unlock", "restraint unlock", canSend, FixedActionIds.RestraintUnlock);
-            IconGlyph.HelpMarker("Force-releases every active restraint device and clears the force-lock, the same as your Sub's panic would for restraints specifically.");
+            IconGlyph.HelpMarker("Releases every restraint on your Sub.");
         }
 
         var browserBox = Section.Begin("restraintQuickBrowser", "Available restraint mods");
         ImGui.InputTextWithHint("##ownerRestraintSearch", "Search available restraint mods...", ref ownerRestraintSearch, 128);
-        IconGlyph.WrappedDisabled("Choose a mod to create one restraint command. Its Penumbra options stay exactly as your Sub configured them; enabling and locking are temporary until the global restraint unlock.");
-        using (ImRaii.Child("restraintModBrowser", new Vector2(0, 150), true))
+        IconGlyph.WrappedDisabled("Choose a mod to create a restraint command.");
+        using (ImRaii.Child("restraintModBrowser", new Vector2(0, Scaled(150)), true))
         {
             foreach (var entry in catalog.Where(x => string.IsNullOrWhiteSpace(ownerRestraintSearch) || x.ModName.Contains(ownerRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.ModName))
             {
-                ImGui.TextUnformatted(entry.ModName);
-                ImGui.SameLine();
                 var alreadyChosenCount = quick.Count(x => x.RestraintCatalogId == entry.Id);
-                if (ImGui.SmallButton($"{(alreadyChosenCount > 0 ? "Choose again" : "Choose")}##restraintMod_{entry.Id}"))
+                var chooseLabel = alreadyChosenCount > 0 ? "Choose again" : "Choose";
+                TextWithActions(entry.ModName, ButtonWidth(chooseLabel));
+                if (ImGui.SmallButton($"{chooseLabel}##restraintMod_{entry.Id}"))
                 {
                     // The row is keyed by Label, so a repeated mod gets a distinct one.
                     var label = alreadyChosenCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyChosenCount + 1})";
@@ -2374,7 +2413,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
             else
             {
-                using var _ = Section.List("restraintsQuickList", 260);
+                using var _ = Section.List("restraintsQuickList", Scaled(260));
                 foreach (var cmd in configuredMods) DrawRestraintQuickRow(cmd, quick, canSend);
             }
         }
@@ -2397,9 +2436,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Rules-only and sent with its full definition in the command, so it isn't added to the quick list.
     private void DrawAdHocRestraintSection(bool canSend)
     {
-        IconGlyph.WrappedDisabled("Send restriction rules on their own - forced pose, walk-only, gagged or action block - with no gear. Cuffs belong to a device, so they come with your Sub's shared restraint mods above.");
+        IconGlyph.WrappedDisabled("Send rules like forced pose, walk-only, gag or action block without any gear.");
 
-        ImGui.SetNextItemWidth(220);
+        ItemWidth(220);
         ImGui.InputText("Label##adHocRestraint", ref newAdHocLabel, 32);
         IconGlyph.HelpMarker("Your own reference name for this restraint - never matched against anything on your Sub's side.");
         OwnerMoodleOverride.Draw("adHocRestraint", plugin.Configuration, ref adHocMoodleOverride);
@@ -2431,9 +2470,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Actions are typed by name only: the Owner's install can't see the Sub's catalogs.
     private void DrawCustomTriggerQuickSection(bool canSend)
     {
-        IconGlyph.WrappedDisabled("Bundle actions together by name - no dedicated alias needed on your Sub's side. Type each name exactly as your Sub told you; Title and Chat need no name at all.");
+        IconGlyph.WrappedDisabled("Bundle actions under one name, using the names your Sub gave you.");
 
-        ImGui.SetNextItemWidth(220);
+        ItemWidth(220);
         ImGui.InputText("Label##ctqLabel", ref ctqLabel, 32);
         IconGlyph.HelpMarker("Your own reference name for this bundle - never matched against anything on your Sub's side.");
 
@@ -2443,26 +2482,26 @@ public sealed partial class ModuleWindow : Window, IDisposable
             for (var i = 0; i < ctqDraftActions.Count; i++)
             {
                 ImGui.PushID($"ctqDraftAction_{i}");
-                DrawActionSummary(ctqDraftActions[i]);
-                ImGui.SameLine();
+                // A restraint is edited in the Restraints tab, not from a bundle.
+                var editable = ctqDraftActions[i].Kind != CustomTriggerActionKind.Restraint;
+                DrawActionSummary(ctqDraftActions[i], DraftActionButtonsWidth(editable));
                 using (ImRaii.Disabled(i == 0))
                     if (ImGui.SmallButton("↑"))
                         MoveDraftAction(ctqDraftActions, i, i - 1, ref editingOwnerActionIndex);
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("↓"));
                 using (ImRaii.Disabled(i == ctqDraftActions.Count - 1))
                     if (ImGui.SmallButton("↓"))
                         MoveDraftAction(ctqDraftActions, i, i + 1, ref editingOwnerActionIndex);
-                // A restraint is edited in the Restraints tab, not from a bundle.
-                if (ctqDraftActions[i].Kind != CustomTriggerActionKind.Restraint)
+                if (editable)
                 {
-                    ImGui.SameLine();
+                    ContinueRowOrWrap(ButtonWidth("Edit"));
                     if (ImGui.SmallButton("Edit"))
                     {
                         LoadOwnerActionDraft(ctqDraftActions[i]);
                         editingOwnerActionIndex = i;
                     }
                 }
-                ImGui.SameLine();
+                ContinueRowOrWrap(ButtonWidth("Remove"));
                 if (ImGui.SmallButton("Remove"))
                 {
                     RemoveDraftAction(ctqDraftActions, i, ref editingOwnerActionIndex);
@@ -2476,7 +2515,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         Section.SubHeading(editingOwnerActionIndex is null ? "Add an action" : "Edit action");
         var kindNames = Enum.GetNames<CustomTriggerActionKind>();
         ctqKindIndex = Math.Clamp(ctqKindIndex, 0, kindNames.Length - 1);
-        ImGui.SetNextItemWidth(160);
+        ItemWidth(160);
         ImGui.Combo("Action type##ctqKind", ref ctqKindIndex, kindNames, kindNames.Length);
         var kind = Enum.Parse<CustomTriggerActionKind>(kindNames[ctqKindIndex]);
         if (editingOwnerActionIndex is not null)
@@ -2485,7 +2524,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         switch (kind)
         {
             case CustomTriggerActionKind.Title:
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.InputText("Text##ctqTitle", ref ctqTitleText, 64);
                 ImGui.Checkbox("Prefix##ctqTitle", ref ctqTitleIsPrefix);
                 ImGui.ColorEdit3("Color##ctqTitle", ref ctqTitleColor);
@@ -2505,7 +2544,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Outfit:
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.InputText("Design name##ctqOutfit", ref ctqOutfitName, 32);
                 IconGlyph.HelpMarker("Type the exact wardrobe design name your Sub told you.");
                 using (ImRaii.Disabled(ctqOutfitName.Trim().Length == 0))
@@ -2519,7 +2558,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Gesture:
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.InputText("Animation name##ctqGesture", ref ctqGestureName, 32);
                 IconGlyph.HelpMarker("Type the exact animation name your Sub told you.");
                 using (ImRaii.Disabled(ctqGestureName.Trim().Length == 0))
@@ -2533,7 +2572,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Moodle:
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.InputText("Status name##ctqMoodle", ref ctqMoodleName, 32);
                 IconGlyph.HelpMarker("Type the exact Moodles status name your Sub told you.");
                 using (ImRaii.Disabled(ctqMoodleName.Trim().Length == 0))
@@ -2547,9 +2586,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Restraint:
-                ImGui.SetNextItemWidth(220);
+                ItemWidth(220);
                 ImGui.InputText("Device name##ctqRestraint", ref ctqRestraintName, 32);
-                IconGlyph.HelpMarker("Type the exact restraint device name your Sub told you. Always applies rather than toggling, since this bundle has no captured device to check the active state of - use the Restraints section above to release it.");
+                IconGlyph.HelpMarker("The restraint name your Sub gave you. Always applies; release it from Restraints.");
                 using (ImRaii.Disabled(ctqRestraintName.Trim().Length == 0))
                 {
                     if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqRestraintBtn"))
@@ -2561,7 +2600,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Chat:
-                ImGui.SetNextItemWidth(320);
+                ItemWidth(320);
                 ImGui.InputText("Message##ctqChat", ref ctqChatText, 400);
                 IconGlyph.HelpMarker("Sent exactly as typed, unmodified - start it with a slash command (e.g. /sit) or a channel prefix (e.g. /p) to use those instead of the default chat channel. Needs your Sub's Custom chat messages permission and its own acknowledgement (see the README's Automation risk section).");
                 using (ImRaii.Disabled(ctqChatText.Trim().Length == 0))
@@ -2747,8 +2786,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 }
             }
             IconGlyph.HelpMarker("Your own label for this configured restraint - rename it so you can tell entries for the same mod apart.");
-            ImGui.TextUnformatted($"Glamourer item: {(cmd.RestraintItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}");
-            ImGui.SameLine();
+            TextWithActions($"Glamourer item: {(cmd.RestraintItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
             if (ImGui.SmallButton("Choose item...##restraintQuick"))
             {
                 var catalogEntry = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.GetValueOrDefault(cmd.RestraintCatalogId ?? "");
@@ -2878,7 +2916,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawFixedQuickRow("Clear title", "title clear", canSend, FixedActionIds.ClearTitle);
 
         var addBox = Section.Begin("titleQuickAdd", "Add a title command");
-        ImGui.SetNextItemWidth(220);
+        ItemWidth(220);
         ImGui.InputText("##newQuickTitle", ref newTitleQuickText, 64);
         IconGlyph.HelpMarker("The exact title text applied via Honorific.");
         ImGui.Checkbox("Prefix (not suffix)##newQuickTitle", ref newTitleQuickIsPrefix);
@@ -2905,7 +2943,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             newTitleQuickHasGlow = false;
             newTitleQuickGlow = new Vector3(1, 1, 1);
         }
-        IconGlyph.HelpMarker("Saves a one-click button that force-applies this exact title (with the chosen prefix/color) and locks it on - your Sub's own clear-title alias is refused while it's locked, only the \"Clear title\" button below (or their panic) releases it. Requires a Sub on this plugin version to recognize the styled command - see the README.");
+        IconGlyph.HelpMarker("Saves a button that applies and locks this title. Only Clear title or their panic removes it.");
         addBox.Dispose();
 
         if (quick.Count == 0)
@@ -2964,7 +3002,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
 
         var searchBox = Section.Begin("gestureQuickSearchBox", "Search");
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+        ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##gestureQuickSearch", "Search mod, group, or animation...", ref gestureQuickSearch, 128);
 
         var filter = gestureQuickSearch.Trim();
@@ -3061,13 +3099,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var leashMoodle = plugin.Configuration.QuickCommands.LeashMoodleOverride;
             ImGui.Indent();
             var leashLength = plugin.Configuration.QuickCommands.LeashLengthYalms;
-            ImGui.SetNextItemWidth(200);
+            ItemWidth(200);
             if (ImGui.SliderInt("Length (yalms)##ownerLeashLength", ref leashLength, LengthOption.MinYalms, LengthOption.MaxYalms))
             {
                 plugin.Configuration.QuickCommands.LeashLengthYalms = Math.Clamp(leashLength, LengthOption.MinYalms, LengthOption.MaxYalms);
                 plugin.Configuration.Save();
             }
-            IconGlyph.HelpMarker("How far your Sub can move from you. They move freely inside it, can't walk past the end, and get pulled along when you walk farther away. Your Sub may have set a shorter limit, and needs a plugin version that understands leash lengths - older versions ignore the whole command.");
+            IconGlyph.HelpMarker("How far your Sub can move from you. They may have set a shorter limit.");
             OwnerMoodleOverride.Draw("leash", plugin.Configuration, ref leashMoodle);
             ImGui.Unindent();
             if (leashMoodle != plugin.Configuration.QuickCommands.LeashMoodleOverride)
@@ -3093,17 +3131,17 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Separator();
         var config = plugin.Configuration;
         if (!config.ToyControlAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Requires the dedicated Toy Control acknowledgement in Settings (gear icon) and the Toy Control permission (Permissions tab) before an Owner's commands take effect.");
+            IconGlyph.WrappedColored(Theme.Warning, "Needs the Toy Control acknowledgement and permission in Settings first.");
 
         if (toyIntifaceAddress.Length == 0)
             toyIntifaceAddress = config.IntifaceAddress;
 
         var connectionBox = Section.Begin("toyConnection", "Connection");
         var intiface = plugin.IntifaceIpc;
-        ImGui.SetNextItemWidth(260);
+        ItemWidth(260);
         using (ImRaii.Disabled(intiface.IsConnected || intiface.IsConnecting))
             ImGui.InputText("Intiface address##toyControl", ref toyIntifaceAddress, 128);
-        IconGlyph.HelpMarker("Intiface Central's own WebSocket address - the default matches Intiface Central's default listen address, change it only if you've configured Intiface differently.");
+        IconGlyph.HelpMarker("Intiface Central's address. Only change it if you changed it in Intiface.");
 
         if (intiface.IsConnected)
         {
@@ -3133,7 +3171,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (ImRaii.Disabled(!intiface.IsConnected))
         if (ImGui.SmallButton("Stop now##toyControlLocal"))
             plugin.ToyControlCommand.ForceStop();
-        IconGlyph.HelpMarker("Stops every connected device immediately, independent of anything your Owner sent - for your own peace of mind, not tied to any permission.");
+        IconGlyph.HelpMarker("Stops every device right away.");
         connectionBox.Dispose();
 
         using (Section.Begin("toyStatus", "Status"))
@@ -3141,22 +3179,22 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         var limitsBox = Section.Begin("toyLimits", "Limits");
         var defaultMaxDuration = config.DefaultMaxDurationSeconds;
-        ImGui.SetNextItemWidth(160);
+        ItemWidth(160);
         if (ImGui.SliderInt("Default max duration (s)##toyControlDefaultMax", ref defaultMaxDuration, 1, ToyControlCommand.MaxDurationSeconds))
         {
             config.DefaultMaxDurationSeconds = defaultMaxDuration;
             config.Save();
         }
-        IconGlyph.HelpMarker($"How long a command runs when no duration was specified - an untimed vibrate, or any pattern's own outer ceiling. This can only shorten the {ToyControlCommand.MaxDurationSeconds}s hard ceiling, never lengthen it - an Owner's explicitly timed command is still capped at {ToyControlCommand.MaxDurationSeconds}s regardless of this setting. Permanent-mode commands use the separate setting just below instead.");
+        IconGlyph.HelpMarker($"How long a command runs if it has no duration. Never more than {ToyControlCommand.MaxDurationSeconds}s.");
 
         var permanentBackstop = config.PermanentBackstopSeconds;
-        ImGui.SetNextItemWidth(160);
+        ItemWidth(160);
         if (ImGui.InputInt("Permanent-mode backstop (s)##toyControlPermanentBackstop", ref permanentBackstop))
         {
             config.PermanentBackstopSeconds = Math.Max(1, permanentBackstop);
             config.Save();
         }
-        IconGlyph.HelpMarker("The hard ceiling a permanent-mode vibrate/pattern command is held to - still a real limit, just a much longer one than the default max duration above. Defaults to 14400 seconds (4 hours). Applies only when a command explicitly requests permanent mode.");
+        IconGlyph.HelpMarker("The limit for permanent-mode commands. Default 4 hours.");
         limitsBox.Dispose();
 
         using (Section.Begin("toyPatterns"))
@@ -3207,18 +3245,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
             {
                 ContinueRowOrWrap(ButtonWidth("Send"));
                 DrawSendOnly(ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop), canSend, $"toyPatternSend{pattern.Id}", "Send");
-                IconGlyph.HelpMarker("Sends this pattern's full step sequence directly to your paired Sub, by value - they don't need to have anything saved for this to work, and it doesn't add anything to their own saved pattern list.");
+                IconGlyph.HelpMarker("Sends this pattern to your Sub. They don't need it saved.");
             }
             ImGui.Unindent();
         }
 
         ImGui.Spacing();
         IconGlyph.WrappedDisabled(toyPatternEditingId is null ? "New pattern" : "Editing pattern");
-        ImGui.SetNextItemWidth(200);
+        ItemWidth(200);
         ImGui.InputText("Name##toyPatternName", ref toyPatternNameInput, 64);
-        IconGlyph.HelpMarker("A name for this pattern, used to select it later - can't match a built-in preset name (weak/medium/strong/pulse) or another custom pattern you've already saved.");
+        IconGlyph.HelpMarker("Can't match a built-in or another saved pattern.");
         ImGui.Checkbox("Loop##toyPatternLoop", ref toyPatternLoopInput);
-        IconGlyph.HelpMarker("If checked, the steps below repeat from the start once the last one ends, continuing until stopped, panic, or the safety ceiling. If unchecked, the pattern plays through the steps once and then stops on its own.");
+        IconGlyph.HelpMarker("Repeat the steps until stopped.");
         ImGui.Spacing();
 
         ImGui.Indent();
@@ -3226,18 +3264,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             var step = toyPatternStepsInput[i];
             IconGlyph.WrappedDisabled($"Step {i + 1}");
-            ImGui.SetNextItemWidth(140);
+            ItemWidth(140);
             var intensity = step.IntensityPercent;
             if (ImGui.SliderInt($"Intensity##toyPatternStep{i}", ref intensity, 0, 100, "%d%%"))
                 step.IntensityPercent = intensity;
             IconGlyph.HelpMarker("How strong the vibration is while this step is active.");
 
             ContinueRowOrWrap(160);
-            ImGui.SetNextItemWidth(120);
+            ItemWidth(120);
             var durationMs = step.DurationMs;
             if (ImGui.InputInt($"ms##toyPatternStepDuration{i}", ref durationMs))
                 step.DurationMs = Math.Max(0, durationMs);
-            IconGlyph.HelpMarker("How long this step lasts, in milliseconds, before moving to the next step. 0 means this step holds indefinitely - it never advances on its own, only stopping at the pattern's overall ceiling, an explicit stop, or panic.");
+            IconGlyph.HelpMarker("Step length in milliseconds. 0 holds until stopped.");
 
             ContinueRowOrWrap(ButtonWidth("Up"));
             using (ImRaii.Disabled(i == 0))
@@ -3334,7 +3372,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         if (!config.ToyTriggersAcknowledged)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Requires the dedicated Automatic Triggers acknowledgement in Settings (gear icon) first - triggers act on their own, with no per-occurrence click, so they need their own explicit consent separate from Toy Control's.");
+            IconGlyph.WrappedColored(Theme.Warning, "Needs the Automatic Triggers acknowledgement in Settings first.");
             return;
         }
 
@@ -3344,7 +3382,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Warning, "Triggers are suspended (panic was triggered). They will not fire again until you resume them.");
             if (ImGui.SmallButton("Resume triggers##toyTriggers"))
                 runtimeState.ToyTriggersSuspended = false;
-            IconGlyph.HelpMarker("Re-arms every enabled trigger below. Panic suspends all trigger evaluation on purpose, so nothing can fire again immediately after a panic - this is the only way to turn evaluation back on.");
+            IconGlyph.HelpMarker("Turns triggers back on after a panic.");
             ImGui.Spacing();
         }
 
@@ -3399,72 +3437,72 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Spacing();
         var kindNames = new[] { "Health drops below %", "Hit (damage from anything)", "A restriction becomes active", "Spell cast on you", "Emote used on you" };
         var kindIndex = (int)toyTriggerKindInput;
-        ImGui.SetNextItemWidth(220);
+        ItemWidth(220);
         if (ImGui.Combo("Condition##toyTriggerKind", ref kindIndex, kindNames, kindNames.Length))
             toyTriggerKindInput = (ToyTriggerKind)kindIndex;
-        IconGlyph.HelpMarker("What local game-state event fires this trigger. Every option runs entirely on your own client - no message is ever sent to or from your Owner.");
+        IconGlyph.HelpMarker("What fires this trigger. Runs only on your client.");
 
         if (toyTriggerKindInput == ToyTriggerKind.HealthPercent)
         {
-            ImGui.SetNextItemWidth(120);
+            ItemWidth(120);
             ImGui.SliderInt("Threshold %##toyTriggerHealth", ref toyTriggerHealthThresholdInput, 1, 100);
-            IconGlyph.HelpMarker("Fires the first time your health drops to or below this percentage. It won't fire again while health stays below the threshold - it needs to rise back above it first (or the cooldown alone gates a fast in-and-out).");
+            IconGlyph.HelpMarker("Fires when your health drops to this percent. It has to rise above it to fire again.");
         }
         else if (toyTriggerKindInput == ToyTriggerKind.RestrictionActive)
         {
             var restrictionNames = Enum.GetNames<RestraintRuleKind>();
             var restrictionIndex = (int)toyTriggerRestrictionKindInput;
-            ImGui.SetNextItemWidth(200);
+            ItemWidth(200);
             if (ImGui.Combo("Restriction##toyTriggerRestriction", ref restrictionIndex, restrictionNames, restrictionNames.Length))
                 toyTriggerRestrictionKindInput = (RestraintRuleKind)restrictionIndex;
-            IconGlyph.HelpMarker("Fires the first time this restriction becomes active on you, from any device that applies it - not continuously while it stays active.");
+            IconGlyph.HelpMarker("Fires when this restriction starts on you.");
         }
         else if (toyTriggerKindInput == ToyTriggerKind.PlayerDamage)
         {
-            IconGlyph.WrappedDisabled("Fires each time you take damage from anything - another player, an enemy, or any other NPC. Add players below to only react to them (which rules out NPCs).");
+            IconGlyph.WrappedDisabled("Fires when you take damage. Add players below to only react to them.");
             DrawToyTriggerSourcePlayers();
         }
         else if (toyTriggerKindInput == ToyTriggerKind.SpellCastOnYou)
         {
-            IconGlyph.WrappedDisabled("Fires each time an action is used on you by another player character - damage, heal, buff, or debuff alike, never from an NPC. Optionally narrow it to specific job(s) and/or specific spell(s)/skill(s) below; leave both empty to match any action from any player.");
+            IconGlyph.WrappedDisabled("Fires when a player uses an action on you. Narrow it by job or skill below.");
             DrawToySpellJobFilter();
             DrawToySpellActionFilter();
             DrawToyTriggerSourcePlayers();
         }
         else
         {
-            IconGlyph.WrappedDisabled("Fires when another player uses an emote aimed at you (they have you targeted when they use it). Optionally narrow it to specific emote(s) and/or specific players; leave both empty to react to any emote from anyone.");
+            IconGlyph.WrappedDisabled("Fires when a player emotes at you. Narrow it by emote or player below.");
             DrawToyEmoteFilter();
             DrawToyTriggerSourcePlayers();
         }
 
         ImGui.Checkbox("Named pattern (instead of a fixed intensity)##toyTriggerUsePattern", ref toyTriggerUsePatternInput);
-        IconGlyph.HelpMarker("Off: fire a plain vibration at a fixed intensity (with its own optional duration below). On: fire a named pattern - a built-in preset (weak/medium/strong/pulse) or one of your own saved custom patterns - instead, using that pattern's own timing.");
+        IconGlyph.HelpMarker("Off: a plain vibration. On: play a named pattern.");
         if (toyTriggerUsePatternInput)
         {
-            ImGui.SetNextItemWidth(180);
+            ItemWidth(180);
             ImGui.InputText("Pattern name##toyTriggerPattern", ref toyTriggerPatternNameInput, 64);
-            IconGlyph.HelpMarker("Must exactly match a built-in preset name (weak/medium/strong/pulse) or one of your saved custom patterns - see the Custom Patterns section above. An unrecognized name means this trigger will fail closed and never actually fire.");
+            IconGlyph.HelpMarker("A built-in (weak/medium/strong/pulse) or saved pattern name. Unknown names never fire.");
         }
         else
         {
-            ImGui.SetNextItemWidth(140);
+            ItemWidth(140);
             ImGui.SliderInt("Intensity##toyTriggerIntensity", ref toyTriggerIntensityInput, 0, 100, "%d%%");
             IconGlyph.HelpMarker("How strong the vibration is when this trigger fires.");
 
             ImGui.Checkbox("Duration##toyTriggerHasDuration", ref toyTriggerHasDurationInput);
-            IconGlyph.HelpMarker("How long the vibration runs once this trigger fires, before it stops on its own. Leave unchecked to use the default safety ceiling instead of a specific duration - either way, a hard local ceiling always applies.");
+            IconGlyph.HelpMarker("How long it vibrates. Unchecked uses the default limit.");
             if (toyTriggerHasDurationInput)
             {
                 ImGui.SameLine();
-                ImGui.SetNextItemWidth(120);
+                ItemWidth(120);
                 ImGui.SliderInt("seconds##toyTriggerDuration", ref toyTriggerDurationSecondsInput, 1, ToyControlCommand.MaxDurationSeconds);
             }
         }
 
-        ImGui.SetNextItemWidth(120);
+        ItemWidth(120);
         ImGui.SliderInt("Cooldown (s)##toyTriggerCooldown", ref toyTriggerCooldownInput, 2, 300);
-        IconGlyph.HelpMarker("Minimum time between firings of this trigger, even if its condition becomes true again sooner. A 2-second floor always applies regardless of this value.");
+        IconGlyph.HelpMarker("Minimum time between firings (at least 2 seconds).");
 
         ImGui.Spacing();
         if (editingRule is not null)
@@ -3555,7 +3593,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Checking none means "any emote".
     private void DrawToyEmoteFilter()
     {
-        ImGui.SetNextItemWidth(200);
+        ItemWidth(200);
         ImGui.InputTextWithHint("##toyTriggerEmoteSearch", "Filter emotes...", ref toyTriggerEmoteSearch, 32);
         IconGlyph.HelpMarker("Which emote(s) this trigger reacts to. Leave every emote unchecked to react to any emote aimed at you.");
         if (toyTriggerEmoteIdsInput.Count > 0)
@@ -3565,7 +3603,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 toyTriggerEmoteIdsInput.Clear();
         }
 
-        using var _ = ImRaii.Child("toyTriggerEmoteList", new Vector2(0, 110), true);
+        using var _ = ImRaii.Child("toyTriggerEmoteList", new Vector2(0, Scaled(110)), true);
         var search = toyTriggerEmoteSearch.Trim();
         foreach (var emote in Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>()
                      .Where(e => e.RowId > 0 && e.Name.ExtractText().Length > 0)
@@ -3587,7 +3625,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawToyTriggerSourcePlayers()
     {
         Section.SubHeading("Only from these players");
-        IconGlyph.HelpMarker("Leave empty to react to anyone. With players listed, only they can fire this trigger. \"Name Surname\" matches that name on any world; \"Name Surname@World\" matches only that world.");
+        IconGlyph.HelpMarker("Empty = anyone. \"Name Surname\" matches any world; add @World for just one.");
 
         foreach (var entry in toyTriggerSourcePlayersInput.ToList())
         {
@@ -3604,7 +3642,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 toyTriggerSourcePlayersInput.Add(trimmed);
         }
 
-        ImGui.SetNextItemWidth(220);
+        ItemWidth(220);
         var submitted = ImGui.InputTextWithHint("##toyTriggerSourceInput", "Name Surname[@World]", ref toyTriggerSourcePlayerInput, 64, ImGuiInputTextFlags.EnterReturnsTrue);
         ContinueRowOrWrap(ButtonWidth("Add"));
         if ((ImGui.SmallButton("Add##toyTriggerSource") || submitted) && toyTriggerSourcePlayerInput.Trim().Length > 0)
@@ -3636,11 +3674,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Checking none means "any job".
     private void DrawToySpellJobFilter()
     {
-        ImGui.SetNextItemWidth(200);
+        ItemWidth(200);
         ImGui.InputTextWithHint("##toyTriggerSpellJobSearch", "Filter jobs...", ref toyTriggerSpellJobSearch, 32);
         IconGlyph.HelpMarker("Which caster job(s) this trigger reacts to. Leave every job unchecked to match any job.");
 
-        using var _ = ImRaii.Child("toyTriggerSpellJobList", new Vector2(0, 90), true);
+        using var _ = ImRaii.Child("toyTriggerSpellJobList", new Vector2(0, Scaled(90)), true);
         var search = toyTriggerSpellJobSearch.Trim();
         foreach (var job in Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>()
                      .Where(j => j.RowId > 0 && j.Role > 0 && j.Abbreviation.ExtractText().Length > 0)
@@ -3659,9 +3697,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Thousands of rows, so it needs search text first (capped at 100). Checking none means "any action".
     private void DrawToySpellActionFilter()
     {
-        ImGui.SetNextItemWidth(200);
+        ItemWidth(200);
         ImGui.InputTextWithHint("##toyTriggerSpellActionSearch", "Search skill/spell name...", ref toyTriggerSpellActionSearch, 32);
-        IconGlyph.HelpMarker("Which specific action(s) this trigger reacts to. Leave every action unchecked to match any action. Type at least part of a skill/spell name to search - the full list is too large to show at once.");
+        IconGlyph.HelpMarker("Which skills fire this trigger. None checked = any. Type to search.");
 
         var search = toyTriggerSpellActionSearch.Trim();
         if (search.Length == 0)
@@ -3669,15 +3707,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
             foreach (var actionId in toyTriggerSpellActionIdsInput.ToList())
             {
                 var selectedName = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().GetRowOrDefault(actionId)?.Name.ExtractText() ?? actionId.ToString();
-                ImGui.TextUnformatted($"Selected: {selectedName}");
-                ImGui.SameLine();
+                TextWithActions($"Selected: {selectedName}", ButtonWidth("Remove"));
                 if (ImGui.SmallButton($"Remove##toyTriggerSpellAction{actionId}"))
                     toyTriggerSpellActionIdsInput.Remove(actionId);
             }
             return;
         }
 
-        using var _ = ImRaii.Child("toyTriggerSpellActionList", new Vector2(0, 90), true);
+        using var _ = ImRaii.Child("toyTriggerSpellActionList", new Vector2(0, Scaled(90)), true);
         foreach (var action in Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>()
                      .Where(a => a.IsPlayerAction && a.Name.ExtractText().Contains(search, StringComparison.OrdinalIgnoreCase))
                      .Take(100))
@@ -3741,13 +3778,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Plug, "Toy Control");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled($"Commands auto-stop after at most {ToyControlCommand.MaxDurationSeconds} seconds, regardless of the duration requested here.");
+        IconGlyph.WrappedDisabled($"Commands stop after at most {ToyControlCommand.MaxDurationSeconds} seconds.");
 
         using (Section.Begin("toyQuickStatus", "Status"))
             ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
 
         var vibrateBox = Section.Begin("toyQuickVibrate", "Vibrate");
-        ImGui.SetNextItemWidth(200);
+        ItemWidth(200);
         ImGui.SliderInt("Intensity##toyControl", ref toyVibrateIntensity, 0, 100, "%d%%");
 
         if (ImGui.Checkbox("Permanent (runs until stopped)##toyControlPermanent", ref toyVibrateIsPermanent) && toyVibrateIsPermanent)
@@ -3760,7 +3797,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (toyVibrateHasDuration)
             {
                 ImGui.SameLine();
-                ImGui.SetNextItemWidth(120);
+                ItemWidth(120);
                 ImGui.SliderInt("seconds##toyControlDuration", ref toyVibrateDurationSeconds, 1, ToyControlCommand.MaxDurationSeconds);
             }
         }
@@ -3789,7 +3826,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void DrawFreeformComposer(bool canSend)
     {
-        IconGlyph.WrappedDisabled("Multi-action Custom Trigger bundles your Sub shares land in Saved at the top - a single-action alias imports straight into its own category instead. Type a bundle alias your Sub told you about, or any one-off override. Add Command saves it as a one-click button in Saved at the top.");
+        IconGlyph.WrappedDisabled("Type an alias your Sub gave you, or a direct command. Add Command saves it as a button.");
 
         ImGui.InputText("Command", ref commandInput, 96);
         IconGlyph.HelpMarker("Either a short alias name your Sub defined, or a direct override: \"title create <text>\" / \"title clear\", \"outfit lock <name>\" / \"outfit unlock\", \"gesture <name>\".");
@@ -3822,7 +3859,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 commandInput = "";
             }
         }
-        IconGlyph.HelpMarker("Send fires this one /tell immediately - the same one-click, one-message shape as pressing an FFXIV macro, and the only thing in this plugin that ever sends chat for you. Copy never sends anything. Add Command saves the text above as a one-click button in Saved at the top.");
+        IconGlyph.HelpMarker("Send sends it as one /tell now. Copy only copies it. Add Command saves it as a button.");
     }
 
     private void DrawSavedAliasCommands(bool canSend)
@@ -3834,7 +3871,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        using var _ = Section.List("aliasQuickList", 300);
+        using var _ = Section.List("aliasQuickList", Scaled(300));
         foreach (var cmd in aliasQuick.ToArray())
             DrawSavedQuickRow(cmd, aliasQuick, canSend);
     }
@@ -3988,7 +4025,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var lockMode = editingQuickOutfitLocked ? 0 : 1;
                 if (ImGui.Combo("Lock##quickEdit", ref lockMode, OutfitLockModeNames, OutfitLockModeNames.Length))
                     editingQuickOutfitLocked = lockMode == 0;
-                IconGlyph.HelpMarker("Locked: your Sub can't change the outfit's pieces until you unlock it (restraints can still go over it). Not locked: the outfit is applied and your Sub is free to change it.");
+                IconGlyph.HelpMarker("Locked: your Sub can't change it until you unlock it. Not locked: they can change it freely.");
                 OwnerMoodleOverride.Draw("quickEditOutfit", plugin.Configuration, ref editingQuickMoodle);
                 break;
             case QuickEditCategory.Gesture:
@@ -4232,7 +4269,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         picked = current;
         var preview = current is null ? "None" : MoodlesTextFormat.StripMarkup(current.StatusName);
         if (width is { } w)
-            ImGui.SetNextItemWidth(w);
+            ItemWidth(w);
 
         if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } blocked)
         {
@@ -4266,7 +4303,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
             ImGui.EndCombo();
         }
-        IconGlyph.HelpMarker("Applied together with this, and removed when it's cleared - only this one moodle, never your others. Your Owner can pick a different one per command if your Moodles permission is on.");
+        IconGlyph.HelpMarker("Added with this and removed when it's cleared.");
         return changed;
     }
 

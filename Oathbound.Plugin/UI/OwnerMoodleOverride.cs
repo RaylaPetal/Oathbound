@@ -64,7 +64,7 @@ public static class OwnerMoodleOverride
         var preview = current is null
             ? "Sub's default"
             : choices.Where(c => c.Selector == current).Select(c => c.Label).FirstOrDefault() ?? current;
-        ImGui.SetNextItemWidth(200);
+        Layout.ItemWidth(200);
         if (ImGui.BeginCombo($"Moodle##ownerMoodle_{id}", preview))
         {
             if (ImGui.Selectable($"Sub's default##ownerMoodle_{id}", chosen is null))
@@ -78,6 +78,6 @@ public static class OwnerMoodleOverride
             }
             ImGui.EndCombo();
         }
-        IconGlyph.HelpMarker("Which moodle goes on your Sub along with this command. \"Sub's default\" uses whatever your Sub attached themselves. A different pick only applies if your Sub has Moodles permission on, and needs your Sub on a plugin version that understands it - older versions ignore the whole command.");
+        IconGlyph.HelpMarker("Which moodle goes on your Sub with this. \"Sub's default\" uses their own pick.");
     }
 }

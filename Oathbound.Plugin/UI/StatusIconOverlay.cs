@@ -25,16 +25,14 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
     private const float IconHeight = 28f;
     private const float Gap = 2f;
 
-    private readonly PluginConfig config;
     private readonly StatusIndicatorState state;
     private readonly uint[] iconIds;
     // Created lazily per slot.
     private readonly IconImageNode?[] icons = new IconImageNode?[AddonNamePlate.NumNamePlateObjects * 3];
     private bool warned;
 
-    public StatusIconOverlay(PluginConfig config, StatusIndicatorState state, uint[] iconIds)
+    public StatusIconOverlay(StatusIndicatorState state, uint[] iconIds)
     {
-        this.config = config;
         this.state = state;
         this.iconIds = iconIds;
         Size = new Vector2(1f, 1f);
@@ -61,7 +59,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
 
     private void Place()
     {
-        if (warned || !config.ShowStatusIcons) { HideAll(); return; }
+        if (warned) { HideAll(); return; }
 
         var addon = (AddonNamePlate*)Plugin.GameGui.GetAddonByName("NamePlate").Address;
         if (addon == null || addon->AtkUnitBase.RootNode == null || !addon->AtkUnitBase.RootNode->IsVisible()) { HideAll(); return; }
@@ -178,14 +176,14 @@ public sealed class StatusIconRenderer : IDisposable
 {
     private readonly OverlayController? controller;
 
-    public StatusIconRenderer(PluginConfig config, StatusIndicatorState state)
+    public StatusIconRenderer(StatusIndicatorState state)
     {
         try
         {
             KamiToolKitLibrary.Initialize(Plugin.PluginInterface, "Oathbound");
             var iconIds = StatusIconOverlay.ResolveIconIds();
             controller = new OverlayController();
-            controller.CreateNode(() => new StatusIconOverlay(config, state, iconIds));
+            controller.CreateNode(() => new StatusIconOverlay(state, iconIds));
         }
         catch (Exception ex)
         {

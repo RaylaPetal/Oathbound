@@ -627,8 +627,6 @@ public class PluginConfig : IPluginConfiguration
 
     public OwnerQuickCommands QuickCommands { get; set; } = new();
 
-    public bool ShowStatusIcons { get; set; } = true;
-
     public bool ShowLeashLine { get; set; } = true;
 
     public static readonly Vector3 DefaultLeashColor = new(0.68f, 0.07f, 0.10f);

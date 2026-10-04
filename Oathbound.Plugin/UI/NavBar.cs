@@ -9,7 +9,7 @@ namespace Oathbound.Plugin.UI;
 public static class NavBar
 {
     private const int Columns = 3;
-    private const float ButtonHeight = 36f;
+    private static float ButtonHeight => Layout.Scaled(36f);
 
     /// Computed from the same style values Draw uses, so callers never guess a constant.
     public static float RequiredHeight(int itemCount)
@@ -65,7 +65,7 @@ public static class NavBar
                 if (ImGui.Button($"##{item.Id}", size))
                     result = item.Id;
 
-                ImGui.SetCursorPos(start + new Vector2(8f, size.Y / 2 - 8f));
+                ImGui.SetCursorPos(start + new Vector2(Layout.Scaled(8f), size.Y / 2 - Layout.Scaled(8f)));
                 using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
                     ImGui.TextUnformatted(item.Icon.ToIconString());
                 ImGui.SameLine();

@@ -59,7 +59,7 @@ public sealed class CustomizePresetPickerWindow : Window, IDisposable
             return;
         }
 
-        ImGui.SetNextItemWidth(Math.Max(180, ImGui.GetContentRegionAvail().X));
+        ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##customizePresetPickerSearch", "Search profiles...", ref search, 128);
 
         var filter = search.Trim();

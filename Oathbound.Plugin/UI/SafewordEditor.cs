@@ -12,7 +12,7 @@ internal static class SafewordEditor
         ImGui.PushID(id);
         var value = config.PanicSafeword ?? "";
         var revealWidth = ImGui.CalcTextSize(reveal ? "Hide" : "Show").X + ImGui.GetStyle().FramePadding.X * 2f;
-        ImGui.SetNextItemWidth(Math.Max(100f, ImGui.GetContentRegionAvail().X - revealWidth - ImGui.GetStyle().ItemSpacing.X));
+        ImGui.SetNextItemWidth(Math.Max(1f, ImGui.GetContentRegionAvail().X - revealWidth - ImGui.GetStyle().ItemSpacing.X));
         var flags = reveal ? ImGuiInputTextFlags.None : ImGuiInputTextFlags.Password;
         if (ImGui.InputTextWithHint("##safeword", "Optional safeword", ref value, 32, flags))
         {

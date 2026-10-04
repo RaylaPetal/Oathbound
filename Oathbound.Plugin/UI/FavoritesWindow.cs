@@ -44,7 +44,7 @@ public sealed class FavoritesWindow : Window, IDisposable
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (!isOwnerMode)
         {
-            IconGlyph.WrappedDisabled("Favorited commands are an Owner-side concept - favorite one from any module's Quick section while paired as Owner to see it here.");
+            IconGlyph.WrappedDisabled("Favorites are for Owners - star a command in any module while paired as Owner.");
             return;
         }
 

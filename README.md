@@ -104,7 +104,8 @@ Sync tab shows whether it's up to date.
   built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
   Sub's plugin tells the Owner's. So is the collar: while one is locked, the Sub's plugin tells the relay whether
   it's really on, and the Owner is warned if it comes off. For everything else the estimate can't see a panic or the Sub's own
-  releases (Sub Control has a **Clear estimate** button for that). Either of you can turn them off in Settings -> In-world visuals.
+  releases (Sub Control has a **Clear estimate** button for that). The leash line's look (or hiding it) is set in
+  the Follow / Leash module.
 - **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
   on themselves without sending anything.
 

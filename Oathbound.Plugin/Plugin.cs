@@ -210,7 +210,7 @@ public sealed class Plugin : IDalamudPlugin
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand);
-        statusIconRenderer = new StatusIconRenderer(Configuration, StatusIndicators);
+        statusIconRenderer = new StatusIconRenderer(StatusIndicators);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;

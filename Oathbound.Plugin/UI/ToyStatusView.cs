@@ -28,7 +28,7 @@ public static class ToyStatusView
             IconGlyph.WrappedColored(Theme.Success, $"Likely running: {OwnerSummary(estimate)} - sent {Clock(Environment.TickCount64 - estimate.SentTicks)} ago, {OwnerEnd(estimate)}");
         else
             IconGlyph.WrappedDisabled($"Likely finished: {OwnerSummary(estimate)} - sent {Clock(Environment.TickCount64 - estimate.SentTicks)} ago.");
-        IconGlyph.HelpMarker("An estimate from the commands you sent - your client can't see your Sub's device. Their own automatic triggers, a stop or panic on their side, or a shorter max duration they've set won't show here.");
+        IconGlyph.HelpMarker("Based on what you sent - your client can't see your Sub's device.");
     }
 
     /// Null hides the entry. The Sub's actual state wins when a client is both.
