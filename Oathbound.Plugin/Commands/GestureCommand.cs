@@ -50,6 +50,16 @@ public sealed class GestureCommand
     /// A one-shot whose end is never seen still frees the Sub after this long.
     private const long OneShotCapMs = 30_000;
 
+    /// A timed hold ends by itself at this tick, one-shot or looping alike.
+    private long? heldUntilTicks;
+    /// Told whether the hold ran its full time (true) or ended any other way (false).
+    private Action<bool>? holdEnded;
+
+    public const int MinHoldSeconds = 1;
+    public const int MaxHoldSeconds = 3600;
+
+    public double? HoldSecondsLeft => heldUntilTicks is { } until ? Math.Max(0, (until - Environment.TickCount64) / 1000.0) : null;
+
     public int? LastScanTotalMods { get; private set; }
     public string? LastScanError { get; private set; }
 
@@ -79,7 +89,14 @@ public sealed class GestureCommand
                 Plugin.Log.Warning($"Gesture playback failed after redraw for '{pending.Trigger.DisplayName}'.");
         }
 
-        if (pendingPlay is null && heldEmote is { Looping: false } oneShot)
+        if (heldUntilTicks is { } until && now >= until)
+        {
+            var ended = holdEnded;
+            holdEnded = null;
+            Stop();
+            ended?.Invoke(true);
+        }
+        else if (pendingPlay is null && heldUntilTicks is null && heldEmote is { Looping: false } oneShot)
             WatchOneShot(oneShot.EmoteId, now);
 
         // A held animation keeps its mod until Stop.
@@ -121,11 +138,15 @@ public sealed class GestureCommand
 
     private void ReleaseHold()
     {
+        var ended = holdEnded;
+        holdEnded = null;
         heldTrigger = null;
         heldBySourcePairingId = null;
         heldEmote = null;
+        heldUntilTicks = null;
         movementLock.ReleaseImmobilize(HoldOwner);
         ReleaseTemporary();
+        ended?.Invoke(false);
     }
 
     /// Released only once the emote was seen playing and then seen over, so the gap before it starts doesn't count.
@@ -227,7 +248,7 @@ public sealed class GestureCommand
     public bool ForceApply(string idOrName, Guid? sourcePairingId)
         => ForceApplyDetailed(idOrName, sourcePairingId).Success;
 
-    public ApplyResult ForceApplyDetailed(string input, Guid? sourcePairingId)
+    public ApplyResult ForceApplyDetailed(string input, Guid? sourcePairingId, int? holdSeconds = null)
     {
         var resolution = CommandSelector.ResolveGestureDetailed(config.GestureMapping.LocalCatalog.Values, input);
         if (resolution.Entry is null)
@@ -237,13 +258,31 @@ public sealed class GestureCommand
                 CommandSelector.ResolutionStatus.Malformed => ApplyStatus.Malformed,
                 _ => ApplyStatus.Missing,
             });
-        return ExecuteDetailed(resolution.Entry, sourcePairingId);
+        return ExecuteDetailed(resolution.Entry, sourcePairingId, holdSeconds);
+    }
+
+    /// The Sub's own Perform on an oath's modded animation, resolved by its catalog id.
+    public ApplyResult PlayHeld(string catalogId, Guid sourcePairingId, int holdSeconds, Action<bool> onEnd) =>
+        config.GestureMapping.LocalCatalog.TryGetValue(catalogId, out var entry)
+            ? ExecuteDetailed(entry, sourcePairingId, holdSeconds, onEnd)
+            : new ApplyResult(ApplyStatus.Missing);
+
+    /// The Sub's own Perform on a vanilla emote: the same hold, with no mod.
+    public void PlayHeld(GestureTrigger trigger, Guid sourcePairingId, int holdSeconds, Action<bool> onEnd)
+    {
+        if (activeTemporary is not null)
+        {
+            // A modded animation still active would otherwise replace the vanilla emote.
+            ReleaseTemporary();
+            penumbra.TryRedrawLocalPlayer();
+        }
+        BeginHold(trigger, sourcePairingId, holdSeconds, onEnd, Environment.TickCount64);
     }
 
     private bool Execute(GestureCatalogEntry entry, Guid? sourcePairingId)
         => ExecuteDetailed(entry, sourcePairingId).Success;
 
-    private ApplyResult ExecuteDetailed(GestureCatalogEntry entry, Guid? sourcePairingId)
+    private ApplyResult ExecuteDetailed(GestureCatalogEntry entry, Guid? sourcePairingId, int? holdSeconds = null, Action<bool>? onEnd = null)
     {
         if (entry.Trigger is null) return new ApplyResult(ApplyStatus.Missing, entry.AnimationName);
         var collection = penumbra.TryGetLocalPlayerCollectionId();
@@ -264,17 +303,30 @@ public sealed class GestureCommand
 
         var now = Environment.TickCount64;
         activeTemporary = (collection.Value, entry.ModDirectory, now + IdleTimeoutMs);
-        pendingPlay = (entry.Trigger, now + PlayDelayMs);
-        // Every caller of Apply/ForceApply is an Owner command, so it holds the Sub like a Forced Pose.
-        heldTrigger = entry.Trigger;
+        BeginHold(entry.Trigger, sourcePairingId, holdSeconds, onEnd, now);
+        return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
+    }
+
+    /// Every caller is an Owner command or the Sub's Perform on an oath they swore, so it holds the Sub like a Forced Pose.
+    private void BeginHold(GestureTrigger trigger, Guid? sourcePairingId, int? holdSeconds, Action<bool>? onEnd, long now)
+    {
+        // A hold being replaced didn't run its course.
+        var replaced = holdEnded;
+        holdEnded = null;
+        replaced?.Invoke(false);
+
+        pendingPlay = (trigger, now + PlayDelayMs);
+        heldTrigger = trigger;
         heldBySourcePairingId = sourcePairingId;
         // Unknown commands stay held until stopped, like before.
-        heldEmote = entry.Trigger.Kind == GestureTriggerKind.SlashCommand ? GestureTriggerResolver.LookupEmoteMode(entry.Trigger.SlashCommand) : null;
+        heldEmote = trigger.Kind == GestureTriggerKind.SlashCommand ? GestureTriggerResolver.LookupEmoteMode(trigger.SlashCommand) : null;
         heldEmoteSeenPlaying = false;
         heldEmoteDeadlineTicks = now + PlayDelayMs + OneShotCapMs;
-        Plugin.Log.Debug($"Holding for {entry.Trigger.DisplayName}: emote {heldEmote?.EmoteId.ToString() ?? "unknown"}, {(heldEmote is { Looping: false } ? "one-shot" : "holds until stopped")}.");
+        heldUntilTicks = holdSeconds is { } seconds ? now + PlayDelayMs + Math.Clamp(seconds, MinHoldSeconds, MaxHoldSeconds) * 1000L : null;
+        holdEnded = onEnd;
+        Plugin.Log.Debug($"Holding for {trigger.DisplayName}: emote {heldEmote?.EmoteId.ToString() ?? "unknown"}, " +
+            (heldUntilTicks is not null ? $"timed {holdSeconds}s" : heldEmote is { Looping: false } ? "one-shot" : "holds until stopped") + ".");
         movementLock.EngageImmobilize(HoldOwner);
-        return new ApplyResult(ApplyStatus.Success, entry.AnimationName);
     }
 
     /// Emotes cancel the game's follow through a path MovementLockService doesn't hook, so FollowCommand re-asserts on this.

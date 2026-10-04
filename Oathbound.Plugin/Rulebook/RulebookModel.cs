@@ -15,6 +15,9 @@ public sealed class RulebookDocument
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public int Version { get; set; }
+    /// Raised by the Owner's "Start over". A counter rather than a flag, so a later send before the Sub accepts
+    /// still carries the reset; the Sub wipes its side when it accepts a version with a higher count.
+    public int ResetCount { get; set; }
     public List<Oath> Oaths { get; set; } = new();
     public List<DeckCard> Deck { get; set; } = new();
     public List<PlaceRule> Places { get; set; } = new();
@@ -98,6 +101,11 @@ public sealed class Oath
     public int CurfewEndMinutes { get; set; } = 7 * 60;
     /// GreetOwner: the emote to use on the Owner.
     public uint EmoteId { get; set; }
+    /// GreetOwner: a modded animation from the Sub's own catalog instead of the emote. Only Perform counts it.
+    public string AnimationId { get; set; } = "";
+    public string AnimationLabel { get; set; } = "";
+    /// GreetOwner: how long Perform holds the Sub in place; it counts once the hold runs its full time.
+    public int HoldSeconds { get; set; } = 10;
     /// MessageOwner / SayGoodnight: optional words the tell must contain. AddressOwner / ForbiddenWord: required.
     public string Phrase { get; set; } = "";
     /// Rituals: how many times, every how many days.
@@ -107,6 +115,9 @@ public sealed class Oath
     public List<string> Broken { get; set; } = new();
     public int KeptLedger { get; set; }
     public int BrokenLedger { get; set; }
+    /// Rituals only: applied per counted action, and per required action still missing when a period closes.
+    public int LedgerPerDone { get; set; }
+    public int LedgerPerMissed { get; set; }
 }
 
 /// Good things and bad things never share a draw: a kept oath can't come up with a punishment.

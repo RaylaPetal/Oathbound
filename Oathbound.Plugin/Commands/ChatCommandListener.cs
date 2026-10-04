@@ -541,17 +541,18 @@ public sealed class ChatCommandListener : IDisposable
 
     private LocalTestResult HandleForceGesture(string rest, PairingState? sourcePairing)
     {
-        var name = rest.Trim();
+        var name = LockTimerOption.StripSeconds(rest, out var holdSeconds).Trim();
         if (name.Length == 0)
             return LocalTestResult.Fail("\"gesture\" was given no name.");
         // Reserved, so no animation called "stop" can be sent by name.
         if (name.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
             return gesture.Stop() ? LocalTestResult.Ok("Animation stopped.") : LocalTestResult.Ok("No animation was playing.");
 
-        var result = gesture.ForceApplyDetailed(name, sourcePairing?.Id);
+        var result = gesture.ForceApplyDetailed(name, sourcePairing?.Id, holdSeconds);
+        var held = holdSeconds is { } s ? $", held for {RestraintLock.Format(TimeSpan.FromSeconds(Math.Clamp(s, GestureCommand.MinHoldSeconds, GestureCommand.MaxHoldSeconds)))}" : "";
         return result.Status switch
         {
-            GestureCommand.ApplyStatus.Success => LocalTestResult.Ok($"Gesture \"{result.DisplayName ?? name}\" queued for playback."),
+            GestureCommand.ApplyStatus.Success => LocalTestResult.Ok($"Gesture \"{result.DisplayName ?? name}\" queued for playback{held}."),
             GestureCommand.ApplyStatus.Missing => LocalTestResult.Fail($"Gesture \"{name}\" is missing or stale in the Sub's current animation catalog. Re-import and edit the Owner quick command."),
             GestureCommand.ApplyStatus.Ambiguous => LocalTestResult.Fail($"Gesture \"{name}\" matches more than one animation; choose a more specific selector."),
             GestureCommand.ApplyStatus.Malformed => LocalTestResult.Fail($"Gesture selector \"{name}\" is malformed."),

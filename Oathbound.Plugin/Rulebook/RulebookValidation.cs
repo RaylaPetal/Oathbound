@@ -73,8 +73,10 @@ public static class RulebookValidation
 
     private static string? CheckOath(Oath o)
     {
-        if (o.Kept.Count + o.Broken.Count == 0 && o.KeptLedger == 0 && o.BrokenLedger == 0)
+        if (o.Kept.Count + o.Broken.Count == 0 && o.KeptLedger == 0 && o.BrokenLedger == 0 && o.LedgerPerDone == 0 && o.LedgerPerMissed == 0)
             return "it has no outcome.";
+        if (!OathConditions.IsRitual(o.Condition) && (o.LedgerPerDone != 0 || o.LedgerPerMissed != 0))
+            return "only rituals score the ledger each time.";
         if (o.Scope == OathScope.NextDuty && !OathConditions.IsDuty(o.Condition))
             return "only duty oaths can last for the next duty.";
         if (o.Scope == OathScope.ForATime && o.DurationMinutes is < RulebookLimits.MinOathMinutes or > RulebookLimits.MaxOathMinutes)
@@ -88,8 +90,12 @@ public static class RulebookValidation
             if (o.DurationMinutes < o.PeriodDays * 1440)
                 return "it has to last at least one full repeat.";
         }
-        if (o.Condition == OathCondition.GreetOwner && o.EmoteId == 0)
-            return "pick the gesture they greet you with.";
+        if (o.Condition == OathCondition.GreetOwner && o.EmoteId == 0 && string.IsNullOrEmpty(o.AnimationId))
+            return "pick the gesture or animation they greet you with.";
+        if (o.Condition == OathCondition.GreetOwner && o.HoldSeconds is < Commands.GestureCommand.MinHoldSeconds or > Commands.GestureCommand.MaxHoldSeconds)
+            return $"the hold is {Commands.GestureCommand.MinHoldSeconds}-{Commands.GestureCommand.MaxHoldSeconds} seconds.";
+        if (o.AnimationLabel.Length > RulebookLimits.MaxPhraseLength * 4)
+            return "the animation name is too long.";
         if (OathConditions.NeedsPhrase(o.Condition) && string.IsNullOrWhiteSpace(o.Phrase))
             return o.Condition == OathCondition.AddressOwner ? "set the word they must call you." : "set the forbidden word.";
         if (o.Phrase.Length > RulebookLimits.MaxPhraseLength)
@@ -101,7 +107,9 @@ public static class RulebookValidation
         if (o.Condition == OathCondition.Curfew && (o.CurfewStartMinutes is < 0 or >= 1440 || o.CurfewEndMinutes is < 0 or >= 1440 || o.CurfewStartMinutes == o.CurfewEndMinutes))
             return "the curfew needs a start and end time.";
         if (o.KeptLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
-            o.BrokenLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
+            o.BrokenLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
+            o.LedgerPerDone is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
+            o.LedgerPerMissed is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
             return $"a ledger change is at most {RulebookLimits.MaxLedgerChange}.";
         return ConsequenceValidator.CheckAll(o.Kept.Concat(o.Broken));
     }

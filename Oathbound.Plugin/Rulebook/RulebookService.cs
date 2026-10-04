@@ -29,6 +29,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly ChatSender sender;
     private readonly RulebookGameEvents events;
     private readonly Safety.EmoteWatcher emotes;
+    private readonly Commands.GestureCommand gesture;
+    /// The oath the Sub is performing; its own emote isn't counted on top, and it counts only once the hold completes.
+    private (Guid PairingId, string OathId)? performing;
     private readonly Func<CancellationToken> backgroundToken;
     public ConsequenceQueue Queue { get; }
 
@@ -45,9 +48,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         public DateTime? OutOfRangeSince;
     }
 
-    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes, Func<CancellationToken> backgroundToken)
+    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes, Commands.GestureCommand gesture, Func<CancellationToken> backgroundToken)
     {
         this.config = config;
+        this.gesture = gesture;
         this.mailbox = mailbox;
         this.listener = listener;
         this.composer = composer;
@@ -258,6 +262,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         if (state.Pending is not { } doc)
             return;
         var previous = state.Accepted;
+        if (doc.ResetCount > state.AppliedResetCount)
+        {
+            StartOver(pairing, doc.ResetCount);
+            previous = null;
+        }
         state.Accepted = doc;
         state.Pending = null;
         state.AcceptedUnixSeconds = Now();
@@ -268,6 +277,23 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         ReconcileOaths(pairing, previous, doc);
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"Version {doc.Version} accepted.");
         config.SaveNow();
+    }
+
+    /// Clears everything the Sub's side built up, keeping only the relay plumbing (keys, sequences).
+    private void StartOver(PairingState pairing, int resetCount)
+    {
+        var state = pairing.Rulebook;
+        Queue.DropFor(pairing.Id);
+        state.Accepted = null;
+        state.LastDeclinedVersion = null;
+        state.DisabledRuleIds.Clear();
+        state.Oaths.Clear();
+        state.LedgerScore = 0;
+        state.ThresholdsMet.Clear();
+        state.RemovedOnceCards.Clear();
+        state.Activity.Clear();
+        state.AppliedResetCount = resetCount;
+        Log(pairing, RulebookEventKind.VersionAccepted, null, $"{pairing.PeerName} started the rulebook over: oaths, ledger and history cleared.");
     }
 
     public void DeclinePending(PairingState pairing)
@@ -285,23 +311,52 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     {
         var state = pairing.Rulebook;
         var name = state.Accepted?.AllRules().FirstOrDefault(r => r.Id == ruleId).Name ?? "rule";
+        // The Sub swore to an open oath; only the Owner, panic or the permission can end it early.
+        if (!enabled && IsSworn(pairing, ruleId))
+            return;
         if (enabled ? !state.DisabledRuleIds.Remove(ruleId) : !state.DisabledRuleIds.Add(ruleId))
             return;
-        if (!enabled && state.Oaths.TryGetValue(ruleId, out var oath) && oath.Status == OathStatus.Open)
-            ResolveOath(pairing, ruleId, oath, OathStatus.Voided, "its rule was switched off");
         Log(pairing, enabled ? RulebookEventKind.RuleSwitchedOn : RulebookEventKind.RuleSwitchedOff, ruleId,
             $"\"{name}\" switched {(enabled ? "on" : "off")}.");
         config.SaveNow();
     }
 
+    public static bool IsSworn(PairingState pairing, string ruleId) =>
+        pairing.Rulebook.Oaths.TryGetValue(ruleId, out var oath) && oath.Status == OathStatus.Open;
+
     // ---- Oaths ----
 
-    /// New oaths are offered; changed or removed offers are withdrawn (a changed one is offered again); started oaths keep their terms.
+    /// New oaths are offered; changed or removed offers are withdrawn (a changed one is offered again). Accepting the
+    /// version is the Sub's consent to its terms, so open oaths take the new terms and removed ones are voided.
     private void ReconcileOaths(PairingState pairing, RulebookDocument? previous, RulebookDocument doc)
     {
         var states = pairing.Rulebook.Oaths;
         var now = Now();
         OathState Offer(Oath oath) => new() { Status = OathStatus.Offered, OfferedUnixSeconds = now, ChangedUnixSeconds = now, OfferedTermsJson = RulebookJson.Serialize(oath) };
+
+        foreach (var (id, s) in states.Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null).ToList())
+        {
+            if (doc.Oaths.FirstOrDefault(o => o.Id == id) is not { } oath)
+            {
+                ResolveOath(pairing, id, s, OathStatus.Voided, "removed by your Owner");
+                continue;
+            }
+            var old = s.Terms!;
+            if (RulebookJson.Serialize(old) == RulebookJson.Serialize(oath))
+                continue;
+            if (SameTermsIgnoringName(old, oath))
+            {
+                s.Terms = RulebookJson.Deserialize<Oath>(RulebookJson.Serialize(oath));
+                s.OfferedTermsJson = RulebookJson.Serialize(oath);
+                continue;
+            }
+            // Carried over without scoring again; the new terms run from now so a shorter oath can't pay out at once.
+            var carried = SameAction(old, oath) ? Math.Min(s.PeriodCount, RitualNeeded(oath)) : 0;
+            StartOath(s, oath, now);
+            s.PeriodCount = carried;
+            // Logged as an acceptance: a new event kind would make an older Owner's report parse fail.
+            Log(pairing, RulebookEventKind.OathAccepted, id, $"Oath \"{oath.Name}\" updated by your Owner: {OathText.Describe(oath)}.");
+        }
 
         foreach (var (id, s) in states.Where(kv => kv.Value.Status == OathStatus.Offered && doc.Oaths.All(o => o.Id != kv.Key)).ToList())
         {
@@ -317,7 +372,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 states[oath.Id] = Offer(oath);
                 continue;
             }
-            // A running oath keeps its accepted terms. Anything else is offered again once the Owner changes it.
+            // Open oaths were brought up to date above. Anything else is offered again once the Owner changes it.
             if (s.Status == OathStatus.Open)
                 continue;
             var offered = s.OfferedTermsJson ?? (previous?.Oaths.FirstOrDefault(o => o.Id == oath.Id) is { } older ? RulebookJson.Serialize(older) : null);
@@ -336,20 +391,43 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         if (state.Accepted?.Oaths.FirstOrDefault(o => o.Id == oathId) is not { } terms ||
             !state.Oaths.TryGetValue(oathId, out var s) || s.Status != OathStatus.Offered)
             return;
-        var now = Now();
+        StartOath(s, terms, Now());
+        // An oath switched off while it was only offered would otherwise be sworn but never judged.
+        state.DisabledRuleIds.Remove(oathId);
+        Log(pairing, RulebookEventKind.OathAccepted, oathId, $"Oath \"{terms.Name}\" accepted: {OathText.Describe(terms)}.");
+        config.SaveNow();
+    }
+
+    private void StartOath(OathState s, Oath terms, long now)
+    {
         s.Status = OathStatus.Open;
         s.ChangedUnixSeconds = now;
         s.Terms = RulebookJson.Deserialize<Oath>(RulebookJson.Serialize(terms));
+        s.OfferedTermsJson = RulebookJson.Serialize(terms);
         s.ScopeEndsUnixSeconds = terms.Scope == OathScope.ForATime ? now + terms.DurationMinutes * 60L : null;
         s.DutyEntered = false;
         s.DutyStartedUnixSeconds = null;
         s.CurfewArmed = !InCurfew(terms);
         s.PeriodStartUnixSeconds = now;
         s.PeriodCount = 0;
+        s.MissedPeriods = 0;
         s.LastMatchUnixSeconds = 0;
-        Log(pairing, RulebookEventKind.OathAccepted, oathId, $"Oath \"{terms.Name}\" accepted: {OathText.Describe(terms)}.");
-        config.SaveNow();
     }
+
+    /// Equal apart from the name, so renaming a running oath doesn't restart it.
+    public static bool SameTermsIgnoringName(Oath a, Oath b) => Unnamed(a) == Unnamed(b);
+
+    private static string Unnamed(Oath oath)
+    {
+        var copy = RulebookJson.Deserialize<Oath>(RulebookJson.Serialize(oath))!;
+        copy.Name = "";
+        return RulebookJson.Serialize(copy);
+    }
+
+    /// Still asks for the same action, so what was done in the current period keeps counting after an edit.
+    private static bool SameAction(Oath a, Oath b) =>
+        a.Condition == b.Condition && a.EmoteId == b.EmoteId && a.AnimationId == b.AnimationId &&
+        string.Equals(a.Phrase.Trim(), b.Phrase.Trim(), StringComparison.OrdinalIgnoreCase);
 
     public void DeclineOath(PairingState pairing, string oathId)
     {
@@ -451,23 +529,33 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (OathConditions.IsRitual(terms.Condition))
             {
                 // Periods that ended while offline are judged first, then being logged in checks in for this one.
-                if (CloseMissedPeriods(pairing, id, s, terms, now))
-                    continue;
-                if (terms.Condition == OathCondition.CheckIn)
-                    s.PeriodCount = 1;
+                CloseMissedPeriods(pairing, id, s, terms, now);
+                var over = s.ScopeEndsUnixSeconds is { } end && now >= end;
+                if (terms.Condition == OathCondition.CheckIn && s.PeriodCount == 0 && !over)
+                    CountRitual(pairing, id, s, terms, "checked in");
             }
             if (terms.Scope == OathScope.ForATime && s.ScopeEndsUnixSeconds is { } ends && now >= ends)
-                ResolveOath(pairing, id, s, OathStatus.Kept, "the time ran out");
+            {
+                if (s.MissedPeriods > 0)
+                    ResolveOath(pairing, id, s, OathStatus.Broken, $"missed {s.MissedPeriods} {(s.MissedPeriods == 1 ? "time" : "times")}");
+                else
+                    ResolveOath(pairing, id, s, OathStatus.Kept, "the time ran out");
+            }
         }
     }
 
-    /// Walks every period that has ended since the last tick; a period short of its count breaks the oath.
-    /// Returns true when it broke. The final period ends together with the oath, so it's judged before "kept".
-    private bool CloseMissedPeriods(PairingState pairing, string id, OathState s, Oath terms, long now)
+    public static int RitualNeeded(Oath terms) => terms.Condition == OathCondition.CheckIn ? 1 : terms.TimesPerPeriod;
+
+    /// Walks every period that has ended since the last tick, up to the oath's own end; a short period is
+    /// recorded as missed and scored, and the oath keeps running. The final period ends together with the oath,
+    /// so it's judged before the oath resolves.
+    private void CloseMissedPeriods(PairingState pairing, string id, OathState s, Oath terms, long now)
     {
         var length = Math.Max(1, terms.PeriodDays) * 86400L;
-        var needed = terms.Condition == OathCondition.CheckIn ? 1 : terms.TimesPerPeriod;
-        while (now >= s.PeriodStartUnixSeconds + length)
+        var needed = RitualNeeded(terms);
+        var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+        while (now >= s.PeriodStartUnixSeconds + length &&
+               (s.ScopeEndsUnixSeconds is not { } ends || s.PeriodStartUnixSeconds + length <= ends))
         {
             if (s.PeriodCount < needed)
             {
@@ -477,24 +565,33 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                     OathCondition.MessageOwner => "didn't message their Owner in time",
                     _ => "didn't log in in time",
                 };
-                ResolveOath(pairing, id, s, OathStatus.Broken, missed);
-                return true;
+                s.MissedPeriods++;
+                Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {missed} ({s.PeriodCount}/{needed} this time).");
+                if (terms.LedgerPerMissed != 0)
+                    ChangeLedger(pairing, (needed - s.PeriodCount) * terms.LedgerPerMissed, $"missed \"{name}\"", notify: true);
+                else
+                    Notify("Oath", $"You missed \"{name}\" this time.", NotificationType.Warning);
             }
             s.PeriodStartUnixSeconds += length;
             s.PeriodCount = 0;
         }
-        return false;
     }
 
     private void CountRitual(PairingState pairing, string id, OathState s, Oath terms, string what)
     {
-        if (s.PeriodCount >= terms.TimesPerPeriod)
+        var needed = RitualNeeded(terms);
+        if (s.PeriodCount >= needed)
             return;
         s.PeriodCount++;
         var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
-        Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {what} ({s.PeriodCount}/{terms.TimesPerPeriod} this time).");
-        if (s.PeriodCount == terms.TimesPerPeriod)
-            Notify("Oath", $"\"{name}\" done for now.", NotificationType.Success);
+        Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {what} ({s.PeriodCount}/{needed} this time).");
+        if (terms.LedgerPerDone != 0)
+            ChangeLedger(pairing, terms.LedgerPerDone, $"\"{name}\"", notify: false);
+        var ledger = terms.LedgerPerDone == 0 ? "" : $" ({(terms.LedgerPerDone > 0 ? "+" : "")}{terms.LedgerPerDone} ledger)";
+        if (s.PeriodCount == needed)
+            Notify("Oath", $"\"{name}\" done for now{ledger}.", NotificationType.Success);
+        else if (ledger.Length > 0)
+            Notify("Oath", $"\"{name}\": {s.PeriodCount}/{needed} done{ledger}.");
         config.Save();
     }
 
@@ -505,9 +602,72 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (FindOwner(pairing) is not { } owner || owner.GameObjectId != targetObjectId)
                 continue;
             foreach (var (id, s, terms) in OpenOaths(pairing))
-                if (terms.Condition == OathCondition.GreetOwner && terms.EmoteId == emoteId)
+                if (terms.Condition == OathCondition.GreetOwner && terms.EmoteId == emoteId && performing != (pairing.Id, id))
                     CountRitual(pairing, id, s, terms, $"greeted {pairing.PeerName} with {OathText.EmoteName(emoteId)}");
         }
+    }
+
+    public bool IsPerforming(PairingState pairing, string oathId) => performing == (pairing.Id, oathId);
+
+    public double? PerformSecondsLeft => performing is null ? null : gesture.HoldSecondsLeft;
+
+    /// Null when Perform can be used right now, otherwise why not.
+    public string? PerformBlocker(PairingState pairing, string oathId)
+    {
+        if (!IsRunning(pairing))
+            return "Your rulebooks aren't running.";
+        if (performing is not null)
+            return "You're already performing.";
+        if (!pairing.Rulebook.Oaths.TryGetValue(oathId, out var s) || s.Status != OathStatus.Open || s.Terms is not { Condition: OathCondition.GreetOwner } terms)
+            return "This oath isn't open.";
+        if (s.PeriodCount >= RitualNeeded(terms))
+            return "Done for now.";
+        if (string.IsNullOrEmpty(terms.AnimationId) && !OathText.EmoteName(terms.EmoteId).StartsWith('/'))
+            return "This gesture can only be done by hand.";
+        if (FindOwner(pairing) is not { } owner || Plugin.TargetManager.Target?.GameObjectId != owner.GameObjectId)
+            return $"Target {pairing.PeerName} first.";
+        return null;
+    }
+
+    /// The Sub's own button: plays the oath's gesture or animation at the Owner and holds them for the oath's time.
+    /// Returns why it couldn't start, or null.
+    public string? Perform(PairingState pairing, string oathId)
+    {
+        if (PerformBlocker(pairing, oathId) is { } blocked)
+            return blocked;
+        var terms = pairing.Rulebook.Oaths[oathId].Terms!;
+        var pairingId = pairing.Id;
+        performing = (pairingId, oathId);
+
+        void Ended(bool completed)
+        {
+            performing = null;
+            var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+            if (!completed)
+            {
+                Notify("Oath", $"\"{name}\" stopped before the hold ended, so it didn't count.", NotificationType.Warning);
+                return;
+            }
+            if (config.FindPairingById(pairingId) is not { } current || !IsRunning(current) ||
+                !current.Rulebook.Oaths.TryGetValue(oathId, out var st) || st.Status != OathStatus.Open || st.Terms is not { } now)
+                return;
+            CountRitual(current, oathId, st, now, $"greeted {current.PeerName} with {OathText.Greeting(now).TrimEnd(',')}, held {Commands.RestraintLock.Format(TimeSpan.FromSeconds(now.HoldSeconds))}");
+        }
+
+        if (!string.IsNullOrEmpty(terms.AnimationId))
+        {
+            var result = gesture.PlayHeld(terms.AnimationId, pairingId, terms.HoldSeconds, Ended);
+            if (result.Success)
+                return null;
+            performing = null;
+            return result.Status == Commands.GestureCommand.ApplyStatus.Missing
+                ? "That animation isn't in your animation list. Rescan your animations, or ask your Owner to pick it again."
+                : "The animation couldn't play (Penumbra didn't take it).";
+        }
+
+        var command = OathText.EmoteName(terms.EmoteId).TrimStart('/');
+        gesture.PlayHeld(new GestureTrigger { Kind = GestureTriggerKind.SlashCommand, SlashCommand = command }, pairingId, terms.HoldSeconds, Ended);
+        return null;
     }
 
     private static readonly Dalamud.Game.Text.XivChatType[] PublicChannels =

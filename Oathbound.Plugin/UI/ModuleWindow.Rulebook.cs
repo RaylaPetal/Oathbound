@@ -50,6 +50,9 @@ public sealed partial class ModuleWindow
     ];
     private static readonly string[] OathScopeNames = ["During their next duty", "For a set time"];
     private string rbEmoteSearch = "";
+    /// The oath whose editor switched to "a modded animation" before one was picked.
+    private string? rbGreetAnimationMode;
+    private string? rbPerformError;
     private static readonly string[] PlaceKindNames = ["A specific place", "Any main city", "Any residential district", "Inside any house or apartment", "Any duty"];
     private static readonly string[] ThresholdDirectionNames = ["At or above", "At or below"];
     private static readonly string[] CardPileNames = ["Punishment", "Reward"];
@@ -217,6 +220,17 @@ public sealed partial class ModuleWindow
         IconGlyph.HelpMarker($"Sends one /tell with only the word \"{ChatComposer.RulebookNudgeKeyword}\", so {pairing.PeerName}'s plugin picks it up right away instead of within half an hour.");
         if (rbPublishResult is not null)
             IconGlyph.WrappedDisabled(rbPublishResult);
+
+        var sentResets = state.PublishedDocument?.ResetCount ?? 0;
+        var startingOver = state.Draft.ResetCount > sentResets;
+        if (startingOver)
+            IconGlyph.WrappedColored(Theme.Warning, $"Your next send starts over: when {pairing.PeerName} accepts it, their oaths, ledger score, switched-off rules and history are cleared, and every oath is offered again.");
+        if (ImGui.SmallButton(startingOver ? "Don't start over" : "Start over"))
+        {
+            state.Draft.ResetCount = startingOver ? sentResets : sentResets + 1;
+            plugin.Configuration.Save();
+        }
+        IconGlyph.HelpMarker($"Wipes {pairing.PeerName}'s side of this rulebook to a clean slate with your next send. Nothing changes until they accept that version.");
     }
 
     private void DrawOwnerReport(PairingState pairing)
@@ -502,9 +516,48 @@ public sealed partial class ModuleWindow
         switch (condition)
         {
             case OathCondition.GreetOwner:
-                if (DrawEmoteCombo("gesture##oathEmote", oath.EmoteId, ref rbEmoteSearch, out var picked)) { oath.EmoteId = picked.Id; changed = true; }
-                IconGlyph.HelpMarker("It counts when they use it while targeting you, so they have to be near you.");
+            {
+                var useAnimation = !string.IsNullOrEmpty(oath.AnimationId) || rbGreetAnimationMode == oath.Id;
+                if (ImGui.RadioButton("a gesture##greetVanilla", !useAnimation) && useAnimation)
+                {
+                    oath.AnimationId = "";
+                    oath.AnimationLabel = "";
+                    rbGreetAnimationMode = null;
+                    changed = true;
+                }
+                ImGui.SameLine();
+                if (ImGui.RadioButton("a modded animation##greetModded", useAnimation) && !useAnimation)
+                    rbGreetAnimationMode = oath.Id;
+
+                if (!useAnimation)
+                {
+                    if (DrawEmoteCombo("gesture##oathEmote", oath.EmoteId, ref rbEmoteSearch, out var picked)) { oath.EmoteId = picked.Id; changed = true; }
+                    IconGlyph.HelpMarker("It counts when they use it while targeting you, so they have to be near you. They can also press Perform on the oath, which plays it at you and holds them for the time below; that counts once the hold ends.");
+                }
+                else
+                {
+                    ImGui.TextUnformatted(string.IsNullOrEmpty(oath.AnimationLabel) ? "No animation picked." : oath.AnimationLabel);
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Pick animation"))
+                    {
+                        var target = oath;
+                        plugin.AnimationPickerWindow.OpenImported(entry =>
+                        {
+                            target.AnimationId = entry.Id;
+                            target.AnimationLabel = entry.DisplayLabel;
+                            target.EmoteId = 0;
+                            plugin.Configuration.Save();
+                        });
+                    }
+                    IconGlyph.HelpMarker("From your Sub's own animations (sync their catalog first). They press Perform on the oath while targeting you: their plugin turns the mod on, plays it at you and holds them in place for the time below. It counts once the hold ends.");
+                }
+
+                var hold = oath.HoldSeconds;
+                ItemWidth(100);
+                if (ImGui.InputInt("seconds held##greetHold", ref hold, 5, 30)) { oath.HoldSeconds = Math.Clamp(hold, GestureCommand.MinHoldSeconds, GestureCommand.MaxHoldSeconds); changed = true; }
+                IconGlyph.HelpMarker("How long Perform keeps them in place before the animation stops and they can move again. Stopping early (panic, or your Stop animation) doesn't count.");
                 break;
+            }
             case OathCondition.DutyTimeLimit:
                 var limit = oath.TimeLimitMinutes;
                 ItemWidth(120);
@@ -534,7 +587,14 @@ public sealed partial class ModuleWindow
             var every = oath.PeriodDays;
             ItemWidth(100);
             if (ImGui.InputInt("day(s)##ritualEvery", ref every, 1, 1)) { oath.PeriodDays = Math.Clamp(every, 1, RulebookLimits.MaxPeriodDays); changed = true; }
-            IconGlyph.HelpMarker("Doing it more often than this doesn't count extra. Missing it in any stretch breaks the oath.");
+            IconGlyph.HelpMarker("Doing it more often than this doesn't count extra. A missed stretch doesn't end the oath, but it ends as broken if any stretch was missed.");
+        }
+        else if (oath.LedgerPerDone != 0 || oath.LedgerPerMissed != 0)
+        {
+            // Hidden amounts left over from a ritual condition would make the oath fail validation.
+            oath.LedgerPerDone = 0;
+            oath.LedgerPerMissed = 0;
+            changed = true;
         }
 
         if (OathConditions.IsDuty(condition))
@@ -552,6 +612,17 @@ public sealed partial class ModuleWindow
         Section.SubHeading("If they break it");
         changed |= DrawLedgerDelta("brokenLedger", oath.BrokenLedger, v => oath.BrokenLedger = v);
         changed |= DrawConsequenceEditor("broken", oath.Broken);
+        if (OathConditions.IsRitual(condition))
+        {
+            Section.SubHeading("Each time");
+            ImGui.TextUnformatted("done");
+            ImGui.SameLine();
+            changed |= DrawLedgerDelta("perDoneLedger", oath.LedgerPerDone, v => oath.LedgerPerDone = v);
+            ImGui.TextUnformatted("missed");
+            ImGui.SameLine();
+            changed |= DrawLedgerDelta("perMissedLedger", oath.LedgerPerMissed, v => oath.LedgerPerMissed = v);
+            IconGlyph.HelpMarker("Applied while the oath runs: once for each time it counts, and once for each time still missing when a stretch ends. Use a negative number for missed.");
+        }
         IconGlyph.WrappedDisabled("To also draw a card, tick it in the Deck tab under Draw automatically.");
 
         ImGui.Spacing();
@@ -993,7 +1064,7 @@ public sealed partial class ModuleWindow
         if (rbAddPick is not { } pick)
             return null;
         if (OwnerLockOption.Accepts(pick.Command))
-            OwnerLockOption.Draw("rbAdd", ref rbAddLock);
+            OwnerLockOption.Draw("rbAdd", ref rbAddLock, OwnerLockOption.IsGesture(pick.Command));
         return OwnerLockOption.Apply(OwnerMoodleOverride.ForSend(config, pick), rbAddLock);
     }
 
@@ -1052,7 +1123,10 @@ public sealed partial class ModuleWindow
         {
             using (Section.Begin("rbSubPending", $"New version {pending.Version} to review"))
             {
-                DrawRulebookDiff(state.Accepted, pending, pairing.PeerName ?? "your Owner");
+                var startsOver = pending.ResetCount > state.AppliedResetCount;
+                if (startsOver)
+                    IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName ?? "Your Owner"} is starting over. Accepting clears your oaths (running ones end with no outcome), your ledger score, switched-off rules and history, and offers every oath again.");
+                DrawRulebookDiff(startsOver ? null : state.Accepted, pending, startsOver ? new Dictionary<string, OathState>() : state.Oaths, pairing.PeerName ?? "your Owner");
                 if (ImGui.Button("Accept"))
                     service.AcceptPending(pairing);
                 ImGui.SameLine();
@@ -1112,6 +1186,19 @@ public sealed partial class ModuleWindow
                     IconGlyph.WrappedColored(done ? Theme.Success : Theme.Warning,
                         done ? $"Done for now - next stretch starts {Until(due)}." : $"{s.PeriodCount}/{terms.TimesPerPeriod} done - due {Until(due)}.");
                 }
+                if (OathConditions.IsRitual(terms.Condition) && s.ScopeEndsUnixSeconds is { } ends)
+                {
+                    var length = Math.Max(1, terms.PeriodDays) * 86400L;
+                    var start = ends - terms.DurationMinutes * 60L;
+                    var total = Math.Max(1, (int)Math.Ceiling(terms.DurationMinutes * 60.0 / length));
+                    var current = Math.Clamp((int)((s.PeriodStartUnixSeconds - start) / length) + 1, 1, total);
+                    var unit = OathText.Unit(terms);
+                    IconGlyph.WrappedDisabled($"{char.ToUpperInvariant(unit[0])}{unit[1..]} {current} of {total}. " + (s.MissedPeriods > 0
+                        ? $"{s.MissedPeriods} missed, so it ends as broken."
+                        : "The kept outcome applies when the oath ends, if none is missed."));
+                }
+                if (terms.Condition == OathCondition.GreetOwner)
+                    DrawPerform(pairing, id, terms);
             }
         }
 
@@ -1129,19 +1216,27 @@ public sealed partial class ModuleWindow
 
         using (Section.Begin("rbSubRules", "Rules"))
         {
-            IconGlyph.WrappedDisabled("Uncheck a rule to switch it off. Switching off an open oath voids it.");
+            IconGlyph.WrappedDisabled("Uncheck a rule to switch it off. An oath you've sworn stays on until it ends.");
             foreach (var (id, kind, name, summary) in RuleText.All(accepted, pairing.PeerName ?? "your Owner"))
             {
                 if (id == DrawOnSettings.RuleId && !accepted.DrawOn.Any)
                     continue;
                 ImGui.PushID(id);
                 var on = !state.DisabledRuleIds.Contains(id);
+                var sworn = RulebookService.IsSworn(pairing, id);
+                ImGui.BeginDisabled(sworn);
                 if (ImGui.Checkbox("##on", ref on))
                     service.SetRuleEnabled(pairing, id, on);
+                ImGui.EndDisabled();
                 ImGui.SameLine();
                 ImGui.PushTextWrapPos(0);
                 ImGui.TextUnformatted($"{kind}: {name}");
                 ImGui.PopTextWrapPos();
+                if (sworn)
+                {
+                    ImGui.SameLine();
+                    IconGlyph.HelpMarker($"You swore to this oath. Only {pairing.PeerName ?? "your Owner"} can change or remove it. Panic still ends it.");
+                }
                 IconGlyph.WrappedDisabled(summary);
                 ImGui.PopID();
             }
@@ -1162,7 +1257,34 @@ public sealed partial class ModuleWindow
         }
     }
 
-    private static void DrawRulebookDiff(RulebookDocument? accepted, RulebookDocument pending, string owner)
+    private void DrawPerform(PairingState pairing, string oathId, Oath terms)
+    {
+        var service = plugin.RulebookService;
+        ImGui.PushID($"perform_{oathId}");
+        if (service.IsPerforming(pairing, oathId))
+        {
+            var left = service.PerformSecondsLeft is { } seconds ? $" - {Math.Ceiling(seconds):0}s left" : "";
+            IconGlyph.WrappedColored(Theme.Warning, $"Performing{left}. Stay put until it ends.");
+        }
+        else
+        {
+            var blocker = service.PerformBlocker(pairing, oathId);
+            var what = string.IsNullOrEmpty(terms.AnimationId) ? OathText.EmoteName(terms.EmoteId) : terms.AnimationLabel;
+            using (ImRaii.Disabled(blocker is not null))
+            {
+                if (ImGui.SmallButton($"Perform {what}"))
+                    rbPerformError = service.Perform(pairing, oathId);
+            }
+            IconGlyph.HelpMarker($"Plays it at {pairing.PeerName} and holds you in place for {RestraintLock.Format(TimeSpan.FromSeconds(terms.HoldSeconds))}. It counts once the hold ends; panic or a stop before then doesn't count.");
+            if (blocker is not null && blocker != "Done for now.")
+                IconGlyph.WrappedDisabled(blocker);
+            if (rbPerformError is not null)
+                IconGlyph.WrappedColored(Theme.Warning, rbPerformError);
+        }
+        ImGui.PopID();
+    }
+
+    private static void DrawRulebookDiff(RulebookDocument? accepted, RulebookDocument pending, IReadOnlyDictionary<string, OathState> oaths, string owner)
     {
         var before = accepted is null ? new() : RuleText.All(accepted, owner).ToDictionary(r => r.Id);
         var after = RuleText.All(pending, owner).ToDictionary(r => r.Id);
@@ -1185,6 +1307,18 @@ public sealed partial class ModuleWindow
         foreach (var (id, rule) in before.Where(kv => !after.ContainsKey(kv.Key)))
         {
             IconGlyph.WrappedColored(Theme.TextMuted, $"Removed {rule.Kind.ToLowerInvariant()}: {rule.Name}");
+            any = true;
+        }
+        foreach (var (id, s) in oaths.Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null))
+        {
+            var running = s.Terms!;
+            var name = string.IsNullOrWhiteSpace(running.Name) ? "oath" : running.Name;
+            if (pending.Oaths.FirstOrDefault(o => o.Id == id) is not { } next)
+                IconGlyph.WrappedColored(Theme.Warning, $"Accepting ends your running oath \"{name}\" with no outcome.");
+            else if (!RulebookService.SameTermsIgnoringName(running, next))
+                IconGlyph.WrappedColored(Theme.Warning, $"Accepting switches your running oath \"{name}\" to these terms and restarts it.");
+            else
+                continue;
             any = true;
         }
         if (!any)

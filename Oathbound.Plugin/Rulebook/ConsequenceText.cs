@@ -32,7 +32,12 @@ public static partial class ConsequenceText
                     };
                 }
             case "gesture":
-                return $"play gesture {Unquote(rest)}";
+                {
+                    var name = Commands.LockTimerOption.StripSeconds(rest, out var hold).Trim();
+                    return hold is { } seconds
+                        ? $"play gesture {Unquote(name)}, held for {Commands.RestraintLock.Format(TimeSpan.FromSeconds(seconds))}"
+                        : $"play gesture {Unquote(name)}";
+                }
             case "moodle":
                 {
                     var (verb, name) = Split(rest);
@@ -121,7 +126,7 @@ public static class OathText
             OathCondition.StayInPlaces => $"stay in {Places(oath)}",
             OathCondition.AvoidPlaces => $"stay out of {Places(oath)}",
             OathCondition.Curfew => $"don't be logged in between {Clock(oath.CurfewStartMinutes)} and {Clock(oath.CurfewEndMinutes)}",
-            OathCondition.GreetOwner => $"greet your Owner with {EmoteName(oath.EmoteId)} {Repeat(oath)}",
+            OathCondition.GreetOwner => $"greet your Owner with {Greeting(oath)} {Repeat(oath)}",
             OathCondition.MessageOwner => $"send your Owner a tell{Containing(oath.Phrase)} {Repeat(oath)}",
             OathCondition.CheckIn => $"log in at least once {Every(oath.PeriodDays)}",
             OathCondition.SayGoodnight => $"tell your Owner goodnight{Containing(oath.Phrase)} before you log off",
@@ -130,11 +135,20 @@ public static class OathText
             OathCondition.QuietInPublic => "stay quiet in /say, /shout and /yell",
             _ => "?",
         };
-        var scope = oath.Scope == OathScope.NextDuty
-            ? "during the next duty"
-            : $"for {Commands.RestraintLock.Format(System.TimeSpan.FromMinutes(oath.DurationMinutes))}";
+        var scope = oath.Scope == OathScope.NextDuty ? "during the next duty" : $"for {Duration(oath)}";
         return $"{condition} {scope}";
     }
+
+    private static string Duration(Oath oath) => Commands.RestraintLock.Format(System.TimeSpan.FromMinutes(oath.DurationMinutes));
+
+    /// "day" for daily rituals, "stretch" for longer repeats.
+    public static string Unit(Oath oath) => oath.PeriodDays == 1 ? "day" : "stretch";
+
+    /// The emote by its command, or a modded animation by name with its hold (only Perform plays those).
+    public static string Greeting(Oath oath) =>
+        string.IsNullOrEmpty(oath.AnimationId)
+            ? EmoteName(oath.EmoteId)
+            : $"the animation \"{oath.AnimationLabel}\", held {Commands.RestraintLock.Format(System.TimeSpan.FromSeconds(oath.HoldSeconds))},";
 
     private static string Repeat(Oath oath) =>
         $"{(oath.TimesPerPeriod == 1 ? "once" : oath.TimesPerPeriod == 2 ? "twice" : $"{oath.TimesPerPeriod} times")} {Every(oath.PeriodDays)}";
@@ -161,7 +175,24 @@ public static class OathText
                 text += (text.Length > 0 ? "; " : "") + $"{(ledger > 0 ? "+" : "")}{ledger} ledger";
             return text.Length == 0 ? "nothing" : text;
         }
-        return $"if kept: {Part(oath.Kept, oath.KeptLedger)}. If broken: {Part(oath.Broken, oath.BrokenLedger)}.";
+        static string Signed(int v) => $"{(v > 0 ? "+" : "")}{v}";
+
+        var kept = Part(oath.Kept, oath.KeptLedger);
+        var broken = Part(oath.Broken, oath.BrokenLedger);
+        if (OathConditions.IsRitual(oath.Condition))
+        {
+            var unit = Unit(oath);
+            var text = $"after {Duration(oath)}, if no {unit} was missed: {kept}. If any {unit} was missed: {broken}.";
+            if (oath.LedgerPerDone != 0)
+                text += $" Each time done: {Signed(oath.LedgerPerDone)} ledger.";
+            if (oath.LedgerPerMissed != 0)
+                text += $" Each one missed: {Signed(oath.LedgerPerMissed)} ledger.";
+            return text;
+        }
+        var now = broken == "nothing" ? broken : $"{broken}, right away";
+        return oath.Scope == OathScope.NextDuty
+            ? $"if kept through the duty: {kept}. If broken: {now}."
+            : $"if kept for the full {Duration(oath)}: {kept}. If broken: {now}.";
     }
 
     private static string Places(Oath oath) =>

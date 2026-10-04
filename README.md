@@ -45,7 +45,7 @@ everything instantly with their safeword.
 | 🔒 | **Collar** | A collar piece, a left-hand ring, or both, that go on and lock together when you pair, as a visible sign of your bond. It can carry a Moodle too. If it ever comes off without you unlocking it, you see a red warning in your header - even if it happened while you were offline. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
-| 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. The Sub accepts every version and every oath before anything runs, can switch any rule off, and the Owner sees what happened. |
+| 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. Daily rituals can score the ledger each time they're done or missed, and are judged as kept or broken when the oath ends. The Sub accepts every version and every oath before anything runs, can switch any rule off except an oath they swore to, and the Owner sees what happened. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header puts everything back to nothing. The collar and your pairing stay. |
@@ -108,8 +108,11 @@ Sync tab shows whether it's up to date.
   releases (Sub Control has a **Clear estimate** button for that). The leash line's look (or hiding it) is set in
   the Follow / Leash module.
 - **Rulebooks run only after you say yes.** A rulebook your Owner writes reaches you encrypted, and nothing in
-  it runs until you accept that version; each oath needs its own yes too. You can switch any single rule
-  off at any time, and your Owner sees which ones are off. It needs its own permission and acknowledgement,
+  it runs until you accept that version; each new oath needs its own yes too. Accepting a version that changes
+  or removes an oath you already swore switches that oath to the new terms or ends it, and the review tells you
+  first. Your Owner can also send a version that starts over, which clears your oaths, ledger and history only
+  once you accept it. You can switch any single rule off at any time, except an oath you swore to, and your Owner sees which
+  ones are off. It needs its own permission and acknowledgement,
   every consequence still needs the permission for its category, and a rulebook can never send chat, move
   you, teleport you or touch your collar. Your safeword pauses all rulebooks and voids open oaths until you
   resume.
@@ -180,8 +183,10 @@ further, and you should decide for yourself before turning them on:
 - **Animations** make your character perform emotes and poses, and hold you in place while they play. A
   one-off emote (like a wave or a bow) lets you go as soon as it finishes. A looping emote or a pose holds you
   until your Owner stops the animation or sends revert all, or you use your safeword. Stopping a looping emote
-  makes your character take one tiny step, because moving is the only way the game ends one. To try one on
-  yourself from Settings' Test Commands tab, type `gesture stop` there to release it again.
+  makes your character take one tiny step, because moving is the only way the game ends one. Your Owner can
+  also send an animation with a set time: it holds you for exactly that long, then stops by itself. A greeting
+  oath's **Perform** button plays its gesture or modded animation at your Owner and holds you the same way. To
+  try one on yourself from Settings' Test Commands tab, type `gesture stop` there to release it again.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
   When your Owner walks farther away than the leash length, the leash steers your character after them
   (or uses the game's own follow if that gets stuck), with your own movement ignored until you're back in range.

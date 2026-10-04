@@ -7,14 +7,27 @@ using Oathbound.Plugin.Config;
 namespace Oathbound.Plugin.UI;
 
 /// Owner-side picker for the `lockfor:<seconds>` option, saved per command. Permanent (null) sends the command unchanged.
+/// On a gesture the same option is a hold in seconds rather than a lock in minutes.
 public static class OwnerLockOption
 {
     private const string CastPrefix = "customtrigger cast ";
+    private const string GesturePrefix = "gesture ";
     private static readonly string[] ModeNames = ["Permanent", "Timed"];
+    private static readonly string[] GestureModeNames = ["Until stopped", "Timed"];
     private const int DefaultTimedMinutes = 30;
+    private const int DefaultHoldSeconds = 30;
+
+    public static bool IsGesture(string command)
+    {
+        var trimmed = command.Trim();
+        return trimmed.StartsWith(GesturePrefix, StringComparison.OrdinalIgnoreCase)
+            && !trimmed[GesturePrefix.Length..].Trim().Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase);
+    }
 
     public static bool Accepts(string command)
     {
+        if (IsGesture(command))
+            return true;
         var trimmed = command.Trim();
         if (trimmed.StartsWith("restraint lock ", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("restraint catalog ", StringComparison.OrdinalIgnoreCase)
@@ -28,15 +41,19 @@ public static class OwnerLockOption
     }
 
     public static string Apply(string command, int? lockSeconds) =>
-        lockSeconds is not null && Accepts(command)
-            ? LockTimerOption.Insert(command, RestraintLock.FromSeconds(lockSeconds))
-            : command;
+        lockSeconds is not { } seconds || !Accepts(command) ? command
+        : IsGesture(command) ? LockTimerOption.InsertSeconds(command, ClampHold(seconds))
+        : LockTimerOption.Insert(command, RestraintLock.FromSeconds(seconds));
 
     /// Null when Permanent or not applicable.
     public static string? DescribeFavorite(QuickCommand cmd) =>
-        cmd.FavoriteLockSeconds is { } seconds && Accepts(cmd.Command)
-            ? $"locks {RestraintLock.Format(RestraintLock.FromSeconds(seconds).Duration!.Value)}"
-            : null;
+        cmd.FavoriteLockSeconds is not { } seconds || !Accepts(cmd.Command) ? null
+        : IsGesture(cmd.Command) ? $"holds {RestraintLock.Format(TimeSpan.FromSeconds(ClampHold(seconds)))}"
+        : $"locks {RestraintLock.Format(RestraintLock.FromSeconds(seconds).Duration!.Value)}";
+
+    private static int ClampHold(int seconds) => Math.Clamp(seconds, GestureCommand.MinHoldSeconds, GestureCommand.MaxHoldSeconds);
+
+    private const string GestureHelpText = "Until stopped: a looping animation or pose holds your Sub in place until you send Stop animation, and a one-shot until it finishes. Timed: your Sub is held for exactly this long, then the animation stops and they can move again by themselves. Needs your Sub on a plugin version that understands timed holds - older versions reject the command.";
 
     private const string HelpText = "Permanent: stays locked until you send `restraint unlock` (or your Sub panics). Timed: your Sub's restraints come off by themselves when the time runs out - the timer keeps counting even if your Sub logs out. Sending another restraint command replaces the timer. Needs your Sub on a plugin version that understands timers - older versions ignore the whole command.";
 
@@ -48,27 +65,45 @@ public static class OwnerLockOption
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var width = spacing + InlineFieldWidth;
         if (cmd.LockSeconds is not null)
-            width += spacing + InlineFieldWidth + spacing + ImGui.CalcTextSize("min").X;
+            width += spacing + InlineFieldWidth + spacing + ImGui.CalcTextSize(IsGesture(cmd.Command) ? "sec" : "min").X;
         return width;
     }
 
     /// Saves straight onto `cmd.LockSeconds`.
     public static void DrawInline(string id, QuickCommand cmd, PluginConfig config)
     {
+        var gesture = IsGesture(cmd.Command);
+        var names = gesture ? GestureModeNames : ModeNames;
         var mode = cmd.LockSeconds is null ? 0 : 1;
         Layout.ContinueRowOrWrap(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
-        if (ImGui.Combo($"##ownerLockInline_{id}", ref mode, ModeNames, ModeNames.Length))
+        if (ImGui.Combo($"##ownerLockInline_{id}", ref mode, names, names.Length))
         {
-            cmd.LockSeconds = mode == 0 ? null : DefaultTimedMinutes * 60;
+            cmd.LockSeconds = mode == 0 ? null : gesture ? DefaultHoldSeconds : DefaultTimedMinutes * 60;
             config.Save();
         }
         TutorialService.Anchor(TutorialAnchors.QuickLock);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(HelpText);
+            ImGui.SetTooltip(gesture ? GestureHelpText : HelpText);
 
         if (cmd.LockSeconds is not { } seconds)
             return;
+        if (gesture)
+        {
+            var hold = ClampHold(seconds);
+            Layout.ContinueRowOrWrap(InlineFieldWidth);
+            ImGui.SetNextItemWidth(InlineFieldWidth);
+            if (ImGui.InputInt($"##ownerHoldInlineSeconds_{id}", ref hold, 5, 30))
+            {
+                cmd.LockSeconds = ClampHold(hold);
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Seconds ({RestraintLock.Format(TimeSpan.FromSeconds(ClampHold(cmd.LockSeconds.Value)))})");
+            ImGui.SameLine();
+            ImGui.TextDisabled("sec");
+            return;
+        }
         var minutes = Math.Max(1, seconds / 60);
         Layout.ContinueRowOrWrap(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
@@ -84,16 +119,28 @@ public static class OwnerLockOption
     }
 
     /// Returns true when the value changed.
-    public static bool Draw(string id, ref int? lockSeconds)
+    public static bool Draw(string id, ref int? lockSeconds) => Draw(id, ref lockSeconds, gesture: false);
+
+    public static bool Draw(string id, ref int? lockSeconds, bool gesture)
     {
         var before = lockSeconds;
         var mode = lockSeconds is null ? 0 : 1;
+        var names = gesture ? GestureModeNames : ModeNames;
         Layout.ItemWidth(120);
-        if (ImGui.Combo($"Lock##ownerLock_{id}", ref mode, ModeNames, ModeNames.Length))
-            lockSeconds = mode == 0 ? null : DefaultTimedMinutes * 60;
-        IconGlyph.HelpMarker(HelpText);
+        if (ImGui.Combo(gesture ? $"Hold##ownerHold_{id}" : $"Lock##ownerLock_{id}", ref mode, names, names.Length))
+            lockSeconds = mode == 0 ? null : gesture ? DefaultHoldSeconds : DefaultTimedMinutes * 60;
+        IconGlyph.HelpMarker(gesture ? GestureHelpText : HelpText);
 
-        if (lockSeconds is { } seconds)
+        if (gesture && lockSeconds is { } holdSeconds)
+        {
+            var hold = ClampHold(holdSeconds);
+            Layout.ItemWidth(120);
+            if (ImGui.InputInt($"Seconds##ownerHoldSeconds_{id}", ref hold, 5, 30))
+                lockSeconds = ClampHold(hold);
+            ImGui.SameLine();
+            ImGui.TextDisabled($"= {RestraintLock.Format(TimeSpan.FromSeconds(lockSeconds!.Value))}");
+        }
+        else if (lockSeconds is { } seconds)
         {
             var minutes = Math.Max(1, seconds / 60);
             Layout.ItemWidth(120);

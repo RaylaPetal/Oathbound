@@ -51,6 +51,8 @@ public sealed class RulebookPairingState
     public RulebookDocument? Accepted { get; set; }
     public long AcceptedUnixSeconds { get; set; }
     public int? LastDeclinedVersion { get; set; }
+    /// The Owner's ResetCount as of the last wipe.
+    public int AppliedResetCount { get; set; }
 
     public HashSet<string> DisabledRuleIds { get; set; } = new();
     public Dictionary<string, OathState> Oaths { get; set; } = new();
@@ -86,7 +88,7 @@ public sealed class OathState
     public long ChangedUnixSeconds { get; set; }
     /// The terms as last offered, so a change by the Owner can be told apart from an unchanged resend.
     public string? OfferedTermsJson { get; set; }
-    /// A copy of the oath as accepted, so a newer version can't change an oath that already started.
+    /// The terms this oath is judged by; a newer accepted version replaces them while it's open.
     public Oath? Terms { get; set; }
     public long? ScopeEndsUnixSeconds { get; set; }
     /// NextDuty scope: the duty it watches has started.
@@ -98,6 +100,8 @@ public sealed class OathState
     /// Rituals: the current period's start and how many times it's been done in it.
     public long PeriodStartUnixSeconds { get; set; }
     public int PeriodCount { get; set; }
+    /// Rituals: periods that closed short; any at the end of the scope breaks the oath.
+    public int MissedPeriods { get; set; }
     /// SayGoodnight: when the last matching tell went out.
     public long LastMatchUnixSeconds { get; set; }
 

@@ -239,7 +239,7 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
-        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, () => relayBackgroundWorkCts.Token);
+        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
 
