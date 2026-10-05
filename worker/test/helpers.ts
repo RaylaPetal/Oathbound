@@ -3,6 +3,19 @@ import canonicalize from "canonicalize";
 
 export const BASE = "https://relay.test";
 
+type Fetcher = (request: Request) => Promise<Response>;
+const defaultFetcher: Fetcher = (request) => SELF.fetch(request);
+let fetcher: Fetcher = defaultFetcher;
+
+/** Routes every helper request through `f` instead of SELF; pass nothing to restore the default. */
+export function useFetcher(f: Fetcher = defaultFetcher): void {
+  fetcher = f;
+}
+
+export function relayFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetcher(new Request(BASE + path, init));
+}
+
 export function hex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -77,7 +90,7 @@ export async function signedFetch(
   const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, new TextEncoder().encode(baseString));
 
   const hasBody = method !== "GET" && method !== "HEAD";
-  const response = await SELF.fetch(BASE + path, {
+  const response = await relayFetch(path, {
     method,
     headers: {
       "content-type": "application/json",

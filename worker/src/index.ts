@@ -12,6 +12,7 @@ import { health } from "./routes/health";
 import { runScheduledCleanup } from "./scheduled";
 import { enforceQuota } from "./lib/quotas";
 import { originScope } from "./lib/origin";
+import { routeWeight } from "./lib/routeWeights";
 
 /** Matches `simple.period` of the ORIGIN_RATE_LIMITER binding in wrangler.toml. */
 const ORIGIN_RATE_LIMIT_PERIOD_SECONDS = 60;
@@ -23,14 +24,14 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   if (segments[0] !== "v1") return new RelayError("not_found").toResponse();
 
-  // Account-level budget guard. Safety traffic has an independent reserve so scans/pairing abuse cannot
-  // consume its allowance.
-  const safetyRoute = segments[1] === "revocations";
-  await enforceQuota(env, safetyRoute ? "globalDailySafety" : "globalDailyWork", "all");
-  // Applied before authentication/body parsing so malformed and oversized anonymous traffic is bounded
-  // too. The key is a one-way hash; raw client IPs are never retained. Per Cloudflare location, not global.
+  // Applied before anything touches D1, so a flood from one origin costs no row writes and can't drain the
+  // shared daily budget. The key is a one-way hash; raw client IPs are never retained. Per Cloudflare location.
   const origin = await env.ORIGIN_RATE_LIMITER.limit({ key: await originScope(request) });
   if (!origin.success) throw new RelayError("rate_limited", ORIGIN_RATE_LIMIT_PERIOD_SECONDS);
+  // Account-level budget guard, charged in estimated rows written. Safety traffic has an independent reserve so
+  // scans/pairing abuse cannot consume its allowance.
+  const safetyRoute = segments[1] === "revocations";
+  await enforceQuota(env, safetyRoute ? "globalDailySafety" : "globalDailyWork", "all", 0, routeWeight(method, segments));
 
   if (method === "GET" && segments.length === 2 && segments[1] === "health") {
     return health(env);
