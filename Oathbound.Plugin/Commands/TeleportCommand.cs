@@ -67,6 +67,8 @@ public sealed class TeleportCommand
     private uint aetheryteId;
     private string? districtName;
     private int housingPlot;
+    /// The Teleporting stage is a jump straight to the Sub's own estate in the Owner's ward.
+    private bool estateTravel;
     /// Started by ApplyLeashTravel rather than the Owner's own Teleport.
     private bool isLeashJourney;
 
@@ -161,6 +163,7 @@ public sealed class TeleportCommand
         aetheryteId = 0;
         districtName = null;
         housingPlot = 0;
+        estateTravel = false;
 
         if (destination.IsHousingWard)
         {
@@ -247,6 +250,16 @@ public sealed class TeleportCommand
                 movementLock.ReleaseImmobilize(LockOwner);
                 if (!teleportDone) { Fail("The teleport didn't start."); return; }
                 if (Plugin.ClientState.TerritoryType != target.Territory) { Fail("The teleport didn't arrive in your Owner's zone."); return; }
+                if (estateTravel)
+                {
+                    if (TeleportDestinations.CurrentWard() != (target.Ward, target.Subdivision))
+                    {
+                        Fail($"The estate teleport didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
+                        return;
+                    }
+                    EnterStage(TeleportStage.PreparingNav);
+                    return;
+                }
                 BeginChangingInstance();
                 return;
 
@@ -387,7 +400,23 @@ public sealed class TeleportCommand
 
     private void BeginTravelInWorld()
     {
-        if (target!.IsHousingWard)
+        // Looked up here rather than in Apply: estates only count on their own world, which is now the Owner's.
+        if (target!.IsHousingWard
+            && TeleportDestinations.FindEstateInWard(lifestream, target.Territory, target.Ward, target.Subdivision, target.Position) is { } estate)
+        {
+            estateTravel = true;
+            aetheryteId = estate.AetheryteId;
+            EnterStage(TeleportStage.Teleporting);
+            movementLock.EngageImmobilize(LockOwner);
+            if (!lifestream.TryTeleport(estate.AetheryteId, estate.SubIndex))
+            {
+                movementLock.ReleaseImmobilize(LockOwner);
+                Fail("Lifestream failed to teleport to your estate in your Owner's ward.");
+            }
+            return;
+        }
+
+        if (target.IsHousingWard)
         {
             EnterStage(TeleportStage.TravelingToWard);
             if (lifestream.TryBuildAddressBookEntry(target.World, districtName!, target.Ward, housingPlot) is not { } entry)

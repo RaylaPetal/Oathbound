@@ -170,6 +170,41 @@ public static class TeleportDestinations
         return best;
     }
 
+    /// The Sub's own estate teleport (private, Free Company, shared or apartment) on the current world in that
+    /// district, 1-based ward and division, nearest the Owner. Null if there is none.
+    public static unsafe (uint AetheryteId, byte SubIndex)? FindEstateInWard(LifestreamIpc lifestream, uint territory, int ward, bool subdivision, Vector3 ownerPosition)
+    {
+        var telepo = Telepo.Instance();
+        var worldId = Plugin.ObjectTable.LocalPlayer?.CurrentWorld.RowId;
+        if (telepo == null || worldId is null)
+            return null;
+        telepo->UpdateAetheryteList();
+
+        (uint, byte)? best = null;
+        var bestDistance = float.MaxValue;
+        foreach (ref readonly var info in telepo->TeleportList.AsSpan())
+        {
+            // HouseId rather than Ward/Plot: the game fills those two only for shared estates.
+            var house = info.HouseId;
+            if (house.TerritoryTypeId != territory || house.WorldId != worldId || house.IsWorkshop || house.WardIndex + 1 != ward)
+                continue;
+            var houseSubdivision = house.IsApartment ? house.ApartmentDivision == 1 : house.PlotIndex >= PlotsPerDivision;
+            if (houseSubdivision != subdivision)
+                continue;
+
+            // An apartment has no plot entrance, so any plot in the ward wins over it.
+            var distance = !house.IsApartment && lifestream.TryGetPlotEntrance(territory, house.PlotIndex) is { } entrance
+                ? Vector3.Distance(entrance, ownerPosition)
+                : float.MaxValue - 1;
+            Plugin.Log.Debug($"Estate teleport candidate: aetheryte {info.AetheryteId} sub {info.SubIndex}, ward {house.WardIndex + 1}, plot {house.PlotIndex}, apartment {house.IsApartment}.");
+            if (distance >= bestDistance)
+                continue;
+            best = (info.AetheryteId, info.SubIndex);
+            bestDistance = distance;
+        }
+        return best;
+    }
+
     /// Null when not in a residential district.
     public static unsafe (int Ward, bool Subdivision)? CurrentWard()
     {
