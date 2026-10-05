@@ -41,7 +41,7 @@ public sealed partial class ModuleWindow
         ]),
         ("Manners", [
             (OathCondition.SayGoodnight, "Say goodnight before logging off", "Send you a tell in the 15 minutes before they log off. Optionally it has to say something."),
-            (OathCondition.AddressOwner, "Call me by a title", "Every tell they send you has to include the word you choose, like \"Mistress\" or \"Sir\"."),
+            (OathCondition.AddressOwner, "Call me by a title", "When they start a conversation with you (their first tell after 15 quiet minutes), it has to include the word you choose, like \"Mistress\" or \"Sir\". Replies after that don't need it."),
             (OathCondition.ForbiddenWord, "Never say a word", "Saying the word in any chat they type in breaks the oath."),
             (OathCondition.QuietInPublic, "Stay quiet in public", "No /say, /shout or /yell."),
         ]),

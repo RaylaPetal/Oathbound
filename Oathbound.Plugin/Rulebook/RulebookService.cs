@@ -47,6 +47,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly HashSet<Guid> reportsInFlight = new();
     private readonly Dictionary<Guid, DateTime> reportRetryAfter = new();
     private readonly HashSet<Guid> wasRunning = new();
+    /// AddressOwner: the last tell exchanged with each pairing's Owner, either direction. Not persisted, so the first
+    /// tell after a reload or login always counts as starting a conversation.
+    private readonly Dictionary<Guid, DateTime> lastOwnerTell = new();
     private DateTime nextSecondTick = DateTime.MinValue;
     private DateTime nextPresenceTick = DateTime.MinValue;
 
@@ -819,10 +822,13 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         if (PluginOutput.ConsumeEcho(text))
             return;
 
+        var utcNow = DateTime.UtcNow;
         foreach (var pairing in SubPairings().Where(IsRunning))
         {
             var toOwner = outgoingTell && string.Equals(name, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
                 && (world is null || string.Equals(world, pairing.PeerWorld, StringComparison.OrdinalIgnoreCase));
+            var startsConversation = toOwner && (!lastOwnerTell.TryGetValue(pairing.Id, out var lastTell)
+                || utcNow - lastTell >= TimeSpan.FromMinutes(RulebookLimits.ConversationGapMinutes));
             foreach (var (id, s, terms) in OpenOaths(pairing))
             {
                 var phrase = terms.Phrase.Trim();
@@ -836,8 +842,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                         s.LastMatchUnixSeconds = Now();
                         config.Save();
                         break;
-                    case OathCondition.AddressOwner when toOwner && !text.Contains(phrase, StringComparison.OrdinalIgnoreCase):
-                        Violate(pairing, id, s, terms, $"sent {pairing.PeerName} a tell without calling them \"{phrase}\"");
+                    case OathCondition.AddressOwner when startsConversation && !text.Contains(phrase, StringComparison.OrdinalIgnoreCase):
+                        Violate(pairing, id, s, terms, $"started a conversation with {pairing.PeerName} without calling them \"{phrase}\"");
                         break;
                     case OathCondition.ForbiddenWord when phrase.Length > 0 && text.Contains(phrase, StringComparison.OrdinalIgnoreCase):
                         Violate(pairing, id, s, terms, $"said \"{phrase}\"");
@@ -847,6 +853,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                         break;
                 }
             }
+            if (toOwner)
+                lastOwnerTell[pairing.Id] = utcNow;
         }
     }
 
@@ -862,6 +870,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (!string.Equals(name, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
                 || (world is not null && !string.Equals(world, pairing.PeerWorld, StringComparison.OrdinalIgnoreCase)))
                 continue;
+            lastOwnerTell[pairing.Id] = DateTime.UtcNow;
             foreach (var (_, s, terms) in OpenOaths(pairing))
             {
                 var phrase = terms.Phrase.Trim();
@@ -888,6 +897,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     /// Only a normal logout is seen; closing the game outright can't be told apart from a crash, so it never breaks.
     private void OnLogout(int type, int code)
     {
+        lastOwnerTell.Clear();
         var cutoff = Now() - RulebookLimits.GoodnightWindowMinutes * 60L;
         foreach (var pairing in SubPairings().Where(IsRunning))
             foreach (var (id, s, terms) in OpenOaths(pairing))

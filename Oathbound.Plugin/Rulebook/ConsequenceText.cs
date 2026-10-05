@@ -158,7 +158,7 @@ public static class OathText
             OathCondition.MessageOwner => $"send your Owner a tell{Containing(oath.Phrase)} {Repeat(oath)}",
             OathCondition.CheckIn => $"log in at least once {Every(oath.PeriodDays)}",
             OathCondition.SayGoodnight => $"tell your Owner goodnight{Containing(oath.Phrase)} before you log off",
-            OathCondition.AddressOwner => $"call your Owner \"{oath.Phrase.Trim()}\" in every tell to them",
+            OathCondition.AddressOwner => $"call your Owner \"{oath.Phrase.Trim()}\" when you start a conversation with them",
             OathCondition.ForbiddenWord => $"never say \"{oath.Phrase.Trim()}\" in chat",
             OathCondition.QuietInPublic => "stay quiet in /say, /shout and /yell",
             OathCondition.DutyQuota => $"complete {(oath.Places.Count == 0 ? "any duty" : Places(oath))} {Repeat(oath)}",

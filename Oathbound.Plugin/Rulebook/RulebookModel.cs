@@ -371,6 +371,8 @@ public static class RulebookLimits
     public const int MaxPresenceTellLength = 200;
     /// SayGoodnight: how long before logging off the goodnight tell may be sent.
     public const int GoodnightWindowMinutes = 15;
+    /// AddressOwner: a tell to the Owner after this long with no tells either way starts a new conversation.
+    public const int ConversationGapMinutes = 15;
     public const float MinRangeYalms = 3;
     public const float MaxRangeYalms = 50;
     public const int MinLedger = -999;
