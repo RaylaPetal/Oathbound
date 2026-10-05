@@ -31,6 +31,8 @@ public sealed partial class ModuleWindow
             .Select(s => (s.Icon, Name: s.Name.ExtractText()))
             .GroupBy(s => s.Icon)
             .Select(g => g.First())
+            // Some sheet rows point at icons the game files don't have.
+            .Where(s => Plugin.TextureProvider.TryGetIconPath(new GameIconLookup(s.Icon), out _))
             .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -40,8 +42,11 @@ public sealed partial class ModuleWindow
 
     private static void DrawMoodleIcon(uint icon)
     {
-        var wrap = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(icon)).GetWrapOrEmpty();
-        ImGui.Image(wrap.Handle, MoodleIconSize);
+        // GetFromGameIcon throws for an icon the game files don't have; keep the slot so layouts don't shift.
+        if (Plugin.TextureProvider.TryGetFromGameIcon(new GameIconLookup(icon), out var texture))
+            ImGui.Image(texture.GetWrapOrEmpty().Handle, MoodleIconSize);
+        else
+            ImGui.Dummy(MoodleIconSize);
     }
 
     private void DrawCustomMoodlesSection(bool canSend)
