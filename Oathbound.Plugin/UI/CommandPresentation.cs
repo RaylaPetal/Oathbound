@@ -12,7 +12,9 @@ public static class CommandPresentation
         CustomTriggerActionKind.Title => $"Title · \"{action.TitleText}\"",
         CustomTriggerActionKind.Outfit => $"Outfit · {action.OutfitDesignName}",
         CustomTriggerActionKind.Gesture => $"Gesture · {action.GestureAnimationName}",
-        CustomTriggerActionKind.Moodle => $"Moodle · {MoodlesTextFormat.StripMarkup(action.MoodleStatusName)}",
+        CustomTriggerActionKind.Moodle => action.CustomMoodle is { } custom
+            ? $"Moodle · {MoodlesTextFormat.StripMarkup(custom.Title)} (Owner's)"
+            : $"Moodle · {MoodlesTextFormat.StripMarkup(action.MoodleStatusName)}",
         CustomTriggerActionKind.Restraint => $"Restraint · {action.RestraintDeviceName}",
         CustomTriggerActionKind.Chat => $"Chat · \"{action.ChatText}\"",
         _ => "Unknown action",

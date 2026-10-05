@@ -124,6 +124,7 @@ public static class QuickAccessMenu
             ("Animation", quick.Gestures),
             ("Follow", quick.Follow),
             ("Moodles", quick.Moodles),
+            ("Custom moodles", quick.CustomMoodles),
             ("Restraints", quick.Restraints),
             ("Custom Trigger Bundles", quick.Aliases),
         ];
@@ -152,6 +153,7 @@ public static class QuickAccessMenu
             ("Animation", quick.Gestures),
             ("Follow", quick.Follow),
             ("Moodles", quick.Moodles),
+            ("Custom moodles", quick.CustomMoodles),
             ("Restraints", quick.Restraints),
             ("Custom Trigger Bundles", quick.Aliases),
         ];

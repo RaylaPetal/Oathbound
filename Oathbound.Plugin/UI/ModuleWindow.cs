@@ -63,6 +63,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private StruggleLevel adHocStruggle;
     private int adHocStrugglePenalty;
     private StruggleLevel ctqStruggle;
+    /// -1 = a moodle from the Sub's library by name.
+    private int ctqCustomMoodleIndex = -1;
     private int ctqStrugglePenalty;
     private string? editingQuickMoodle;
     private bool newOutfitLocked = true;
@@ -804,6 +806,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
             SavePermission(() => permissions.Moodles = newMoodles);
         IconGlyph.HelpMarker("Lets your Owner add or clear your Moodles statuses.");
         DrawPermissionDependencyNote(DependencyId.Moodles);
+        ImGui.Indent();
+        using (ImRaii.Disabled(!permissions.Moodles))
+        {
+            if (ImGuiCheckbox("Allow moodles my Owner writes", permissions.OwnerWrittenMoodles, out var newOwnerWritten))
+                SavePermission(() => permissions.OwnerWrittenMoodles = newOwnerWritten);
+        }
+        IconGlyph.HelpMarker("Your Owner can put moodles they wrote themselves on you - their own title, description and icon - without you making them first. Other players see moodles through sync tools. Moodles also has to allow it: in Moodles' settings, \"Allow other plugins apply Moodles.\" and allow your Owner (friends, party members or everyone).");
+        ImGui.Unindent();
 
         group.Dispose();
         group = Section.Begin("permCatalog", "Catalog sync");
@@ -1909,6 +1919,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         GestureAnimationName = action.GestureAnimationName,
         MoodleStatusId = action.MoodleStatusId,
         MoodleStatusName = action.MoodleStatusName,
+        CustomMoodle = action.CustomMoodle?.Clone(),
         RestraintDeviceId = action.RestraintDeviceId,
         RestraintDeviceName = action.RestraintDeviceName,
         RestraintCatalogId = action.RestraintCatalogId,
@@ -2462,6 +2473,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         using (Section.Begin("moodlesQuickFixed", "Commands"))
             DrawFixedQuickRow("Clear moodle", "moodle clear", canSend, FixedActionIds.ClearMoodle);
 
+        DrawCustomMoodlesSection(canSend);
+
         if (quick.Count == 0)
         {
             DrawGoToSyncTabPrompt("No Moodles statuses imported yet.");
@@ -2699,6 +2712,29 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 break;
 
             case CustomTriggerActionKind.Moodle:
+            {
+                // The bundle carries a custom moodle whole, so it keeps working if the saved one is edited or deleted.
+                var customs = plugin.Configuration.QuickCommands.CustomMoodles.Where(c => c.CustomMoodle is not null).ToList();
+                if (customs.Count > 0)
+                {
+                    var names = new[] { "One of your Sub's moodles" }.Concat(customs.Select(c => $"Yours: {c.Label}")).ToArray();
+                    ctqCustomMoodleIndex = Math.Clamp(ctqCustomMoodleIndex, -1, customs.Count - 1);
+                    var pick = ctqCustomMoodleIndex + 1;
+                    ItemWidth(220);
+                    if (ImGui.Combo("Moodle##ctqMoodleSource", ref pick, names, names.Length))
+                        ctqCustomMoodleIndex = pick - 1;
+                    if (ctqCustomMoodleIndex >= 0)
+                    {
+                        IconGlyph.HelpMarker("Your Sub has to allow moodles you write.");
+                        if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqCustomMoodleBtn"))
+                        {
+                            var custom = customs[ctqCustomMoodleIndex].CustomMoodle!.Clone();
+                            CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Moodle, MoodleStatusName = custom.Title, CustomMoodle = custom });
+                            ctqCustomMoodleIndex = -1;
+                        }
+                        break;
+                    }
+                }
                 ItemWidth(220);
                 ImGui.InputText("Status name##ctqMoodle", ref ctqMoodleName, 32);
                 IconGlyph.HelpMarker("Type the exact Moodles status name your Sub told you.");
@@ -2711,6 +2747,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     }
                 }
                 break;
+            }
 
             case CustomTriggerActionKind.Restraint:
                 ItemWidth(220);

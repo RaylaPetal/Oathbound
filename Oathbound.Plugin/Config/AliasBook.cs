@@ -108,6 +108,8 @@ public class CustomTriggerAction
 
     public string MoodleStatusId { get; set; } = "";
     public string MoodleStatusName { get; set; } = "";
+    /// Moodle kind only: a moodle the Owner wrote, carried whole and applied from its data instead of the library.
+    public Commands.CustomMoodle? CustomMoodle { get; set; }
 
     public string RestraintDeviceId { get; set; } = "";
     public string RestraintDeviceName { get; set; } = "";

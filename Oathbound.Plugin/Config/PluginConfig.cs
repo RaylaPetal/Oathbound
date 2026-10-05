@@ -159,9 +159,11 @@ public class CustomTriggerEffectsState
     public bool Outfit { get; set; }
     public bool Gesture { get; set; }
     public List<Guid> MoodleStatusIds { get; set; } = new();
+    /// Owner-written moodles, removed by id: the ledger can't re-apply them, so they never go through it.
+    public List<Guid> CustomMoodleIds { get; set; } = new();
     public List<string> RestraintDeviceIds { get; set; } = new();
 
-    public bool Any => Title || Outfit || Gesture || MoodleStatusIds.Count > 0 || RestraintDeviceIds.Count > 0;
+    public bool Any => Title || Outfit || Gesture || MoodleStatusIds.Count > 0 || CustomMoodleIds.Count > 0 || RestraintDeviceIds.Count > 0;
 }
 
 [Serializable]
@@ -272,6 +274,9 @@ public class QuickCommand
     /// LockSeconds when favorited, so a later change on the row doesn't change the favorite.
     public int? FavoriteLockSeconds { get; set; }
 
+    /// CustomMoodles entries only: what the builder edits; Command is regenerated from it on save.
+    public Commands.CustomMoodle? CustomMoodle { get; set; }
+
     /// Restraint commands only: whether the lock it sets can be struggled against.
     public Commands.StruggleLevel Struggle { get; set; }
     public int StrugglePenaltyMinutes { get; set; }
@@ -288,6 +293,8 @@ public class OwnerQuickCommands
     public List<QuickCommand> Gestures { get; set; } = new();
     public List<QuickCommand> Follow { get; set; } = new();
     public List<QuickCommand> Moodles { get; set; } = new();
+    /// Moodles the Owner wrote. Kept apart from Moodles, which catalog sync rebuilds from the Sub's export.
+    public List<QuickCommand> CustomMoodles { get; set; } = new();
     public List<QuickCommand> Aliases { get; set; } = new();
 
     /// Each entry needs RestraintRules assigned before it can be sent.
@@ -363,6 +370,8 @@ public class PermissionSet
 
     public bool Collar { get; set; }
     public bool Moodles { get; set; }
+    /// Moodles the Owner writes themselves: their text, shown to others through sync. Also needs Moodles.
+    public bool OwnerWrittenMoodles { get; set; }
 
     public bool Restraints { get; set; }
 

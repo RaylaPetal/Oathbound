@@ -444,7 +444,7 @@ public sealed class ChatCommandListener : IDisposable
             case "collar":
                 return permissions.Collar ? HandleForceCollar(rest, sourcePairing) : LocalTestResult.Fail("Collar permission is not enabled.");
             case "moodle":
-                return permissions.Moodles ? HandleForceMoodle(rest) : LocalTestResult.Fail("Moodles permission is not enabled.");
+                return permissions.Moodles ? HandleForceMoodle(rest, sourcePairing) : LocalTestResult.Fail("Moodles permission is not enabled.");
             case "restraint":
                 // `lockfor:` comes off first, then the trailing `moodle:`.
                 return permissions.Restraints && config.TosAcknowledged
@@ -640,8 +640,28 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"collar\" override \"{rest}\" - expected \"lock\" or \"unlock\".");
     }
 
-    private LocalTestResult HandleForceMoodle(string rest)
+    private LocalTestResult HandleForceMoodle(string rest, PairingState? sourcePairing)
     {
+        var (verb, payload) = SplitFirstToken(rest);
+        if (verb.Equals(CustomMoodle.CustomWord, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!moodles.CustomAllowed)
+                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.");
+            if (!CustomMoodle.TryDecode(payload, out var custom))
+                return LocalTestResult.Fail("The custom moodle was malformed or over its limits.");
+            // Moodles matches the applier against friends/party as Name@World.
+            var applier = sourcePairing is { PeerName: { } name, PeerWorld: { } world } ? $"{name}@{world}" : "Owner";
+            return moodles.ApplyCustom(custom, applier);
+        }
+        if (verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!moodles.CustomAllowed)
+                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.");
+            return CustomMoodle.TryDecodeId(payload, out var id) && moodles.RemoveCustom(id)
+                ? LocalTestResult.Ok("Custom moodle removed.")
+                : LocalTestResult.Fail("The custom moodle couldn't be removed.");
+        }
+
         if (rest.Equals("clear", StringComparison.OrdinalIgnoreCase))
         {
             return moodles.ForceClear()

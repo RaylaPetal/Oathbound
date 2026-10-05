@@ -80,6 +80,24 @@ public sealed class CustomTriggerCommand
                         skipped.Add("gesture (not found or failed to play)");
                     break;
 
+                case CustomTriggerActionKind.Moodle when action.CustomMoodle is { } custom:
+                {
+                    if (!moodles.CustomAllowed) { skipped.Add("custom moodle (permission)"); break; }
+                    // Moodles matches the applier against friends/party as Name@World.
+                    var applier = sourcePairingId is { } pid && config.FindPairingById(pid) is { PeerName: { } peerName, PeerWorld: { } peerWorld }
+                        ? $"{peerName}@{peerWorld}" : "Owner";
+                    var result = moodles.ApplyCustom(custom, applier);
+                    if (result.Success)
+                    {
+                        if (!effects.CustomMoodleIds.Contains(custom.Id))
+                            effects.CustomMoodleIds.Add(custom.Id);
+                        applied.Add("custom moodle");
+                    }
+                    else
+                        skipped.Add($"custom moodle ({result.Message})");
+                    break;
+                }
+
                 case CustomTriggerActionKind.Moodle:
                     if (!config.Permissions.Moodles) { skipped.Add("moodle (permission)"); break; }
                     if (moodles.Apply(new MoodlesAliasDefinition { StatusId = action.MoodleStatusId, StatusName = action.MoodleStatusName }))
@@ -174,6 +192,11 @@ public sealed class CustomTriggerCommand
             foreach (var statusId in effects.MoodleStatusIds)
                 moodles.Ledger.Release(AttachedMoodleLedger.ManualSource(statusId));
         });
+        Step("custom moodles", effects.CustomMoodleIds.Count > 0, () =>
+        {
+            foreach (var id in effects.CustomMoodleIds)
+                moodles.RemoveCustom(id);
+        });
 
         ForgetEffects();
         var summary = $"Reverted Custom Trigger effects: {string.Join(", ", done)}.";
@@ -210,6 +233,10 @@ public sealed class CustomTriggerCommand
                     break;
                 case CustomTriggerActionKind.Gesture:
                     segments.Add($"gesture={action.GestureId}|{EncodeText(action.GestureAnimationName)}");
+                    break;
+                // An older Sub's parser doesn't know this kind and refuses the whole bundle.
+                case CustomTriggerActionKind.Moodle when action.CustomMoodle is { } custom:
+                    segments.Add($"{CustomMoodleSegment}={custom.Encode()}");
                     break;
                 case CustomTriggerActionKind.Moodle:
                     segments.Add($"moodle={action.MoodleStatusId}|{EncodeText(action.MoodleStatusName)}");
@@ -349,6 +376,12 @@ public sealed class CustomTriggerCommand
                         actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Moodle, MoodleStatusId = parts[0], MoodleStatusName = statusName });
                         break;
 
+                    case CustomMoodleSegment:
+                        if (!CustomMoodle.TryDecode(value, out var customMoodle))
+                            return false;
+                        actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Moodle, MoodleStatusName = customMoodle.Title, CustomMoodle = customMoodle });
+                        break;
+
                     case "restraint":
                         if ((parts.Length != 2 && parts.Length != 3) || !TryDecodeText(parts[1], out var deviceName) || deviceName.Length == 0)
                             return false;
@@ -410,6 +443,7 @@ public sealed class CustomTriggerCommand
     }
 
     private const string CastPrefix = "customtrigger cast ";
+    private const string CustomMoodleSegment = "custommoodle";
 
     /// Splits a bundle too long for one message into one single-action `cast` per action. Null if not a cast command.
     public static List<string>? SplitCastCommand(string command)

@@ -62,6 +62,17 @@ public sealed class MoodlesCommand
     /// Keeps moodles an active outfit/restraint/leash/collar holds.
     public bool ForceClear() => Ledger.ClearUnheld();
 
+    /// Applied from its data; never held by the ledger, so nothing puts it back once the Sub removes it.
+    public LocalTestResult ApplyCustom(CustomMoodle moodle, string applier) =>
+        moodles.ApplyData(moodle, applier) is { } problem
+            ? LocalTestResult.Fail(problem)
+            : LocalTestResult.Ok($"Custom moodle \"{MoodlesTextFormat.StripMarkup(moodle.Title)}\" applied.");
+
+    public bool RemoveCustom(Guid id) => moodles.RemoveStatus(id);
+
+    /// Both the Moodles permission and the Sub's opt-in to moodles their Owner writes.
+    public bool CustomAllowed => config.Permissions.Moodles && config.Permissions.OwnerWrittenMoodles;
+
     /// The Owner's `moodle:` override when allowed and found, else the Sub's default; with neither, releases
     /// `source`. The Sub's default needs no Moodles permission - the action itself was already gated.
     public void HoldAttached(string source, AttachedMoodleRef? subDefault, string? ownerOverride)

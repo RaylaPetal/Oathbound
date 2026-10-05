@@ -41,6 +41,10 @@ public static partial class ConsequenceText
             case "moodle":
                 {
                     var (verb, name) = Split(rest);
+                    if (verb.Equals(CustomMoodle.CustomWord, StringComparison.OrdinalIgnoreCase))
+                        return CustomMoodle.TryDecode(name, out var custom) ? $"apply moodle {Config.MoodlesTextFormat.StripMarkup(custom.Title)}" : text;
+                    if (verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase))
+                        return "remove a moodle";
                     return verb.Equals("apply", StringComparison.OrdinalIgnoreCase) ? $"apply moodle {Unquote(name)}" : verb.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "clear moodle" : text;
                 }
             case "restraint":

@@ -38,7 +38,7 @@ everything instantly with their safeword.
 | 🏷️ | **Title** | Give your Sub a title (with prefix/suffix and color) through Honorific. |
 | 👗 | **Outfit** | Dress your Sub in one of their Glamourer designs, locked in place or free to change. |
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. Your Sub is held in the pose until you press **Stop animation**. |
-| 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
+| 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles, or write your own - title, description, icon and duration - and put it on them without them making it first. Your own moodles work in rulebooks and Custom Triggers too. |
 | ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions, gagged, or arm/leg/full-body cuffs drawn on their wrists and ankles with chains between them (gear restraints can draw them too, rule by rule). Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). A gag can be Light, Medium or Heavy, and you can let your Sub **struggle** against a lock - Easy, Medium or Hard - for a chance to get free (you're told if they do). |
 | 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on until you unleash them: when you teleport or change area your Sub is brought along to you, and anywhere they can't follow (your house, an inn room, a duty) it just pauses until you're together again. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
@@ -90,6 +90,9 @@ Sync tab shows whether it's up to date.
   you uninstall or disable the plugin, all of it stops.
 - **Permissions per category.** Titles, outfits, animations, moodles, restraints, leash, collar, toys,
   teleport and custom chat each have their own switch, and you can change them at any time.
+  Moodles your Owner writes themselves need one more switch under Moodles, **Allow moodles my Owner writes**,
+  because the text is theirs and other players can see moodles through sync tools. Moodles itself must also let
+  other plugins apply moodles and allow your Owner (friends, party members or everyone) in its own settings.
 - **Extra steps for the heavier features.** Animations, leash, restraints and teleport need an extra
   acknowledgement before you can turn them on, and custom chat messages and toy control each need their
   own.

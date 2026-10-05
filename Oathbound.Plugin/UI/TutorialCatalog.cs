@@ -124,6 +124,8 @@ public static class TutorialCatalog
         [
             Help("moodles", "Put one of your Sub's own Moodles statuses on them, or clear it."),
             new("Commands", "Clear moodle, and every status your Sub has shared. Each row can be sent, copied or starred.", S("moodlesQuickFixed"), n => n.Module("moodles")),
+            new("Your custom moodles", "Moodles you wrote yourself. Send one, take it off again, or use it in a rulebook or Custom Trigger.", S("customMoodles"), n => n.Module("moodles")),
+            new("Build a moodle", "Write a title and description, pick an icon and how long it lasts. Your Sub has to allow moodles you write.", S("customMoodleBuilder"), n => n.Module("moodles")),
             SendRow("show that status"),
             Star(),
         ],
