@@ -35,6 +35,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly Safety.EmoteWatcher emotes;
     private readonly Commands.GestureCommand gesture;
     private readonly Commands.FollowCommand follow;
+    private readonly Commands.OutfitCommand outfit;
+    private readonly Ipc.GlamourerIpc glamourer;
+    private readonly Safety.SlotLockManager slotLocks;
     /// The oath the Sub is performing; its own emote isn't counted on top, and it counts only once the hold completes.
     private (Guid PairingId, string OathId)? performing;
     private readonly Func<CancellationToken> backgroundToken;
@@ -54,11 +57,16 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         public DateTime? OutOfRangeSince;
     }
 
-    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes, Commands.GestureCommand gesture, Commands.FollowCommand follow, Func<CancellationToken> backgroundToken)
+    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes,
+        Commands.GestureCommand gesture, Commands.FollowCommand follow, Commands.OutfitCommand outfit, Ipc.GlamourerIpc glamourer, Safety.SlotLockManager slotLocks,
+        Func<CancellationToken> backgroundToken)
     {
         this.config = config;
         this.gesture = gesture;
         this.follow = follow;
+        this.outfit = outfit;
+        this.glamourer = glamourer;
+        this.slotLocks = slotLocks;
         this.mailbox = mailbox;
         this.listener = listener;
         this.composer = composer;
@@ -83,6 +91,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         events.DutyAbandoned += OnDutyAbandoned;
         events.LocalDeath += OnLocalDeath;
         events.TerritoryEntered += OnTerritoryEntered;
+        events.JobChanged += OnJobChanged;
+        outfit.OwnerDesignApplied += OnOwnerDesignApplied;
+        outfit.RevertedToBase += ForgetOwnerOutfits;
         Plugin.ChatGui.ChatMessage += OnChatMessage;
         Plugin.ClientState.Logout += OnLogout;
         GestureCommand.EmotePlayed += PluginOutput.RecordEmote;
@@ -96,6 +107,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         mailbox.RulebookRejected -= OnRulebookRejected;
         mailbox.ReportReceived -= OnReportReceived;
         events.Dispose();
+        outfit.OwnerDesignApplied -= OnOwnerDesignApplied;
+        outfit.RevertedToBase -= ForgetOwnerOutfits;
         Plugin.ChatGui.ChatMessage -= OnChatMessage;
         Plugin.ClientState.Logout -= OnLogout;
         GestureCommand.EmotePlayed -= PluginOutput.RecordEmote;
@@ -130,7 +143,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             nextPresenceTick = now + PresenceTickInterval;
             foreach (var pairing in SubPairings())
                 if (pairing.Rulebook.Accepted is not null && IsRunning(pairing))
+                {
                     TickPresence(pairing, now);
+                    TickSideOaths(pairing);
+                }
         }
 
         if (now < nextSecondTick)
@@ -144,7 +160,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             {
                 ExpireOffers(pairing);
                 if (IsRunning(pairing))
+                {
                     TickOaths(pairing);
+                    TickKeepItOn(pairing);
+                    TickTimeRules(pairing);
+                }
             }
             // From the first version received, so the Owner also learns about a pending review, a decline,
             // the permission being off or a panic pause before anything was ever accepted.
@@ -158,6 +178,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     {
         Queue.Clear();
         presence.Clear();
+        ForgetOwnerOutfits();
         if (!config.RulebookSuspended)
         {
             config.RulebookSuspended = true;
@@ -309,6 +330,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         state.ThresholdsMet.Clear();
         state.RemovedOnceCards.Clear();
         state.Activity.Clear();
+        state.ShopLastBought.Clear();
         state.AppliedResetCount = resetCount;
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"{pairing.PeerName} started the rulebook over: oaths, ledger and history cleared.");
     }
@@ -376,7 +398,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             if (s.Status == OathStatus.Open)
                 continue;
             var offered = s.OfferedTermsJson ?? (previous?.Oaths.FirstOrDefault(o => o.Id == oath.Id) is { } older ? RulebookJson.Serialize(older) : null);
-            if (offered is null || offered == RulebookJson.Serialize(oath))
+            if (offered is null || Normalized(offered) == RulebookJson.Serialize(oath))
                 continue;
             Log(pairing, RulebookEventKind.OathWithdrawn, oath.Id, s.Status == OathStatus.Offered
                 ? $"Oath \"{oath.Name}\" changed by the Owner and offered again."
@@ -384,6 +406,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             states[oath.Id] = Offer(oath);
         }
     }
+
+    /// Terms stored by an older build lack fields added since; read and written again they compare equal.
+    private static string Normalized(string termsJson) =>
+        RulebookJson.Deserialize<Oath>(termsJson) is { } terms ? RulebookJson.Serialize(terms) : termsJson;
 
     public void AcceptOath(PairingState pairing, string oathId)
     {
@@ -410,6 +436,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         s.PeriodCount = 0;
         s.MissedPeriods = 0;
         s.LastMatchUnixSeconds = 0;
+        s.StrikesUsed = 0;
+        s.StopRenewing = false;
+        s.GraceEndsUnixSeconds = null;
+        s.LeaveGrantedUntilUnixSeconds = 0;
     }
 
     /// Equal apart from the name, so renaming a running oath doesn't restart it.
@@ -493,6 +523,84 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 Log(pairing, RulebookEventKind.OathVoided, id, $"Oath \"{name}\" voided ({why}).");
                 break;
         }
+        if (outcome is OathStatus.Kept or OathStatus.Broken)
+        {
+            if (!OathConditions.IsRitual(terms.Condition) && terms.Recurrence != OathRecurrence.Once)
+            {
+                if (outcome == OathStatus.Kept)
+                    CountStreak(pairing, id, s, terms);
+                else
+                    s.Streak = 0;
+            }
+            Recur(pairing, id, s);
+        }
+        config.SaveNow();
+    }
+
+    /// A violation is a strike while the oath has strikes left, and breaks it after that.
+    private void Violate(PairingState pairing, string id, OathState s, Oath terms, string why)
+    {
+        if (s.StrikesUsed >= terms.Strikes)
+        {
+            ResolveOath(pairing, id, s, OathStatus.Broken, why);
+            return;
+        }
+        s.StrikesUsed++;
+        var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+        var left = terms.Strikes - s.StrikesUsed;
+        // A ritual-progress line: a new event kind would make an older Owner's report unreadable.
+        Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": strike {s.StrikesUsed} of {terms.Strikes} ({why}).");
+        if (terms.LedgerPerStrike != 0)
+            ChangeLedger(pairing, terms.LedgerPerStrike, $"strike on \"{name}\"", notify: false);
+        Notify("Strike", left == 0 ? $"\"{name}\": {why}. The next one breaks it." : $"\"{name}\": {why}. {left} {(left == 1 ? "strike" : "strikes")} left.", NotificationType.Warning);
+        config.Save();
+    }
+
+    /// Repeats done in full (rituals) or runs kept (other recurring oaths); pays at every multiple of the streak.
+    private void CountStreak(PairingState pairing, string id, OathState s, Oath terms)
+    {
+        s.Streak++;
+        if (terms.StreakEvery <= 0 || s.Streak % terms.StreakEvery != 0)
+            return;
+        var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+        Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {s.Streak} in a row - streak bonus.");
+        Notify("Streak", $"\"{name}\": {s.Streak} in a row!", NotificationType.Success);
+        if (terms.StreakLedger != 0)
+            ChangeLedger(pairing, terms.StreakLedger, $"{s.Streak} in a row on \"{name}\"", notify: false);
+        if (terms.StreakDrawReward)
+            DrawForEvent(pairing, CardPile.Reward, $"{s.Streak} in a row on \"{name}\"");
+    }
+
+    /// After a kept or broken run, under the latest accepted terms, so the Owner's edits apply to the next one.
+    private void Recur(PairingState pairing, string id, OathState s)
+    {
+        if (s.StopRenewing || pairing.Rulebook.Accepted?.Oaths.FirstOrDefault(o => o.Id == id) is not { } latest
+            || latest.Recurrence is OathRecurrence.Once or OathRecurrence.Unknown)
+            return;
+        var name = string.IsNullOrWhiteSpace(latest.Name) ? "oath" : latest.Name;
+        var now = Now();
+        if (latest.Recurrence == OathRecurrence.Renew)
+        {
+            StartOath(s, latest, now);
+            // Logged as an acceptance: the Sub swore to the renewals along with the oath.
+            Log(pairing, RulebookEventKind.OathAccepted, id, $"Oath \"{name}\" renewed: {OathText.Describe(latest)}.");
+            return;
+        }
+        s.Status = OathStatus.Offered;
+        s.OfferedUnixSeconds = now;
+        s.ChangedUnixSeconds = now;
+        s.OfferedTermsJson = RulebookJson.Serialize(latest);
+        Log(pairing, RulebookEventKind.OathWithdrawn, id, $"Oath \"{name}\" offered again.");
+        Notify("Oath", $"\"{name}\" is offered to you again. Review it in Rulebook.");
+    }
+
+    /// Lets the current run be the last; it's still judged as usual.
+    public void StopRenewing(PairingState pairing, string oathId)
+    {
+        if (!pairing.Rulebook.Oaths.TryGetValue(oathId, out var s) || s.Status != OathStatus.Open || s.StopRenewing)
+            return;
+        s.StopRenewing = true;
+        Log(pairing, RulebookEventKind.RitualDone, oathId, $"Oath \"{OathName(pairing, oathId)}\" won't renew after this run.");
         config.SaveNow();
     }
 
@@ -514,7 +622,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                     s.CurfewArmed = true;
                 else if (s.CurfewArmed && Watching(s, terms))
                 {
-                    ResolveOath(pairing, id, s, OathStatus.Broken, "logged in during curfew");
+                    // A strike re-arms only once the Sub is seen outside the window again.
+                    s.CurfewArmed = false;
+                    Violate(pairing, id, s, terms, "logged in during curfew");
                     continue;
                 }
             }
@@ -561,9 +671,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 {
                     OathCondition.GreetOwner => "didn't greet their Owner in time",
                     OathCondition.MessageOwner => "didn't message their Owner in time",
+                    OathCondition.DutyQuota => "didn't complete enough duties in time",
                     _ => "didn't log in in time",
                 };
                 s.MissedPeriods++;
+                s.Streak = 0;
                 Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {missed} ({s.PeriodCount}/{needed} this time).");
                 if (terms.LedgerPerMissed != 0)
                     ChangeLedger(pairing, (needed - s.PeriodCount) * terms.LedgerPerMissed, $"missed \"{name}\"", notify: true);
@@ -590,6 +702,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             Notify("Oath", $"\"{name}\" done for now{ledger}.", NotificationType.Success);
         else if (ledger.Length > 0)
             Notify("Oath", $"\"{name}\": {s.PeriodCount}/{needed} done{ledger}.");
+        if (s.PeriodCount == needed)
+            CountStreak(pairing, id, s, terms);
         config.Save();
     }
 
@@ -688,6 +802,11 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private void OnChatMessage(Dalamud.Game.Chat.IChatMessage message)
     {
         var kind = message.LogKind;
+        if (kind == Dalamud.Game.Text.XivChatType.TellIncoming)
+        {
+            OnIncomingTell(message);
+            return;
+        }
         if (Array.IndexOf(SpokenChannels, kind) < 0 || Plugin.ObjectTable.LocalPlayer is not { } me)
             return;
         var text = message.OriginalMessage.ExtractText();
@@ -718,15 +837,40 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                         config.Save();
                         break;
                     case OathCondition.AddressOwner when toOwner && !text.Contains(phrase, StringComparison.OrdinalIgnoreCase):
-                        ResolveOath(pairing, id, s, OathStatus.Broken, $"sent {pairing.PeerName} a tell without calling them \"{phrase}\"");
+                        Violate(pairing, id, s, terms, $"sent {pairing.PeerName} a tell without calling them \"{phrase}\"");
                         break;
                     case OathCondition.ForbiddenWord when phrase.Length > 0 && text.Contains(phrase, StringComparison.OrdinalIgnoreCase):
-                        ResolveOath(pairing, id, s, OathStatus.Broken, $"said \"{phrase}\"");
+                        Violate(pairing, id, s, terms, $"said \"{phrase}\"");
                         break;
                     case OathCondition.QuietInPublic when Array.IndexOf(PublicChannels, kind) >= 0:
-                        ResolveOath(pairing, id, s, OathStatus.Broken, "spoke in public chat");
+                        Violate(pairing, id, s, terms, "spoke in public chat");
                         break;
                 }
+            }
+        }
+    }
+
+    /// Only the Owner's own tell, by name and home world, grants leave.
+    private void OnIncomingTell(Dalamud.Game.Chat.IChatMessage message)
+    {
+        var (name, world) = SenderOf(message.Sender);
+        if (name is null)
+            return;
+        var text = message.Message.TextValue;
+        foreach (var pairing in SubPairings().Where(IsRunning))
+        {
+            if (!string.Equals(name, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
+                || (world is not null && !string.Equals(world, pairing.PeerWorld, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            foreach (var (_, s, terms) in OpenOaths(pairing))
+            {
+                var phrase = terms.Phrase.Trim();
+                if (terms.Condition != OathCondition.AskBeforeLogoff || phrase.Length == 0 || !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                s.LeaveGrantedUntilUnixSeconds = Now() + terms.LeaveWindowMinutes * 60L;
+                var until = DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime();
+                Notify("Leave granted", $"{pairing.PeerName} lets you log off until {until:HH:mm}.", NotificationType.Success);
+                config.Save();
             }
         }
     }
@@ -747,8 +891,12 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         var cutoff = Now() - RulebookLimits.GoodnightWindowMinutes * 60L;
         foreach (var pairing in SubPairings().Where(IsRunning))
             foreach (var (id, s, terms) in OpenOaths(pairing))
+            {
                 if (terms.Condition == OathCondition.SayGoodnight && s.LastMatchUnixSeconds < cutoff)
-                    ResolveOath(pairing, id, s, OathStatus.Broken, $"logged off without telling {pairing.PeerName} goodnight");
+                    Violate(pairing, id, s, terms, $"logged off without telling {pairing.PeerName} goodnight");
+                else if (terms.Condition == OathCondition.AskBeforeLogoff && Now() >= s.LeaveGrantedUntilUnixSeconds)
+                    Violate(pairing, id, s, terms, $"logged off without {pairing.PeerName}'s leave");
+            }
     }
 
     private static bool InCurfew(Oath terms)
@@ -773,6 +921,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             }
             config.Save();
         }
+        CheckJobLocks();
     }
 
     private void OnDutyWiped()
@@ -781,7 +930,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         {
             foreach (var (id, s, terms) in OpenOaths(pairing))
                 if (terms.Condition == OathCondition.NoWipes && Watching(s, terms))
-                    ResolveOath(pairing, id, s, OathStatus.Broken, "the party wiped");
+                    Violate(pairing, id, s, terms, "the party wiped");
             if (pairing.Rulebook.Accepted?.DrawOn.Wipe == true)
                 DrawForEvent(pairing, CardPile.Punishment, "a wipe");
         }
@@ -805,10 +954,29 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                         continue;
                     }
                 }
+                if (terms.Condition == OathCondition.DutyQuota && (terms.Places.Count == 0 || RulebookPlaces.MatchesAny(terms.Places, events.CurrentTerritory))
+                    && !(s.ScopeEndsUnixSeconds is { } ends && now >= ends))
+                    CountRitual(pairing, id, s, terms, $"completed {RulebookPlaces.TerritoryName(events.CurrentTerritory)}");
                 if (terms.Scope == OathScope.NextDuty)
                     ResolveOath(pairing, id, s, OathStatus.Kept, "the duty was completed");
             }
         }
+    }
+
+    private void OnJobChanged(uint job)
+    {
+        if (events.InStartedDuty)
+            CheckJobLocks();
+    }
+
+    /// Checked at duty start and on a job change inside the duty.
+    private void CheckJobLocks()
+    {
+        var job = events.CurrentJob;
+        foreach (var pairing in SubPairings().Where(IsRunning))
+            foreach (var (id, s, terms) in OpenOaths(pairing))
+                if (terms.Condition == OathCondition.JobLock && Watching(s, terms) && !Jobs.IsAllowed(terms.JobIds, job))
+                    Violate(pairing, id, s, terms, $"entered a duty as {Jobs.Name(job)}");
     }
 
     private void OnDutyAbandoned()
@@ -829,7 +997,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         {
             foreach (var (id, s, terms) in OpenOaths(pairing))
                 if (terms.Condition == OathCondition.NoDeaths && Watching(s, terms))
-                    ResolveOath(pairing, id, s, OathStatus.Broken, "your character died");
+                    Violate(pairing, id, s, terms, "your character died");
             if (pairing.Rulebook.Accepted?.DrawOn.Death == true)
                 DrawForEvent(pairing, CardPile.Punishment, "your character dying");
         }
@@ -841,14 +1009,18 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     {
         foreach (var pairing in SubPairings().Where(IsRunning))
         {
+            if (from == 0)
+                foreach (var rule in pairing.Rulebook.Accepted!.Times.Where(t => t.Trigger == TimeTrigger.OnLogin))
+                    Fire(pairing, rule.Id, $"{RuleName(rule.Name, "Time rule")} (logged in)", rule.Consequence, rule.Id, rule.CooldownSeconds);
+
             foreach (var (id, s, terms) in OpenOaths(pairing))
             {
                 if (!Watching(s, terms) || from == 0)
                     continue;
                 if (terms.Condition == OathCondition.StayInPlaces && !RulebookPlaces.MatchesAny(terms.Places, to))
-                    ResolveOath(pairing, id, s, OathStatus.Broken, $"entered {RulebookPlaces.TerritoryName(to)}");
+                    Violate(pairing, id, s, terms, $"entered {RulebookPlaces.TerritoryName(to)}");
                 else if (terms.Condition == OathCondition.AvoidPlaces && RulebookPlaces.MatchesAny(terms.Places, to))
-                    ResolveOath(pairing, id, s, OathStatus.Broken, $"entered {RulebookPlaces.TerritoryName(to)}");
+                    Violate(pairing, id, s, terms, $"entered {RulebookPlaces.TerritoryName(to)}");
             }
 
             foreach (var rule in pairing.Rulebook.Accepted!.Places)
@@ -862,6 +1034,79 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                     Fire(pairing, rule.Id, $"{name} (left)", rule.Leave, rule.Id + ":leave", rule.CooldownSeconds);
             }
         }
+    }
+
+    private static string RuleName(string name, string fallback) => string.IsNullOrWhiteSpace(name) ? fallback : name;
+
+    // ---- Time rules ----
+
+    /// Fires once per chosen day, when logged in within the window after its time; a missed day isn't made up.
+    private void TickTimeRules(PairingState pairing)
+    {
+        if (pairing.Rulebook.Accepted is not { Times.Count: > 0 } doc || Plugin.ObjectTable.LocalPlayer is null)
+            return;
+        var local = DateTime.Now;
+        var minute = local.Hour * 60 + local.Minute;
+        var today = local.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var lastFired = pairing.Rulebook.TimeRuleLastFired;
+        foreach (var rule in doc.Times)
+        {
+            if (rule.Trigger != TimeTrigger.AtTime || !TimeRules.On(rule.Weekdays, local.DayOfWeek)
+                || minute < rule.Minutes || minute >= rule.Minutes + RulebookLimits.TimeRuleWindowMinutes
+                || (lastFired.TryGetValue(rule.Id, out var date) && date == today))
+                continue;
+            lastFired[rule.Id] = today;
+            Fire(pairing, rule.Id, $"{RuleName(rule.Name, "Time rule")} ({OathText.Clock(rule.Minutes)})", rule.Consequence, rule.Id, rule.CooldownSeconds);
+            config.Save();
+        }
+    }
+
+    // ---- Shop ----
+
+    /// Null when the item can be bought now, otherwise why not.
+    public string? BuyBlocker(PairingState pairing, ShopItem item)
+    {
+        if (!IsRunning(pairing))
+            return "Your rulebook isn't running.";
+        var state = pairing.Rulebook;
+        if (state.LedgerScore < item.Price)
+            return $"{item.Price - state.LedgerScore} more points needed.";
+        if (ShopCooldownLeft(pairing, item) is { } left)
+            return $"Available again in {RestraintLock.Format(left)}.";
+        if (item.DrawReward && !HasCards(pairing, CardPile.Reward))
+            return "There are no reward cards left.";
+        return null;
+    }
+
+    public TimeSpan? ShopCooldownLeft(PairingState pairing, ShopItem item)
+    {
+        if (item.CooldownSeconds <= 0 || !pairing.Rulebook.ShopLastBought.TryGetValue(item.Id, out var last))
+            return null;
+        var left = last + item.CooldownSeconds - Now();
+        return left > 0 ? TimeSpan.FromSeconds(left) : null;
+    }
+
+    private static bool HasCards(PairingState pairing, CardPile pile) =>
+        pairing.Rulebook.Accepted?.Deck.Any(c => c.Pile == pile && !pairing.Rulebook.RemovedOnceCards.Contains(c.Id)) == true;
+
+    /// The Sub's own Buy click is the only caller; nothing that arrives by chat or runs from a rule reaches this.
+    /// Every check happens before the points are taken.
+    public string? Buy(PairingState pairing, string itemId)
+    {
+        if (pairing.Rulebook.Accepted?.Shop.FirstOrDefault(i => i.Id == itemId) is not { } item)
+            return "That item isn't in the shop any more.";
+        if (BuyBlocker(pairing, item) is { } blocked)
+            return blocked;
+        var name = RuleName(item.Name, "Shop item");
+        pairing.Rulebook.ShopLastBought[item.Id] = Now();
+        ChangeLedger(pairing, -item.Price, $"bought \"{name}\"", notify: false);
+        if (item.DrawReward)
+            Draw(pairing, CardPile.Reward, $"buying \"{name}\"");
+        else
+            Fire(pairing, item.Id, $"Bought \"{name}\"", item.Consequence, null, 0);
+        Notify("Bought", $"\"{name}\" for {item.Price} points.", NotificationType.Success);
+        config.SaveNow();
+        return null;
     }
 
     // ---- Presence ----
@@ -921,6 +1166,124 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 }
             }
         }
+    }
+
+    /// Judged only while the Owner is loaded nearby; anywhere else there's nothing to stay beside.
+    private void TickSideOaths(PairingState pairing)
+    {
+        var distance = OwnerDistance(pairing);
+        var inDuty = RulebookPlaces.IsDuty(Plugin.ClientState.TerritoryType);
+        var now = Now();
+        foreach (var (id, s, terms) in OpenOaths(pairing))
+        {
+            if (terms.Condition != OathCondition.StayAtSide || !Watching(s, terms))
+                continue;
+            if (distance is not { } d || !events.Settled || (terms.SkipInDuties && inDuty) || d <= terms.RangeYalms)
+            {
+                s.GraceEndsUnixSeconds = null;
+                continue;
+            }
+            var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+            if (s.GraceEndsUnixSeconds is not { } graceEnds)
+            {
+                s.GraceEndsUnixSeconds = now + terms.GraceSeconds;
+                Notify("Oath", $"\"{name}\": get back within {terms.RangeYalms:0} yalms of {pairing.PeerName} within {OathText.Grace(terms)}.", NotificationType.Warning);
+            }
+            else if (now >= graceEnds)
+            {
+                s.GraceEndsUnixSeconds = null;
+                Violate(pairing, id, s, terms, $"strayed from {pairing.PeerName}");
+            }
+        }
+    }
+
+    // ---- Keep it on ----
+
+    /// Remembers the slots the Owner's outfit set, read back once Glamourer has applied it.
+    private void OnOwnerDesignApplied(Guid pairingId, Guid designId, string designName)
+    {
+        if (config.FindPairingById(pairingId) is not { Direction: PairingDirection.SubSide } pairing)
+            return;
+        var slots = glamourer.GetDesignEquipSlots(designId);
+        Plugin.Framework.RunOnTick(() =>
+        {
+            var snapshot = new OwnerOutfitSnapshot { DesignId = designId, DesignName = designName };
+            foreach (var slot in slots)
+                if (glamourer.GetEquipSlotValue(slot) is { } value)
+                    snapshot.Slots[(int)slot] = value.ItemId;
+            pairing.Rulebook.OwnerOutfit = snapshot;
+            foreach (var (_, s, _) in OpenOaths(pairing))
+                s.GraceEndsUnixSeconds = null;
+            config.Save();
+        }, OutfitSettleDelay);
+    }
+
+    private static readonly TimeSpan OutfitSettleDelay = TimeSpan.FromSeconds(2);
+
+    /// Panic and revert all take the outfit off on purpose; until the Owner sends another there's nothing to keep on.
+    private void ForgetOwnerOutfits()
+    {
+        foreach (var pairing in SubPairings())
+        {
+            pairing.Rulebook.OwnerOutfit = null;
+            foreach (var (_, s, _) in OpenOaths(pairing))
+                s.GraceEndsUnixSeconds = null;
+        }
+        config.Save();
+    }
+
+    /// Slots another lock holds (a restraint, the collar) are Oathbound's own doing, not the Sub's.
+    private List<Glamourer.Api.Enums.ApiEquipSlot> OutfitSlotsOff(OwnerOutfitSnapshot snapshot)
+    {
+        var off = new List<Glamourer.Api.Enums.ApiEquipSlot>();
+        foreach (var (slotNumber, itemId) in snapshot.Slots)
+        {
+            var slot = (Glamourer.Api.Enums.ApiEquipSlot)slotNumber;
+            if (slotLocks.LockOwner(slot) is { } owner && owner != Commands.OutfitCommand.SlotLockOwner)
+                continue;
+            if (glamourer.GetEquipSlotValue(slot) is { } current && current.ItemId != itemId)
+                off.Add(slot);
+        }
+        return off;
+    }
+
+    private void TickKeepItOn(PairingState pairing)
+    {
+        if (pairing.Rulebook.OwnerOutfit is not { } snapshot)
+            return;
+        List<Glamourer.Api.Enums.ApiEquipSlot>? off = null;
+        var now = Now();
+        foreach (var (id, s, terms) in OpenOaths(pairing))
+        {
+            if (terms.Condition != OathCondition.KeepItOn || !Watching(s, terms) || !events.Settled)
+                continue;
+            off ??= OutfitSlotsOff(snapshot);
+            if (off.Count == 0)
+            {
+                s.GraceEndsUnixSeconds = null;
+                continue;
+            }
+            var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
+            if (s.GraceEndsUnixSeconds is not { } graceEnds)
+            {
+                s.GraceEndsUnixSeconds = now + terms.GraceSeconds;
+                Notify("Oath", $"\"{name}\": {snapshot.DesignName} came off. Put it back on within {OathText.Grace(terms)} (Rulebook > Your oaths).", NotificationType.Warning);
+                config.Save();
+            }
+            else if (now >= graceEnds)
+            {
+                s.GraceEndsUnixSeconds = null;
+                Violate(pairing, id, s, terms, $"took off {snapshot.DesignName}");
+            }
+        }
+    }
+
+    /// Null when the outfit could be applied again, otherwise why not.
+    public string? PutBackOn(PairingState pairing)
+    {
+        if (pairing.Rulebook.OwnerOutfit is not { } snapshot)
+            return "There's no outfit from your Owner to put back on.";
+        return outfit.Reapply(snapshot.DesignId) ? null : "Glamourer couldn't apply it.";
     }
 
     /// Each part needs the Sub's own permission for it, exactly as if the Owner had sent it; a missing one is logged, not run.
@@ -1119,6 +1482,13 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     {
         if (pairing is { Direction: PairingDirection.OwnerSide, IsPaired: true, PeerName: { } name, PeerWorld: { } world })
             sender.Send(composer.ComposeRulebookNudge(name, world));
+    }
+
+    /// Owner's Grant leave button: a plain tell with the oath's grant word, only on that click.
+    public void SendGrantLeave(PairingState pairing, string word)
+    {
+        if (pairing is { Direction: PairingDirection.OwnerSide, IsPaired: true, PeerName: { } name, PeerWorld: { } world } && word.Trim().Length > 0)
+            sender.Send(composer.ComposePresenceTell(name, world, word.Trim()));
     }
 
     /// Owner: send `deck draw <pile>` or `ledger ±n reason` to the active Sub like any other command.

@@ -45,11 +45,40 @@ public sealed class SubRuntimeState
         set
         {
             config.RestraintsForceLocked = value;
-            // Every path that clears the lock also discards its timer, so a stale end time can never fire.
+            // Every path that clears the lock also discards its timer and struggle state, so neither outlives it.
             if (!value)
+            {
                 config.RestraintsLockExpiresAtUtc = null;
+                config.RestraintsStruggleLevel = Commands.StruggleLevel.None;
+                config.RestraintsStrugglePenaltyMinutes = 0;
+                config.RestraintsStruggleNextTryUtc = null;
+                config.RestraintsLockedByPairingId = null;
+            }
             config.Save();
         }
+    }
+
+    public Commands.StruggleSetting RestraintsStruggle
+    {
+        get => new(config.RestraintsStruggleLevel, config.RestraintsStrugglePenaltyMinutes);
+        set
+        {
+            config.RestraintsStruggleLevel = value.Level;
+            config.RestraintsStrugglePenaltyMinutes = value.PenaltyMinutes;
+            config.Save();
+        }
+    }
+
+    public DateTime? RestraintsStruggleNextTryUtc
+    {
+        get => config.RestraintsStruggleNextTryUtc;
+        set { config.RestraintsStruggleNextTryUtc = value; config.Save(); }
+    }
+
+    public Guid? RestraintsLockedByPairingId
+    {
+        get => config.RestraintsLockedByPairingId;
+        set { config.RestraintsLockedByPairingId = value; config.Save(); }
     }
 
     /// Null for a Permanent (or no) lock.

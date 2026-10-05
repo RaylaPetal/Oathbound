@@ -66,11 +66,62 @@ public static class OwnerLockOption
         var width = spacing + InlineFieldWidth;
         if (cmd.LockSeconds is not null)
             width += spacing + InlineFieldWidth + spacing + ImGui.CalcTextSize(IsGesture(cmd.Command) ? "sec" : "min").X;
+        if (!IsGesture(cmd.Command) && RestraintStruggle.Accepts(cmd.Command))
+            width += spacing + InlineFieldWidth + (cmd.Struggle != StruggleLevel.None && cmd.LockSeconds is not null ? spacing + InlineFieldWidth : 0);
         return width;
     }
 
-    /// Saves straight onto `cmd.LockSeconds`.
+    private const string StruggleHelpText = "Whether your Sub may try to struggle free of this lock: one roll per try, with a wait between tries. Getting free takes the restraints off and tells you. A Sub on an older Oathbound version just can't struggle.";
+
+    /// Saves straight onto `cmd.LockSeconds`, and for a restraint its struggle setting.
     public static void DrawInline(string id, QuickCommand cmd, PluginConfig config)
+    {
+        DrawLockInline(id, cmd, config);
+        if (IsGesture(cmd.Command) || !RestraintStruggle.Accepts(cmd.Command))
+            return;
+        var level = (int)cmd.Struggle;
+        Layout.ContinueRowOrWrap(InlineFieldWidth);
+        ImGui.SetNextItemWidth(InlineFieldWidth);
+        if (ImGui.Combo($"##ownerStruggleInline_{id}", ref level, RestraintStruggle.LevelNames, RestraintStruggle.LevelNames.Length))
+        {
+            cmd.Struggle = (StruggleLevel)level;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(cmd.Struggle == StruggleLevel.None ? StruggleHelpText : RestraintStruggle.Describe(cmd.StruggleSetting));
+        if (cmd.Struggle == StruggleLevel.None || cmd.LockSeconds is null)
+            return;
+        var penalty = cmd.StrugglePenaltyMinutes;
+        Layout.ContinueRowOrWrap(InlineFieldWidth);
+        ImGui.SetNextItemWidth(InlineFieldWidth);
+        if (ImGui.InputInt($"##ownerStrugglePenalty_{id}", ref penalty, 1, 5))
+        {
+            cmd.StrugglePenaltyMinutes = Math.Clamp(penalty, 0, RestraintStruggle.MaxPenaltyMinutes);
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Minutes added to the timer for each failed try (0 for none).");
+    }
+
+    /// For editors that keep the setting themselves. Returns true when it changed.
+    public static bool DrawStruggle(string id, ref StruggleLevel level, ref int penaltyMinutes, bool timed)
+    {
+        var before = (level, penaltyMinutes);
+        var index = (int)level;
+        Layout.ItemWidth(140);
+        if (ImGui.Combo($"Struggle##ownerStruggle_{id}", ref index, RestraintStruggle.LevelNames, RestraintStruggle.LevelNames.Length))
+            level = (StruggleLevel)index;
+        IconGlyph.HelpMarker(level == StruggleLevel.None ? StruggleHelpText : $"{RestraintStruggle.Describe(new StruggleSetting(level, penaltyMinutes))}. {StruggleHelpText}");
+        if (level != StruggleLevel.None && timed)
+        {
+            Layout.ItemWidth(120);
+            if (ImGui.InputInt($"min per failed try##ownerStrugglePenalty_{id}", ref penaltyMinutes, 1, 5))
+                penaltyMinutes = Math.Clamp(penaltyMinutes, 0, RestraintStruggle.MaxPenaltyMinutes);
+        }
+        return (level, penaltyMinutes) != before;
+    }
+
+    private static void DrawLockInline(string id, QuickCommand cmd, PluginConfig config)
     {
         var gesture = IsGesture(cmd.Command);
         var names = gesture ? GestureModeNames : ModeNames;

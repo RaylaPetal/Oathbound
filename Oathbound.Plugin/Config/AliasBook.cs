@@ -120,6 +120,10 @@ public class CustomTriggerAction
     public bool RestraintRulesOnly { get; set; }
     public Glamourer.Api.Enums.ApiEquipSlot? RestraintSlot { get; set; }
 
+    /// Read from an Owner's bundle as it arrives; never saved.
+    [Newtonsoft.Json.JsonIgnore]
+    public Commands.StruggleSetting RestraintStruggle { get; set; }
+
     // Sent verbatim to any channel; gated at apply time.
     public string ChatText { get; set; } = "";
 }

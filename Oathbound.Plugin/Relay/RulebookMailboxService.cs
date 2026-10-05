@@ -229,7 +229,8 @@ public sealed class RulebookMailboxService
         try
         {
             using var parsed = JsonDocument.Parse(json);
-            if (!parsed.RootElement.TryGetProperty("schemaVersion", out var sv) || sv.GetInt32() != RulebookDocument.CurrentSchemaVersion)
+            if (!parsed.RootElement.TryGetProperty("schemaVersion", out var sv)
+                || sv.GetInt32() is < RulebookDocument.MinSchemaVersion or > RulebookDocument.CurrentSchemaVersion)
                 reason = "it needs a newer plugin version";
             else
                 doc = RulebookJson.Deserialize(json);
@@ -305,6 +306,7 @@ public sealed class RulebookMailboxService
         var result = await SendAsync(pairing, RulebookChannels.Rulebook, pairing.Rulebook.PublishedVersion, sequence =>
         {
             doc.Version = sequence;
+            doc.SchemaVersion = doc.RequiredSchemaVersion;
             return Encoding.UTF8.GetBytes(RulebookJson.Serialize(doc));
         }, ct).ConfigureAwait(false);
 
@@ -346,6 +348,7 @@ public sealed class RulebookMailboxService
     {
         var copy = draft.Clone();
         copy.Version = 0;
+        copy.SchemaVersion = 0;
         return RelayCrypto.Sha256Hex(RulebookJson.Serialize(copy));
     }
 

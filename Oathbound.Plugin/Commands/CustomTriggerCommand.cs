@@ -98,6 +98,7 @@ public sealed class CustomTriggerCommand
                     if (!(config.Permissions.Restraints && config.TosAcknowledged)) { skipped.Add("restraint (permission/acknowledgement)"); break; }
                     // Which devices this action added - revert releases exactly these.
                     var activeBefore = restraints.ActiveDeviceIds.ToHashSet();
+                    restraints.PendingStruggle = action.RestraintStruggle;
                     // Apply-only: the bundle is an Owner command, so never route through the Sub's Toggle (refused while force-locked).
                     // A self-contained copy carries its own rules and needs no lookup.
                     var restraintOk = action.RestraintRules is { } inlineRules
@@ -239,6 +240,40 @@ public sealed class CustomTriggerCommand
         return $"customtrigger cast \"{label}\" {string.Join(';', segments)}";
     }
 
+    /// A restraint action that carries its rules, which is where a struggle setting can travel.
+    public static bool HasInlineRestraintRules(string command)
+    {
+        const string word = "customtrigger ";
+        var t = command.Trim();
+        if (!t.StartsWith(word, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var rest = LockTimerOption.Strip(t[word.Length..], out _).TrimStart();
+        return rest.StartsWith("cast ", StringComparison.OrdinalIgnoreCase)
+            && TryParseCastCommand(rest["cast ".Length..], out _, out var actions)
+            && actions.Any(a => a.Kind == CustomTriggerActionKind.Restraint && a.RestraintRules is not null);
+    }
+
+    /// Appends `tokens` to the rule list of every inline-rules restraint segment, leaving every other byte as it was.
+    public static string AppendRestraintRuleTokens(string command, string tokens)
+    {
+        var segments = command.Split(';');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            // The chat text is free text and always last.
+            if (segments[i].StartsWith("chat=", StringComparison.OrdinalIgnoreCase))
+                break;
+            var start = segments[i].IndexOf("restraint=", StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+                continue;
+            var parts = segments[i][(start + "restraint=".Length)..].Split('|');
+            if (parts.Length != 3 || !TryDecodeText(parts[2], out var ruleTokens))
+                continue;
+            parts[2] = EncodeText(ruleTokens.Length > 0 ? $"{ruleTokens},{tokens}" : tokens);
+            segments[i] = segments[i][..(start + "restraint=".Length)] + string.Join('|', parts);
+        }
+        return string.Join(';', segments);
+    }
+
     /// Fails closed on any malformed segment, unknown kind, or an empty bundle.
     public static bool TryParseCastCommand(string remainder, out string label, out List<CustomTriggerAction> actions)
     {
@@ -332,7 +367,7 @@ public sealed class CustomTriggerCommand
                             if (reference[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
                             {
                                 if (!ulong.TryParse(reference[2], out var inlineItemId) || inlineItemId == 0) return false;
-                                actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Restraint, RestraintCatalogId = reference[1], RestraintItemId = inlineItemId, RestraintDeviceName = deviceName, RestraintRules = inlineRules });
+                                actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Restraint, RestraintCatalogId = reference[1], RestraintItemId = inlineItemId, RestraintDeviceName = deviceName, RestraintRules = inlineRules, RestraintStruggle = RestraintStruggle.FromRuleTokens(ruleTokens) });
                             }
                             else if (reference[0].Equals("wear", StringComparison.OrdinalIgnoreCase))
                             {
@@ -344,7 +379,7 @@ public sealed class CustomTriggerCommand
                                 }
                                 ulong wearItem = 0;
                                 if (reference[2] != "-" && !ulong.TryParse(reference[2], out wearItem)) return false;
-                                actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Restraint, RestraintDeviceName = deviceName, RestraintRules = inlineRules, RestraintRulesOnly = true, RestraintSlot = wearSlot, RestraintItemId = wearItem });
+                                actions.Add(new CustomTriggerAction { Kind = CustomTriggerActionKind.Restraint, RestraintDeviceName = deviceName, RestraintRules = inlineRules, RestraintRulesOnly = true, RestraintSlot = wearSlot, RestraintItemId = wearItem, RestraintStruggle = RestraintStruggle.FromRuleTokens(ruleTokens) });
                             }
                             else
                             {

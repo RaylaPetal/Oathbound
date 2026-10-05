@@ -15,8 +15,12 @@ public sealed class RulebookGameEvents : IDisposable
     public event Action? LocalDeath;
     /// (from, to) once the character is ready in the new territory; from is 0 right after login.
     public event Action<uint, uint>? TerritoryEntered;
+    /// The local player's ClassJob changed while ready in the world.
+    public event Action<uint>? JobChanged;
 
     private uint readyTerritory;
+    private uint job;
+    private DateTime unsettledUntilUtc;
     private uint dutyTerritory;
     private bool dutyCompleted;
     private bool wasAlive;
@@ -41,12 +45,20 @@ public sealed class RulebookGameEvents : IDisposable
 
     public bool InStartedDuty => dutyTerritory != 0 && !dutyCompleted;
 
+    public uint CurrentJob => job;
+
+    /// Glamourer and gearsets re-apply gear for a moment after a job change, a login or an area change.
+    private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(5);
+
+    public bool Settled => readyTerritory != 0 && DateTime.UtcNow >= unsettledUntilUtc && !ShouldHoldConsequences();
+
     /// Logging out is not leaving: no leave consequences, and the next login counts as entering.
     private void OnLogout(int type, int code)
     {
         readyTerritory = 0;
         dutyTerritory = 0;
         wasAlive = false;
+        job = 0;
     }
 
     private void OnDutyStarted(IDutyStateEventArgs args)
@@ -71,11 +83,22 @@ public sealed class RulebookGameEvents : IDisposable
             || Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51])
             return;
 
+        var currentJob = player.ClassJob.RowId;
+        if (currentJob != job)
+        {
+            var hadJob = job != 0;
+            job = currentJob;
+            unsettledUntilUtc = DateTime.UtcNow + SettleTime;
+            if (hadJob)
+                JobChanged?.Invoke(currentJob);
+        }
+
         var territory = (uint)Plugin.ClientState.TerritoryType;
         if (territory != readyTerritory)
         {
             var from = readyTerritory;
             readyTerritory = territory;
+            unsettledUntilUtc = DateTime.UtcNow + SettleTime;
             if (dutyTerritory != 0 && territory != dutyTerritory)
             {
                 var abandoned = !dutyCompleted;

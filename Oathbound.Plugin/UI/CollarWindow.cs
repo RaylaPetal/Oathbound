@@ -106,6 +106,7 @@ public class CollarWindow : Window, IDisposable
         TutorialService.AnchorRect(TutorialAnchors.NavFavorites, LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, 0), LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, titleBarHeight));
 
         DrawCharacterHeader();
+        moduleWindow.DrawStruggleRow("header");
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.

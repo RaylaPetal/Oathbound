@@ -115,6 +115,16 @@ public sealed class RestraintCommand
 
     /// Engaged restraints, oldest first, with the rules each was engaged with (an Owner's rules can replace the Sub's).
     public IReadOnlyList<(string Id, IReadOnlyList<RestraintRuleAssignment> Rules)> Engaged => engaged;
+
+    /// The heaviest level among active Gagged rules; Heavy when none says otherwise.
+    public GagLevel ActiveGagLevel
+    {
+        get
+        {
+            var gags = engaged.SelectMany(e => e.Rules).Where(r => r.Kind == RestraintRuleKind.Gagged).ToList();
+            return gags.Count == 0 ? GagLevel.Heavy : (GagLevel)gags.Min(r => (int)r.GagLevel);
+        }
+    }
     private readonly List<(string Id, IReadOnlyList<RestraintRuleAssignment> Rules)> engaged = new();
 
     /// What the engaged restraints' cuff rules draw.
@@ -390,11 +400,56 @@ public sealed class RestraintCommand
         return true;
     }
 
+    /// Set by the Owner command's dispatch just before it applies; the lock it engages takes them over.
+    public StruggleSetting PendingStruggle { get; set; }
+    public Guid? PendingLockPairingId { get; set; }
+
+    /// (pairing that set the lock) after the Sub struggled free.
+    public event Action<Guid?>? StruggledFree;
+
     /// Only called after an Owner command actually applied, so a refused command leaves the lock untouched.
     private void EngageLock(RestraintLock restraintLock)
     {
         runtimeState.RestraintsForceLocked = true;
         runtimeState.RestraintsLockExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
+        // The latest lock command decides, so one without a struggle setting takes struggling away.
+        runtimeState.RestraintsStruggle = PendingStruggle;
+        runtimeState.RestraintsStruggleNextTryUtc = null;
+        runtimeState.RestraintsLockedByPairingId = PendingLockPairingId;
+    }
+
+    public StruggleSetting? StruggleAvailable =>
+        runtimeState.RestraintsForceLocked && runtimeState.RestraintsStruggle is { Allowed: true } s ? s : null;
+
+    /// Null while the Sub may try now.
+    public TimeSpan? StruggleWait =>
+        runtimeState.RestraintsStruggleNextTryUtc is { } next && next > DateTime.UtcNow ? next - DateTime.UtcNow : null;
+
+    /// The Sub's own click only. One roll; an escape releases exactly as a timer running out does.
+    public LocalTestResult Struggle()
+    {
+        if (StruggleAvailable is not { } setting)
+            return LocalTestResult.Fail("Your restraints can't be struggled against.");
+        if (StruggleWait is { } wait)
+            return LocalTestResult.Fail($"You can try again in {RestraintLock.Format(wait)}.");
+        if (Random.Shared.NextDouble() < RestraintStruggle.Chance(setting.Level))
+        {
+            var lockedBy = runtimeState.RestraintsLockedByPairingId;
+            Plugin.Log.Information("Struggled free of restraints.");
+            ForceUnlock();
+            StruggledFree?.Invoke(lockedBy);
+            return LocalTestResult.Ok("You struggled free!");
+        }
+        runtimeState.RestraintsStruggleNextTryUtc = DateTime.UtcNow + RestraintStruggle.Wait(setting.Level);
+        var penalty = "";
+        if (setting.PenaltyMinutes > 0 && runtimeState.RestraintsLockExpiresAtUtc is { } expiresAt)
+        {
+            var max = DateTime.UtcNow + RestraintLock.MaxDuration;
+            var shifted = expiresAt.AddMinutes(setting.PenaltyMinutes);
+            runtimeState.RestraintsLockExpiresAtUtc = shifted > max ? max : shifted;
+            penalty = $" The lock tightened: +{setting.PenaltyMinutes}m.";
+        }
+        return LocalTestResult.Fail($"The restraints hold.{penalty} Try again in {RestraintLock.Format(RestraintStruggle.Wait(setting.Level))}.");
     }
 
     public const int MinTimerAdjustSeconds = 60;
@@ -760,6 +815,9 @@ public sealed class RestraintCommand
                 yield return string.IsNullOrWhiteSpace(r.AnimationId) ? "gagged" : $"gagged={ReadableAnimation(r)}";
                 if (!string.IsNullOrWhiteSpace(r.CustomizePresetId))
                     yield return $"gagcplus={ReadableCustomizePreset(r)}";
+                // Heavy sends nothing, so it stays byte-for-byte what older Subs know; they skip this and gag at Heavy.
+                if (r.GagLevel != GagLevel.Heavy)
+                    yield return $"{GagLevelToken}{(r.GagLevel == GagLevel.Light ? "light" : "medium")}";
                 break;
             case RestraintRuleKind.ArmsCuffed:
                 yield return CuffToken("armscuffed", r);
@@ -779,6 +837,8 @@ public sealed class RestraintCommand
     /// Bare when there's no animation (drawn rules-only cuffs); an older Sub only knows the `=` form and skips it.
     private static string CuffToken(string name, RestraintRuleAssignment r) =>
         string.IsNullOrWhiteSpace(r.AnimationId) && string.IsNullOrWhiteSpace(r.AnimationLabel) ? name : $"{name}={ReadableAnimation(r)}";
+
+    private const string GagLevelToken = "gaglevel=";
 
     /// One per drawn cuff rule; an older Sub skips them.
     private const string DrawArmsToken = "drawarms";
@@ -941,6 +1001,14 @@ public sealed class RestraintCommand
             {
                 if (rules.LastOrDefault(r => r.Kind == RestraintRuleKind.Gagged) is { } gagged)
                     gagged.CustomizePresetId = token["gagcplus=".Length..];
+            }
+            else if (token.StartsWith(GagLevelToken, StringComparison.OrdinalIgnoreCase))
+            {
+                var level = token[GagLevelToken.Length..];
+                if (rules.LastOrDefault(r => r.Kind == RestraintRuleKind.Gagged) is { } gagged)
+                    gagged.GagLevel = level.Equals("light", StringComparison.OrdinalIgnoreCase) ? GagLevel.Light
+                        : level.Equals("medium", StringComparison.OrdinalIgnoreCase) ? GagLevel.Medium
+                        : GagLevel.Heavy;
             }
             else if (token.StartsWith("armscuffed=", StringComparison.OrdinalIgnoreCase))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ArmsCuffed, AnimationId = token["armscuffed=".Length..] });

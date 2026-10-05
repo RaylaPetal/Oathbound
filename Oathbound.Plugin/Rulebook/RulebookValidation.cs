@@ -6,8 +6,13 @@ namespace Oathbound.Plugin.Rulebook;
 /// Whole-document checks: the Owner can't publish what fails here, and the Sub refuses a version that fails here.
 public static class RulebookValidation
 {
+    public const string NeedsNewerVersion = "it uses something this version of Oathbound doesn't know - update Oathbound to accept it";
+
     public static string? Check(RulebookDocument doc)
     {
+        if (HasUnknownValues(doc))
+            return NeedsNewerVersion;
+
         var ids = new HashSet<string>();
         foreach (var (id, name) in doc.AllRules())
         {
@@ -72,17 +77,82 @@ public static class RulebookValidation
                 return $"Threshold \"{Label(t.Name)}\": {e}";
         }
 
+        if (doc.Times.Count > RulebookLimits.MaxTimeRules)
+            return $"More than {RulebookLimits.MaxTimeRules} time rules.";
+        foreach (var t in doc.Times)
+        {
+            if (t.Trigger == TimeTrigger.AtTime && (t.Minutes is < 0 or >= 1440 || (t.Weekdays & TimeRules.EveryDay) == 0))
+                return $"Time rule \"{Label(t.Name)}\" needs a time and at least one day.";
+            if (t.Consequence.Count == 0)
+                return $"Time rule \"{Label(t.Name)}\" does nothing.";
+            if ((CheckCooldown(t.CooldownSeconds) ?? ConsequenceValidator.CheckAll(t.Consequence)) is { } e)
+                return $"Time rule \"{Label(t.Name)}\": {e}";
+        }
+
+        if (doc.Shop.Count > RulebookLimits.MaxShopItems)
+            return $"The shop holds more than {RulebookLimits.MaxShopItems} items.";
+        foreach (var i in doc.Shop)
+        {
+            if (string.IsNullOrWhiteSpace(i.Name))
+                return "Every shop item needs a name.";
+            if (i.Price is < RulebookLimits.MinPrice or > RulebookLimits.MaxPrice)
+                return $"Shop item \"{Label(i.Name)}\": the price must be {RulebookLimits.MinPrice}-{RulebookLimits.MaxPrice}.";
+            if (!i.DrawReward && i.Consequence.Count == 0)
+                return $"Shop item \"{Label(i.Name)}\" gives nothing.";
+            if (i.DrawReward && i.Consequence.Count > 0)
+                return $"Shop item \"{Label(i.Name)}\": draw a card or run something, not both.";
+            if (i.CooldownSeconds != 0 && CheckCooldown(i.CooldownSeconds) is { } cooldownError)
+                return $"Shop item \"{Label(i.Name)}\": {cooldownError}";
+            if (ConsequenceValidator.CheckAll(i.Consequence) is { } e)
+                return $"Shop item \"{Label(i.Name)}\": {e}";
+        }
+
         return CheckCooldown(doc.DrawOn.CooldownSeconds) is { } drawError ? $"Deck draws: {drawError}" : null;
     }
 
+    /// Values a newer Owner wrote that this version read as Unknown.
+    private static bool HasUnknownValues(RulebookDocument doc) =>
+        doc.Oaths.Any(o => o.Condition == OathCondition.Unknown || o.Scope == OathScope.Unknown || o.Recurrence == OathRecurrence.Unknown
+                           || o.Places.Any(p => p.Kind == PlaceKind.Unknown))
+        || doc.Deck.Any(c => c.Pile == CardPile.Unknown)
+        || doc.Places.Any(r => r.Places.Any(p => p.Kind == PlaceKind.Unknown))
+        || doc.Thresholds.Any(t => t.Direction == ThresholdDirection.Unknown)
+        || doc.Times.Any(t => t.Trigger == TimeTrigger.Unknown);
+
     private static string? CheckOath(Oath o)
     {
-        if (o.Kept.Count + o.Broken.Count == 0 && o.KeptLedger == 0 && o.BrokenLedger == 0 && o.LedgerPerDone == 0 && o.LedgerPerMissed == 0)
+        if (o.Kept.Count + o.Broken.Count == 0 && o.KeptLedger == 0 && o.BrokenLedger == 0 && o.LedgerPerDone == 0 && o.LedgerPerMissed == 0
+            && o.LedgerPerStrike == 0 && o.StreakEvery == 0)
             return "it has no outcome.";
         if (!OathConditions.IsRitual(o.Condition) && (o.LedgerPerDone != 0 || o.LedgerPerMissed != 0))
             return "only rituals score the ledger each time.";
         if (o.Scope == OathScope.NextDuty && !OathConditions.IsDuty(o.Condition))
             return "only duty oaths can last for the next duty.";
+        if (o.Strikes is < 0 or > RulebookLimits.MaxStrikes)
+            return $"strikes are 0-{RulebookLimits.MaxStrikes}.";
+        if ((o.Strikes > 0 || o.LedgerPerStrike != 0) && !OathConditions.CanStrike(o.Condition))
+            return "this kind of oath can't have strikes.";
+        if (o.StreakEvery != 0 && o.StreakEvery is < RulebookLimits.MinStreak or > RulebookLimits.MaxStreak)
+            return $"a streak is every {RulebookLimits.MinStreak}-{RulebookLimits.MaxStreak} in a row.";
+        if (o.StreakEvery != 0 && o.StreakLedger == 0 && !o.StreakDrawReward)
+            return "the streak gives nothing.";
+        if (o.StreakEvery != 0 && !OathConditions.IsRitual(o.Condition) && o.Recurrence == OathRecurrence.Once)
+            return "only rituals and recurring oaths can have a streak.";
+        if (o.Condition == OathCondition.JobLock && o.JobIds.Count == 0)
+            return "pick at least one allowed job.";
+        if (o.Condition == OathCondition.KeepItOn && o.GraceSeconds is < RulebookLimits.MinKeepItOnGraceSeconds or > RulebookLimits.MaxKeepItOnGraceSeconds)
+            return "the grace time is 1-15 minutes.";
+        if (o.Condition == OathCondition.StayAtSide)
+        {
+            if (o.GraceSeconds is < RulebookLimits.MinSideGraceSeconds or > RulebookLimits.MaxSideGraceSeconds)
+                return "the grace time is 10 seconds to 10 minutes.";
+            if (o.RangeYalms is < RulebookLimits.MinRangeYalms or > RulebookLimits.MaxRangeYalms)
+                return $"the range is {RulebookLimits.MinRangeYalms}-{RulebookLimits.MaxRangeYalms} yalms.";
+        }
+        if (o.Condition == OathCondition.AskBeforeLogoff && CheckPresenceTell(o.Phrase) is { } grantError)
+            return $"the grant word: {grantError}";
+        if (o.Condition == OathCondition.AskBeforeLogoff && o.LeaveWindowMinutes is < RulebookLimits.MinLeaveWindowMinutes or > RulebookLimits.MaxLeaveWindowMinutes)
+            return $"leave lasts {RulebookLimits.MinLeaveWindowMinutes}-{RulebookLimits.MaxLeaveWindowMinutes} minutes.";
         if (o.Scope == OathScope.ForATime && o.DurationMinutes is < RulebookLimits.MinOathMinutes or > RulebookLimits.MaxOathMinutes)
             return "a timed oath lasts 10 minutes to 30 days.";
         if (OathConditions.IsRitual(o.Condition))
@@ -101,7 +171,12 @@ public static class RulebookValidation
         if (o.AnimationLabel.Length > RulebookLimits.MaxPhraseLength * 4)
             return "the animation name is too long.";
         if (OathConditions.NeedsPhrase(o.Condition) && string.IsNullOrWhiteSpace(o.Phrase))
-            return o.Condition == OathCondition.AddressOwner ? "set the word they must call you." : "set the forbidden word.";
+            return o.Condition switch
+            {
+                OathCondition.AddressOwner => "set the word they must call you.",
+                OathCondition.AskBeforeLogoff => "set the word that grants leave.",
+                _ => "set the forbidden word.",
+            };
         if (o.Phrase.Length > RulebookLimits.MaxPhraseLength)
             return $"the words are at most {RulebookLimits.MaxPhraseLength} characters.";
         if (o.Condition == OathCondition.DutyTimeLimit && o.TimeLimitMinutes is < 1 or > 600)
@@ -113,7 +188,9 @@ public static class RulebookValidation
         if (o.KeptLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
             o.BrokenLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
             o.LedgerPerDone is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
-            o.LedgerPerMissed is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
+            o.LedgerPerMissed is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
+            o.LedgerPerStrike is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
+            o.StreakLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
             return $"a ledger change is at most {RulebookLimits.MaxLedgerChange}.";
         return ConsequenceValidator.CheckAll(o.Kept.Concat(o.Broken));
     }

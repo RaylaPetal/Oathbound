@@ -184,6 +184,8 @@ public static class TutorialCatalog
             new("Places", "Run something when they enter or leave a place.", S("rbPlaces"), n => n.RulebookTab(ModuleWindow.RulebookPlacesTab)),
             new("Presence", "Run something when your character comes near them, or leaves.", S("rbPresence"), n => n.RulebookTab(ModuleWindow.RulebookPresenceTab)),
             new("Ledger", "A running score. A threshold runs something when it's reached.", S("rbLedger"), n => n.RulebookTab(ModuleWindow.RulebookLedgerTab)),
+            new("Schedule", "Run something at a time of day on the days you pick, or each time they log in.", S("rbTimes"), n => n.RulebookTab(ModuleWindow.RulebookScheduleTab)),
+            new("Shop", "Things they can buy with ledger points when they choose - a reward card, or something you set.", S("rbShop"), n => n.RulebookTab(ModuleWindow.RulebookShopTab)),
         ],
         ["sync"] =
         [
@@ -293,6 +295,7 @@ public static class TutorialCatalog
             new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
             new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Ledger", "Your score and the cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Shop", "Spend your ledger points on what your Owner put up for sale. Only you can buy.", S("rbSubShop"), n => n.Module("rulebook"), "Shown when your Owner's rulebook has a shop."),
             new("Rules", "Every rule you accepted, laid out line by line. Only your Owner can change or remove one; your safeword pauses them all.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Activity", "Everything the rulebook did, newest first.", S("rbSubActivity"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
         ],

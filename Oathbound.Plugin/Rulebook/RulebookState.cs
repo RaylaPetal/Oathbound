@@ -67,10 +67,27 @@ public sealed class RulebookPairingState
     public int NextReportSequence { get; set; }
     public string? LastUploadedReportDigest { get; set; }
     public long LastReportUploadUnixSeconds { get; set; }
+
+    /// Time rule id -> the Sub's local date ("yyyy-MM-dd") it last fired, so a reload doesn't fire it again.
+    public Dictionary<string, string> TimeRuleLastFired { get; set; } = new();
+    /// Shop item id -> when it was last bought.
+    public Dictionary<string, long> ShopLastBought { get; set; } = new();
+    /// The outfit this pairing's Owner last applied; what a Keep it on oath holds the Sub to.
+    public OwnerOutfitSnapshot? OwnerOutfit { get; set; }
+}
+
+[Serializable]
+public sealed class OwnerOutfitSnapshot
+{
+    public Guid DesignId { get; set; }
+    public string DesignName { get; set; } = "";
+    /// Equip slot (as its number) -> item id, read back from Glamourer once the design settled.
+    public Dictionary<int, ulong> Slots { get; set; } = new();
 }
 
 public enum OathStatus
 {
+    Unknown = -1,
     Offered,
     Declined,
     Expired,
@@ -105,13 +122,25 @@ public sealed class OathState
     public int MissedPeriods { get; set; }
     /// SayGoodnight: when the last matching tell went out.
     public long LastMatchUnixSeconds { get; set; }
+    public int StrikesUsed { get; set; }
+    /// Repeats done in full in a row (rituals) or runs kept in a row (other recurring oaths). Survives renewal.
+    public int Streak { get; set; }
+    /// The Sub chose to let this run be the last one.
+    public bool StopRenewing { get; set; }
+    /// KeepItOn / StayAtSide: when being out of line turns into a violation; null while in line.
+    public long? GraceEndsUnixSeconds { get; set; }
+    /// AskBeforeLogoff: logging off before this is allowed.
+    public long LeaveGrantedUntilUnixSeconds { get; set; }
 
     public bool IsResolved => Status is OathStatus.Declined or OathStatus.Expired or OathStatus.Withdrawn
         or OathStatus.Kept or OathStatus.Broken or OathStatus.Voided;
 }
 
+/// A new value makes reports unreadable for Owners from before the tolerant enum reader, so prefer an existing kind
+/// with descriptive text. Unknown is how a newer Sub's value reads here.
 public enum RulebookEventKind
 {
+    Unknown = -1,
     VersionReceived,
     VersionAccepted,
     VersionDeclined,

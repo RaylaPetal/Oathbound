@@ -80,6 +80,8 @@ public static class ConsequenceValidator
             foreach (var p in doc.Places) { yield return p.Enter; yield return p.Leave; }
             foreach (var p in doc.Presence) { yield return p.Arrive; yield return p.Depart; }
             foreach (var t in doc.Thresholds) yield return t.Consequence;
+            foreach (var t in doc.Times) yield return t.Consequence;
+            foreach (var i in doc.Shop) yield return i.Consequence;
         }
         return All().Select(CheckAll).FirstOrDefault(e => e is not null);
     }

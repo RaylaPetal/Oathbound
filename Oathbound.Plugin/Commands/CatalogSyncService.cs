@@ -232,6 +232,8 @@ public sealed class CatalogSyncService
                 // The Owner's own timer picks aren't part of the Sub's export.
                 incomingEntry.LockSeconds = match.LockSeconds;
                 incomingEntry.FavoriteLockSeconds = match.FavoriteLockSeconds;
+                incomingEntry.Struggle = match.Struggle;
+                incomingEntry.StrugglePenaltyMinutes = match.StrugglePenaltyMinutes;
                 carryForwardExtra?.Invoke(match, incomingEntry);
                 updated++;
             }

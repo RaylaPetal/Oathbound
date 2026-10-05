@@ -23,13 +23,13 @@ public static class OwnerMoodleOverride
         return MoodleOption.Append(withLength, commandMoodle ?? config.QuickCommands.LeashMoodleOverride);
     }
 
-    /// Also where its lock timer is added.
+    /// Also where its struggle setting and lock timer are added.
     public static string ForSend(PluginConfig config, QuickCommand cmd) =>
-        OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.LockSeconds);
+        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.LockSeconds);
 
     /// Uses the timer snapshotted when favorited.
     public static string ForFavoriteSend(PluginConfig config, QuickCommand cmd) =>
-        OwnerLockOption.Apply(ForSend(config, cmd.Command, cmd.MoodleOverride), cmd.FavoriteLockSeconds);
+        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.FavoriteLockSeconds);
 
     public static IReadOnlyList<(string Label, string Selector)> Choices(PluginConfig config) =>
         config.QuickCommands.Moodles

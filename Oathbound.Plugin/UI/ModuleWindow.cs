@@ -60,6 +60,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Null = Permanent.
     private int? adHocLockSeconds;
     private int? ctqLockSeconds;
+    private StruggleLevel adHocStruggle;
+    private int adHocStrugglePenalty;
+    private StruggleLevel ctqStruggle;
+    private int ctqStrugglePenalty;
     private string? editingQuickMoodle;
     private bool newOutfitLocked = true;
     private int? selectedOutfitIndex;
@@ -213,6 +217,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         public string? GagAnimationId;
         public string? GagCustomizePresetId;
         public string? GagCustomizePresetLabel;
+        public GagLevel GagLevel;
         public bool ArmsCuffed;
         public string? ArmsCuffedAnimationId;
         public bool LegsCuffed;
@@ -982,6 +987,30 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
+    private string? struggleResult;
+
+    /// Shown only while the Owner's lock allows struggling. Also drawn in the main window's header.
+    public void DrawStruggleRow(string id)
+    {
+        var restraints = plugin.RestraintCommand;
+        if (restraints.StruggleAvailable is not { } setting)
+        {
+            struggleResult = null;
+            return;
+        }
+        ImGui.PushID("struggle" + id);
+        var wait = restraints.StruggleWait;
+        using (ImRaii.Disabled(wait is not null))
+        {
+            if (ImGui.SmallButton(wait is { } w ? $"Struggle (again in {RestraintLock.Format(w)})" : "Struggle"))
+                struggleResult = restraints.Struggle().Message;
+        }
+        IconGlyph.HelpMarker($"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes everything off, like the lock running out, and your Owner is told.");
+        if (struggleResult is not null)
+            IconGlyph.WrappedDisabled(struggleResult);
+        ImGui.PopID();
+    }
+
     private void DrawRestraintsModule()
     {
         var config = plugin.Configuration;
@@ -996,6 +1025,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Warning, config.RestraintsLockExpiresAtUtc is { } expiresAt
                 ? $"Restraints locked by your Owner - unlocks in {RestraintLock.Format(expiresAt - DateTime.UtcNow)}."
                 : "Restraints locked by your Owner until they unlock them.");
+            DrawStruggleRow("module");
         }
 
         DrawSubModRestraints(config);
@@ -1336,6 +1366,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
+    private static readonly string[] GagLevelNames = ["Heavy", "Medium", "Light"];
+
     private void DrawGaggedPicker(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset)
     {
         ImGui.Checkbox($"Gagged##{idSuffix}", ref edit.Gagged);
@@ -1344,6 +1376,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
 
         ImGui.Indent();
+        var level = (int)edit.GagLevel;
+        ItemWidth(140);
+        if (ImGui.Combo($"level##{idSuffix}GagLevel", ref level, GagLevelNames, GagLevelNames.Length))
+            edit.GagLevel = (GagLevel)level;
+        IconGlyph.HelpMarker("Heavy garbles every word. Medium muffles each word but keeps its first letter and length. Light garbles about one longer word in three. A Sub on an older Oathbound version is gagged at Heavy whatever you pick.");
         DrawAnimationChooser(edit.GagAnimationId, id => edit.GagAnimationId = id, $"{idSuffix}Gag", () => edit.GagAnimationId = null);
         if (allowCustomizePreset)
         {
@@ -1993,6 +2030,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         target.GagAnimationId = source.GagAnimationId;
         target.GagCustomizePresetId = source.GagCustomizePresetId;
         target.GagCustomizePresetLabel = source.GagCustomizePresetLabel;
+        target.GagLevel = source.GagLevel;
         target.ArmsCuffed = source.ArmsCuffed;
         target.ArmsCuffedAnimationId = source.ArmsCuffedAnimationId;
         target.LegsCuffed = source.LegsCuffed;
@@ -2530,6 +2568,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Your own reference name for this restraint - never matched against anything on your Sub's side.");
         OwnerMoodleOverride.Draw("adHocRestraint", plugin.Configuration, ref adHocMoodleOverride);
         OwnerLockOption.Draw("adHocRestraint", ref adHocLockSeconds);
+        OwnerLockOption.DrawStruggle("adHocRestraint", ref adHocStruggle, ref adHocStrugglePenalty, adHocLockSeconds is not null);
 
         Section.SubHeading("Restrictions");
         DrawRestraintRuleCheckboxes(newAdHocRuleEdit, "adHocRestraint", rulesOnly: true);
@@ -2546,7 +2585,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit, rulesOnly: true));
             ImGui.TextUnformatted("Send this restraint:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(command, adHocMoodleOverride), adHocLockSeconds), canSend, "adHocRestraint");
+            var withStruggle = RestraintStruggle.Insert(command, new StruggleSetting(adHocStruggle, adHocLockSeconds is null ? 0 : adHocStrugglePenalty));
+            DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(withStruggle, adHocMoodleOverride), adHocLockSeconds), canSend, "adHocRestraint");
         }
         else
         {
@@ -2707,8 +2747,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             Section.SubHeading("Restraint lock");
             OwnerLockOption.Draw("ctqCustomTrigger", ref ctqLockSeconds);
+            // Only a restraint whose rules travel in the bundle has somewhere to carry the setting.
+            if (ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint && a.RestraintRules is not null))
+                OwnerLockOption.DrawStruggle("ctqCustomTrigger", ref ctqStruggle, ref ctqStrugglePenalty, ctqLockSeconds is not null);
+            else
+                IconGlyph.WrappedDisabled("Struggling can only be allowed for a restraint picked from your Sub's synced list, which carries its rules.");
         }
         var bundleLockSeconds = bundleHasRestraint ? ctqLockSeconds : null;
+        var bundleStruggle = bundleHasRestraint ? ctqStruggle : StruggleLevel.None;
+        var bundlePenalty = bundleLockSeconds is null ? 0 : ctqStrugglePenalty;
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -2717,7 +2764,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var command = CustomTriggerCommand.BuildCastCommand(ctqLabel.Trim(), ctqDraftActions);
             ImGui.TextUnformatted(editingOwnerBundle is null ? "Send or save this bundle:" : "Update this saved bundle:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(OwnerLockOption.Apply(command, bundleLockSeconds), canSend, "ctqCustomTrigger");
+            DrawSendCopyButtons(OwnerLockOption.Apply(RestraintStruggle.Insert(command, new StruggleSetting(bundleStruggle, bundlePenalty)), bundleLockSeconds), canSend, "ctqCustomTrigger");
             ContinueRowOrWrap(ButtonWidth("Save bundle"));
             var aliases = plugin.Configuration.QuickCommands.Aliases;
             var stale = editingOwnerBundle is not null && !aliases.Contains(editingOwnerBundle);
@@ -2730,12 +2777,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 if (ImGui.SmallButton($"{(editingOwnerBundle is null ? "Save bundle" : "Save changes")}##ctqSave"))
                 {
                     if (editingOwnerBundle is null)
-                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command, LockSeconds = bundleLockSeconds });
+                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command, LockSeconds = bundleLockSeconds, Struggle = bundleStruggle, StrugglePenaltyMinutes = bundlePenalty });
                     else
                     {
                         editingOwnerBundle.Label = ctqLabel.Trim();
                         editingOwnerBundle.Command = command;
                         editingOwnerBundle.LockSeconds = bundleLockSeconds;
+                        editingOwnerBundle.Struggle = bundleStruggle;
+                        editingOwnerBundle.StrugglePenaltyMinutes = bundlePenalty;
                     }
                     plugin.Configuration.Save();
                     ClearOwnerBundleDraft();
@@ -2759,6 +2808,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ctqDraftActions.Clear();
         ctqLabel = "";
         ctqLockSeconds = null;
+        ctqStruggle = StruggleLevel.None;
+        ctqStrugglePenalty = 0;
         editingOwnerActionIndex = null;
         editingOwnerBundle = null;
     }
@@ -2773,6 +2824,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         editingOwnerBundle = command;
         ctqLabel = label;
         ctqLockSeconds = command.LockSeconds;
+        ctqStruggle = command.Struggle;
+        ctqStrugglePenalty = command.StrugglePenaltyMinutes;
         ctqDraftActions.Clear();
         ctqDraftActions.AddRange(actions.Select(CloneAction));
         editingOwnerActionIndex = null;
@@ -2945,6 +2998,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     edit.GagAnimationId = rule.AnimationId;
                     edit.GagCustomizePresetId = rule.CustomizePresetId;
                     edit.GagCustomizePresetLabel = rule.CustomizePresetLabel;
+                    edit.GagLevel = rule.GagLevel;
                     break;
                 case RestraintRuleKind.ArmsCuffed: edit.ArmsCuffed = true; edit.ArmsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.ArmsCuffedDrawn = rule.Drawn; break;
                 case RestraintRuleKind.LegsCuffed: edit.LegsCuffed = true; edit.LegsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.LegsCuffedDrawn = rule.Drawn; break;
@@ -2985,6 +3039,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 AnimationLabel = LabelFor(edit.GagAnimationId),
                 CustomizePresetId = edit.GagCustomizePresetId,
                 CustomizePresetLabel = edit.GagCustomizePresetLabel,
+                GagLevel = edit.GagLevel,
             });
         }
         if (edit.ArmsCuffed)

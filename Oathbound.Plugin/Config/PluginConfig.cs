@@ -271,6 +271,13 @@ public class QuickCommand
 
     /// LockSeconds when favorited, so a later change on the row doesn't change the favorite.
     public int? FavoriteLockSeconds { get; set; }
+
+    /// Restraint commands only: whether the lock it sets can be struggled against.
+    public Commands.StruggleLevel Struggle { get; set; }
+    public int StrugglePenaltyMinutes { get; set; }
+
+    [Newtonsoft.Json.JsonIgnore]
+    public Commands.StruggleSetting StruggleSetting => new(Struggle, StrugglePenaltyMinutes);
 }
 
 [Serializable]
@@ -386,6 +393,14 @@ public enum RestraintRuleKind
     FullBodyCuffed,
 }
 
+/// Heavy is 0 so configs and commands from before levels stay Heavy.
+public enum GagLevel
+{
+    Heavy,
+    Medium,
+    Light,
+}
+
 /// What a set of cuff rules draws: Arms Cuffed = Wrists, Legs Cuffed = Ankles, Fully Restrain = all three.
 [Flags]
 public enum CuffSet
@@ -431,6 +446,8 @@ public class RestraintRuleAssignment
     public string? AnimationLabel { get; set; }
     public string? CustomizePresetId { get; set; }
     public string? CustomizePresetLabel { get; set; }
+    /// Gagged only.
+    public GagLevel GagLevel { get; set; }
 
     /// Cuff kinds only: also draw the cuffs.
     public bool Drawn { get; set; }
@@ -663,6 +680,12 @@ public class PluginConfig : IPluginConfiguration
     public bool RestraintsForceLocked { get; set; }
     /// UTC so it keeps counting through restarts. Null while RestraintsForceLocked = Permanent.
     public DateTime? RestraintsLockExpiresAtUtc { get; set; }
+    /// The Owner's struggle setting for the current lock, cleared with it.
+    public Commands.StruggleLevel RestraintsStruggleLevel { get; set; }
+    public int RestraintsStrugglePenaltyMinutes { get; set; }
+    public DateTime? RestraintsStruggleNextTryUtc { get; set; }
+    /// The pairing whose Owner set the current lock; an escape is reported to them.
+    public Guid? RestraintsLockedByPairingId { get; set; }
     public bool ToyControlForceLocked { get; set; }
 
     /// Persisted so moodles whose source didn't survive a reload can still be removed.

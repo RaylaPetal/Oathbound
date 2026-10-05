@@ -60,6 +60,8 @@ public sealed class SlotLockManager : IDisposable
     /// Lets a caller restore a conflicting slot after a whole-design apply overwrote it.
     public SlotLockValue? GetLockedValue(ApiEquipSlot slot) => locks.TryGetValue(slot, out var existing) ? existing.Value : null;
 
+    public string? LockOwner(ApiEquipSlot slot) => locks.TryGetValue(slot, out var existing) ? existing.Owner : null;
+
     /// Refuses, changing nothing, if a slot is locked by a different owner (except those in `canTakeOverFrom`,
     /// whose value is set aside). A Glamourer failure partway through a multi-slot request isn't rolled back.
     public bool TryLock(string owner, IReadOnlyDictionary<ApiEquipSlot, SlotLockValue> slots, IReadOnlyCollection<string>? canTakeOverFrom = null)

@@ -23,7 +23,7 @@ public static class CommandPresentation
         RestraintRuleKind.ForcedPose => rule.PoseModeId == 0 ? "Forced Pose · Animation mod" : $"Forced Pose · {Pose(rule.PoseModeId)}",
         RestraintRuleKind.WalkOnly => "Walking Only",
         RestraintRuleKind.ActionBlock => "Actions Blocked",
-        RestraintRuleKind.Gagged => rule.CustomizePresetId is null ? "Gagged" : "Gagged · Customize+",
+        RestraintRuleKind.Gagged => (rule.GagLevel == GagLevel.Heavy ? "Gagged" : $"Gagged · {rule.GagLevel}") + (rule.CustomizePresetId is null ? "" : " · Customize+"),
         RestraintRuleKind.ArmsCuffed => "Arms Cuffed",
         RestraintRuleKind.LegsCuffed => "Legs Cuffed",
         RestraintRuleKind.FullBodyCuffed => "Fully Restrain",

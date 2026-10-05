@@ -157,7 +157,12 @@ public static class OathText
             OathCondition.AddressOwner => $"call your Owner \"{oath.Phrase.Trim()}\" in every tell to them",
             OathCondition.ForbiddenWord => $"never say \"{oath.Phrase.Trim()}\" in chat",
             OathCondition.QuietInPublic => "stay quiet in /say, /shout and /yell",
-            _ => "?",
+            OathCondition.DutyQuota => $"complete {(oath.Places.Count == 0 ? "any duty" : Places(oath))} {Repeat(oath)}",
+            OathCondition.JobLock => $"enter duties only as {Jobs.Describe(oath.JobIds)}",
+            OathCondition.KeepItOn => $"keep on the outfit your Owner put on you, back on within {Grace(oath)} if it comes off",
+            OathCondition.AskBeforeLogoff => $"log off only within {oath.LeaveWindowMinutes} minutes of your Owner telling you \"{oath.Phrase.Trim()}\"",
+            OathCondition.StayAtSide => $"stay within {oath.RangeYalms:0} yalms of your Owner whenever they're near{(oath.SkipInDuties ? " (outside duties)" : "")}, back within {Grace(oath)} if you stray",
+            _ => "do something this version of Oathbound doesn't know",
         };
         var scope = oath.Scope == OathScope.NextDuty ? "during the next duty" : $"for {Duration(oath)}";
         return $"{condition} {scope}";
@@ -166,6 +171,8 @@ public static class OathText
     private static string Duration(Oath oath) => RestraintLock.Format(TimeSpan.FromMinutes(oath.DurationMinutes));
 
     public static string Hold(Oath oath) => RestraintLock.Format(TimeSpan.FromSeconds(oath.HoldSeconds));
+
+    public static string Grace(Oath oath) => RestraintLock.Format(TimeSpan.FromSeconds(oath.GraceSeconds));
 
     /// "day" for daily rituals, "stretch" for longer repeats.
     public static string Unit(Oath oath) => oath.PeriodDays == 1 ? "day" : "stretch";
@@ -220,8 +227,24 @@ public static class OathText
         else
         {
             lines.Add(("Kept", oath.Scope == OathScope.NextDuty ? $"When the duty is completed: {kept}" : $"After the full {Duration(oath)}: {kept}"));
-            lines.Add(("Broken", $"Right away: {broken}"));
+            lines.Add(("Broken", oath.Strikes > 0 ? $"On strike {oath.Strikes + 1}: {broken}" : $"Right away: {broken}"));
         }
+        if (oath.Strikes > 0)
+            lines.Add(("Strikes", $"{oath.Strikes} allowed{(oath.LedgerPerStrike != 0 ? $", {Signed(oath.LedgerPerStrike)} ledger each" : "")}"));
+        if (oath.StreakEvery > 0)
+        {
+            var bonus = new List<string>();
+            if (oath.StreakLedger != 0)
+                bonus.Add($"{Signed(oath.StreakLedger)} ledger");
+            if (oath.StreakDrawReward)
+                bonus.Add("draw a reward card");
+            var what = OathConditions.IsRitual(oath.Condition) ? $"{Unit(oath)}s done" : "runs kept";
+            lines.Add(("Streak", $"Every {oath.StreakEvery} {what} in a row: {string.Join(" and ", bonus)}"));
+        }
+        if (oath.Recurrence != OathRecurrence.Once)
+            lines.Add(("Recurs", oath.Recurrence == OathRecurrence.Renew
+                ? "Starts again by itself once it's kept or broken, until you stop it"
+                : "Offered to you again once it's kept or broken"));
         return lines;
     }
 
@@ -303,6 +326,31 @@ public static class RuleText
 
     public static List<(string Label, string Text)> Oath(Oath o) => OathText.Lines(o);
 
+    public static List<(string Label, string Text)> Time(TimeRule t) =>
+    [
+        ("When", t.Trigger == TimeTrigger.OnLogin ? "Each time your Sub logs in" : $"{Days(t.Weekdays)} at {OathText.Clock(t.Minutes)} (your Sub's local time)"),
+        ("Does", Cap(ConsequenceText.Describe(t.Consequence))),
+        ("Cooldown", $"{t.CooldownSeconds}s"),
+    ];
+
+    public static List<(string Label, string Text)> Shop(ShopItem i) =>
+    [
+        ("Price", $"{i.Price} ledger points"),
+        ("Gives", i.DrawReward ? "Draw a reward card" : Cap(ConsequenceText.Describe(i.Consequence))),
+        ("Cooldown", i.CooldownSeconds == 0 ? "None" : RestraintLock.Format(TimeSpan.FromSeconds(i.CooldownSeconds))),
+    ];
+
+    private static readonly DayOfWeek[] Week =
+        [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+    public static string Days(int weekdays)
+    {
+        if ((weekdays & TimeRules.EveryDay) == TimeRules.EveryDay)
+            return "Every day";
+        var days = Week.Where(d => TimeRules.On(weekdays, d)).Select(d => d.ToString()[..3]).ToList();
+        return days.Count == 0 ? "Never" : string.Join(", ", days);
+    }
+
     /// Every rule of a document by id, with a kind label and its lines; Summary joins them for change detection.
     public static List<(string Id, string Kind, string Name, string Summary, List<(string Label, string Text)> Lines)> All(RulebookDocument doc, string owner)
     {
@@ -314,6 +362,8 @@ public static class RuleText
         foreach (var p in doc.Places) Add(p.Id, "Place rule", Name(p.Name, "Place rule"), Place(p));
         foreach (var p in doc.Presence) Add(p.Id, "Presence rule", Name(p.Name, "Presence rule"), Presence(p, owner));
         foreach (var t in doc.Thresholds) Add(t.Id, "Ledger threshold", Name(t.Name, "Threshold"), Threshold(t));
+        foreach (var t in doc.Times) Add(t.Id, "Time rule", Name(t.Name, "Time rule"), Time(t));
+        foreach (var i in doc.Shop) Add(i.Id, "Shop item", Name(i.Name, "Shop item"), Shop(i));
         Add(DrawOnSettings.RuleId, "Deck", "Deck draws on events", DrawOn(doc.DrawOn));
         return list;
     }

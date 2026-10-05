@@ -49,6 +49,13 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         estimate.LeashedAtUtc = DateTime.UtcNow;
     }
 
+    /// The Sub struggled free: their restraints and gag are off.
+    public void MarkUnrestrained(Guid pairingId)
+    {
+        if (estimates.TryGetValue(pairingId, out var estimate))
+            estimate.ClearRestraints();
+    }
+
     /// Returns whether the estimate showed the Sub leashed until now.
     public bool MarkUnleashed(Guid pairingId)
     {

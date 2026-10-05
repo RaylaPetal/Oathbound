@@ -23,6 +23,8 @@ public sealed partial class ModuleWindow
     public const string RulebookPlacesTab = "Places";
     public const string RulebookPresenceTab = "Presence";
     public const string RulebookLedgerTab = "Ledger";
+    public const string RulebookScheduleTab = "Schedule";
+    public const string RulebookShopTab = "Shop";
 
     private static readonly (string Group, (OathCondition Condition, string Label, string Help)[] Items)[] OathChoices =
     [
@@ -30,6 +32,12 @@ public sealed partial class ModuleWindow
             (OathCondition.GreetOwner, "Greet me with a gesture", "Use a gesture of your choice on you - /kneel, /bow, /beckon... - a set number of times every day or few days."),
             (OathCondition.MessageOwner, "Message me", "Send you a tell a set number of times every day or few days. Optionally it has to say something, like \"good morning\"."),
             (OathCondition.CheckIn, "Check in", "Log in at least once every day or few days."),
+            (OathCondition.DutyQuota, "Complete duties", "Complete a set number of duties - any duty, or the ones you pick - every day or few days. Leaving a duty early doesn't count."),
+        ]),
+        ("Obedience", [
+            (OathCondition.KeepItOn, "Keep my outfit on", "The outfit you last put on them has to stay on. If it comes off they're told, and have a grace time to put it back with one click."),
+            (OathCondition.StayAtSide, "Stay at my side", "Whenever you're near each other, they stay within the range you set. Straying past it for longer than the grace time breaks it."),
+            (OathCondition.AskBeforeLogoff, "Ask before logging off", "They may only log off soon after you /tell them the word you choose. You get a Grant leave button in the Overview tab that sends it."),
         ]),
         ("Manners", [
             (OathCondition.SayGoodnight, "Say goodnight before logging off", "Send you a tell in the 15 minutes before they log off. Optionally it has to say something."),
@@ -46,8 +54,10 @@ public sealed partial class ModuleWindow
             (OathCondition.NoDeaths, "Don't die", "Their character dying breaks it."),
             (OathCondition.NoWipes, "Don't wipe", "Their party wiping breaks it."),
             (OathCondition.DutyTimeLimit, "Finish each duty in time", "A duty taking longer than the limit breaks it."),
+            (OathCondition.JobLock, "Only play certain jobs", "Entering a duty on any other job breaks it - for example healers only."),
         ]),
     ];
+    private static readonly string[] OathRecurrenceNames = ["Once", "Start again by itself", "Offer it again"];
     private static readonly string[] OathScopeNames = ["During their next duty", "For a set time"];
     private string rbEmoteSearch = "";
     /// The oath whose editor switched to "a modded animation" before one was picked.
@@ -57,14 +67,14 @@ public sealed partial class ModuleWindow
     private static readonly string[] ThresholdDirectionNames = ["At or above", "At or below"];
     private static readonly string[] CardPileNames = ["Punishment", "Reward"];
 
-    private enum ConsequenceKind { Title, Outfit, Animation, Moodle, Restraint, CustomTrigger, Toy, Ledger, DeckDraw, RestraintTimer, UnlockRestraints, RevertAll, Typed }
+    private enum ConsequenceKind { Title, Outfit, Animation, Moodle, Restraint, CustomTrigger, Toy, Ledger, DeckDraw, RestraintTimer, UnlockRestraints, UnlockOutfit, RevertAll, Typed }
 
     private static readonly (ConsequenceKind Kind, string Label)[] ConsequenceKinds =
     [
         (ConsequenceKind.Title, "Title"), (ConsequenceKind.Outfit, "Outfit"), (ConsequenceKind.Animation, "Animation"),
         (ConsequenceKind.Moodle, "Moodle"), (ConsequenceKind.Restraint, "Restraint"), (ConsequenceKind.CustomTrigger, "Custom Trigger"),
         (ConsequenceKind.Toy, "Toy pattern"), (ConsequenceKind.Ledger, "Ledger"), (ConsequenceKind.DeckDraw, "Draw a card"),
-        (ConsequenceKind.RestraintTimer, "Restraint timer"), (ConsequenceKind.UnlockRestraints, "Unlock restraints"),
+        (ConsequenceKind.RestraintTimer, "Restraint timer"), (ConsequenceKind.UnlockRestraints, "Unlock restraints"), (ConsequenceKind.UnlockOutfit, "Unlock outfit"),
         (ConsequenceKind.RevertAll, "Revert everything"), (ConsequenceKind.Typed, "Typed command"),
     ];
 
@@ -175,6 +185,16 @@ public sealed partial class ModuleWindow
         if (BeginRulebookTab(RulebookLedgerTab, draft.Thresholds.Count))
         {
             DrawLedgerTab(draft);
+            ImGui.EndTabItem();
+        }
+        if (BeginRulebookTab(RulebookScheduleTab, draft.Times.Count))
+        {
+            DrawScheduleTab(draft);
+            ImGui.EndTabItem();
+        }
+        if (BeginRulebookTab(RulebookShopTab, draft.Shop.Count))
+        {
+            DrawShopTab(draft);
             ImGui.EndTabItem();
         }
         ImGui.EndTabBar();
@@ -303,6 +323,19 @@ public sealed partial class ModuleWindow
                     plugin.RulebookService.SendOwnerCommand(LedgerCommandText(rbLedgerAward, rbLedgerReason));
             }
             IconGlyph.HelpMarker("Changes their ledger score. Thresholds you set in the Ledger tab fire when it crosses them.");
+
+            // The words their client knows are the ones in the version it has, not the draft.
+            var grantWords = (state.PublishedDocument?.Oaths ?? [])
+                .Where(o => o.Condition == OathCondition.AskBeforeLogoff && o.Phrase.Trim().Length > 0)
+                .Select(o => o.Phrase.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var word in grantWords)
+            {
+                ImGui.PushID("grant" + word);
+                if (ImGui.SmallButton(grantWords.Count == 1 ? "Grant leave" : $"Grant leave (\"{word}\")"))
+                    plugin.RulebookService.SendGrantLeave(pairing, word);
+                IconGlyph.HelpMarker($"Sends {pairing.PeerName} a /tell with only \"{word}\", which lets them log off for the time their oath says.");
+                ImGui.PopID();
+            }
         }
     }
 
@@ -436,6 +469,136 @@ public sealed partial class ModuleWindow
                 DrawThresholdEditor(editing);
     }
 
+    private const string NewSubNote = "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.";
+
+    private void DrawScheduleTab(RulebookDocument draft)
+    {
+        using (Section.Begin("rbTimes", $"Schedule ({draft.Times.Count}/{RulebookLimits.MaxTimeRules})"))
+        {
+            IconGlyph.WrappedDisabled("Run something at a time of day, or each time your Sub logs in. Times are in your Sub's local time.");
+            if (draft.Times.Count > 0)
+                IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+            else
+                IconGlyph.WrappedDisabled("No time rules yet.");
+            foreach (var rule in draft.Times.ToList())
+                DrawRuleRow(rule.Id, rule.Name, "time rule", RuleText.Time(rule), null, () => draft.Times.Remove(rule));
+            using (ImRaii.Disabled(draft.Times.Count >= RulebookLimits.MaxTimeRules))
+            {
+                if (ImGui.SmallButton("New time rule"))
+                    StartNew(draft.Times, new TimeRule { Name = "Bedtime" }, t => t.Id);
+            }
+        }
+        if (draft.Times.FirstOrDefault(t => t.Id == rbEditingId) is { } editing)
+            using (Section.Begin("rbEditor", "Edit time rule"))
+                DrawTimeEditor(editing);
+    }
+
+    private void DrawShopTab(RulebookDocument draft)
+    {
+        using (Section.Begin("rbShop", $"Shop ({draft.Shop.Count}/{RulebookLimits.MaxShopItems})"))
+        {
+            IconGlyph.WrappedDisabled("Things your Sub can buy with ledger points, when they choose. Nothing - not you, not a rule - buys for them.");
+            if (draft.Shop.Count > 0)
+                IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+            else
+                IconGlyph.WrappedDisabled("Nothing for sale yet.");
+            foreach (var item in draft.Shop.ToList())
+                DrawRuleRow(item.Id, item.Name, "shop item", RuleText.Shop(item), null, () => draft.Shop.Remove(item));
+            using (ImRaii.Disabled(draft.Shop.Count >= RulebookLimits.MaxShopItems))
+            {
+                if (ImGui.SmallButton("New shop item"))
+                    StartNew(draft.Shop, new ShopItem { Name = "A treat", Price = 10, DrawReward = true }, i => i.Id);
+            }
+        }
+        if (draft.Shop.FirstOrDefault(i => i.Id == rbEditingId) is { } editing)
+            using (Section.Begin("rbEditor", "Edit shop item"))
+                DrawShopEditor(editing);
+    }
+
+    private static readonly string[] TimeTriggerNames = ["At a time", "When they log in"];
+    private static readonly (DayOfWeek Day, string Label)[] WeekdayChoices =
+        [(DayOfWeek.Monday, "Mon"), (DayOfWeek.Tuesday, "Tue"), (DayOfWeek.Wednesday, "Wed"), (DayOfWeek.Thursday, "Thu"), (DayOfWeek.Friday, "Fri"), (DayOfWeek.Saturday, "Sat"), (DayOfWeek.Sunday, "Sun")];
+
+    private void DrawTimeEditor(TimeRule rule)
+    {
+        ImGui.PushID(rule.Id);
+        var changed = false;
+        if (DrawName(rule.Name, out var name)) { rule.Name = name; changed = true; }
+        var trigger = (int)rule.Trigger;
+        ItemWidth(200);
+        if (ImGui.Combo("##trigger", ref trigger, TimeTriggerNames, TimeTriggerNames.Length)) { rule.Trigger = (TimeTrigger)trigger; changed = true; }
+        if (rule.Trigger == TimeTrigger.AtTime)
+        {
+            changed |= DrawClock("at", rule.Minutes, v => rule.Minutes = v);
+            IconGlyph.HelpMarker($"Your Sub's local time. If they're not logged in then, it still runs when they log in within {RulebookLimits.TimeRuleWindowMinutes} minutes; later than that, it's skipped for the day.");
+            var first = true;
+            foreach (var (day, label) in WeekdayChoices)
+            {
+                var width = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize(label).X;
+                if (!first)
+                    ContinueRowOrWrap(width);
+                first = false;
+                var on = TimeRules.On(rule.Weekdays, day);
+                if (ImGui.Checkbox($"{label}##day{(int)day}", ref on))
+                {
+                    rule.Weekdays = on ? rule.Weekdays | (1 << (int)day) : rule.Weekdays & ~(1 << (int)day);
+                    changed = true;
+                }
+            }
+        }
+        Section.SubHeading("Do");
+        changed |= DrawConsequenceEditor("does", rule.Consequence);
+        ImGui.Spacing();
+        var cd = rule.CooldownSeconds;
+        if (DrawCooldown("timeCooldown", ref cd, "It won't run again within this time.")) { rule.CooldownSeconds = cd; changed = true; }
+        if (changed) plugin.Configuration.Save();
+        DrawDoneButton();
+        ImGui.PopID();
+    }
+
+    private void DrawShopEditor(ShopItem item)
+    {
+        ImGui.PushID(item.Id);
+        var changed = false;
+        if (DrawName(item.Name, out var name)) { item.Name = name; changed = true; }
+        var price = item.Price;
+        ItemWidth(110);
+        if (ImGui.InputInt("price (points)##price", ref price, 1, 10)) { item.Price = Math.Clamp(price, RulebookLimits.MinPrice, RulebookLimits.MaxPrice); changed = true; }
+        var draw = item.DrawReward;
+        if (ImGui.RadioButton("Draw a reward card##shopDraw", draw) && !draw)
+        {
+            item.DrawReward = true;
+            item.Consequence.Clear();
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Run something##shopRun", !draw) && draw)
+        {
+            item.DrawReward = false;
+            changed = true;
+        }
+        if (!item.DrawReward)
+            changed |= DrawConsequenceEditor("gives", item.Consequence);
+        else
+            IconGlyph.WrappedDisabled("If the reward pile is empty they can't buy it, and keep their points.");
+        var hasCooldown = item.CooldownSeconds > 0;
+        if (ImGui.Checkbox("Cooldown##shopHasCooldown", ref hasCooldown))
+        {
+            item.CooldownSeconds = hasCooldown ? 24 * 3600 : 0;
+            changed = true;
+        }
+        if (hasCooldown)
+        {
+            ImGui.SameLine();
+            var hours = Math.Max(1, item.CooldownSeconds / 3600);
+            ItemWidth(100);
+            if (ImGui.InputInt("hour(s) between buys##shopHours", ref hours, 1, 24)) { item.CooldownSeconds = Math.Clamp(hours, 1, 24 * 30) * 3600; changed = true; }
+        }
+        if (changed) plugin.Configuration.Save();
+        DrawDoneButton();
+        ImGui.PopID();
+    }
+
     private void StartNew<T>(List<T> list, T item, Func<T, string> id)
     {
         list.Add(item);
@@ -446,7 +609,7 @@ public sealed partial class ModuleWindow
     private static string? StatusOf(RulebookPairingState state, string oathId) =>
         state.LastReport?.Oaths.FirstOrDefault(o => o.Id == oathId) is { } reported ? OathStatusText(reported.Status, reported.ScopeEndsAt) : null;
 
-    private static readonly string[] SubRuleTabs = ["Oaths", "Deck", "Places", "Presence", "Ledger"];
+    private static readonly string[] SubRuleTabs = ["Oaths", "Deck", "Places", "Presence", "Schedule", "Shop", "Ledger"];
 
     private static string SubRuleTab(string kind) => kind switch
     {
@@ -454,6 +617,8 @@ public sealed partial class ModuleWindow
         "Card" or "Deck" => "Deck",
         "Place rule" => "Places",
         "Presence rule" => "Presence",
+        "Time rule" => "Schedule",
+        "Shop item" => "Shop",
         _ => "Ledger",
     };
 
@@ -551,12 +716,15 @@ public sealed partial class ModuleWindow
             {
                 OathCondition.AddressOwner => ("word they must use", "e.g. Mistress"),
                 OathCondition.ForbiddenWord => ("forbidden word", "e.g. no"),
+                OathCondition.AskBeforeLogoff => ("word that grants leave", "e.g. granted"),
                 _ => ("has to say (optional)", "e.g. good morning"),
             };
             ItemWidth(200);
             if (ImGui.InputTextWithHint(label, hint, ref phrase, RulebookLimits.MaxPhraseLength)) { oath.Phrase = phrase; changed = true; }
             if (condition is OathCondition.AddressOwner or OathCondition.ForbiddenWord or OathCondition.MessageOwner or OathCondition.SayGoodnight)
                 IconGlyph.HelpMarker("Not case-sensitive, and it can be anywhere in the message.");
+            else if (condition == OathCondition.AskBeforeLogoff)
+                IconGlyph.HelpMarker("Any /tell from you that contains it grants leave - the Grant leave button in the Overview tab sends just the word. Not case-sensitive.");
         }
         switch (condition)
         {
@@ -616,6 +784,55 @@ public sealed partial class ModuleWindow
                 changed |= DrawClock("until", oath.CurfewEndMinutes, v => oath.CurfewEndMinutes = v);
                 IconGlyph.HelpMarker("Their local time. Being logged in at any point inside this window breaks the oath.");
                 break;
+            case OathCondition.DutyQuota:
+                ImGui.TextUnformatted("Which duties");
+                IconGlyph.HelpMarker("Leave the list empty for any duty. A duty counts once it's completed.");
+                changed |= DrawPlaceList("quotaDuties", oath.Places);
+                break;
+            case OathCondition.JobLock:
+                changed |= DrawJobPicker(oath.JobIds);
+                break;
+            case OathCondition.KeepItOn:
+            {
+                var minutes = Math.Max(1, oath.GraceSeconds / 60);
+                ItemWidth(100);
+                if (ImGui.InputInt("minutes to put it back##keepGrace", ref minutes, 1, 5))
+                {
+                    oath.GraceSeconds = Math.Clamp(minutes * 60, RulebookLimits.MinKeepItOnGraceSeconds, RulebookLimits.MaxKeepItOnGraceSeconds);
+                    changed = true;
+                }
+                IconGlyph.HelpMarker("The outfit is whichever one you last sent them (or a rule of yours put on). Restraints taking a slot, and your own commands, never count as taking it off.");
+                break;
+            }
+            case OathCondition.StayAtSide:
+            {
+                var range = oath.RangeYalms;
+                ItemWidth(160);
+                if (ImGui.SliderFloat("Range (yalms)##sideRange", ref range, RulebookLimits.MinRangeYalms, RulebookLimits.MaxRangeYalms, "%.0f")) { oath.RangeYalms = range; changed = true; }
+                var grace = oath.GraceSeconds;
+                ItemWidth(100);
+                if (ImGui.InputInt("seconds to come back##sideGrace", ref grace, 5, 30))
+                {
+                    oath.GraceSeconds = Math.Clamp(grace, RulebookLimits.MinSideGraceSeconds, RulebookLimits.MaxSideGraceSeconds);
+                    changed = true;
+                }
+                var skip = oath.SkipInDuties;
+                if (ImGui.Checkbox("Not in duties##sideSkip", ref skip)) { oath.SkipInDuties = skip; changed = true; }
+                IconGlyph.HelpMarker("Only counts while you're both loaded in the same place. You being in another area never breaks it.");
+                break;
+            }
+            case OathCondition.AskBeforeLogoff:
+            {
+                var window = oath.LeaveWindowMinutes;
+                ItemWidth(100);
+                if (ImGui.InputInt("minutes leave lasts##leaveWindow", ref window, 5, 15))
+                {
+                    oath.LeaveWindowMinutes = Math.Clamp(window, RulebookLimits.MinLeaveWindowMinutes, RulebookLimits.MaxLeaveWindowMinutes);
+                    changed = true;
+                }
+                IconGlyph.HelpMarker("A normal logout without leave breaks it. Closing the game or crashing can't be told apart, so it never does.");
+                break;
+            }
         }
 
         if (OathConditions.IsRitual(condition))
@@ -670,6 +887,10 @@ public sealed partial class ModuleWindow
         }
         IconGlyph.WrappedDisabled("To also draw a card, tick it in the Deck tab under Draw automatically.");
 
+        changed |= DrawOathRepeats(oath);
+        if (oath.NeedsNewSub)
+            IconGlyph.WrappedColored(Theme.Warning, "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.");
+
         ImGui.Spacing();
         if (ImGui.SmallButton("Offer again"))
         {
@@ -707,6 +928,18 @@ public sealed partial class ModuleWindow
                             oath.Scope = OathScope.ForATime;
                         if (OathConditions.IsRitual(condition) && oath.DurationMinutes < oath.PeriodDays * 1440)
                             oath.DurationMinutes = 7 * 1440;
+                        switch (condition)
+                        {
+                            case OathCondition.KeepItOn:
+                                oath.GraceSeconds = 5 * 60;
+                                break;
+                            case OathCondition.StayAtSide:
+                                oath.GraceSeconds = 30;
+                                break;
+                            case OathCondition.AskBeforeLogoff when string.IsNullOrWhiteSpace(oath.Phrase):
+                                oath.Phrase = "granted";
+                                break;
+                        }
                         changed = true;
                     }
                     if (ImGui.IsItemHovered())
@@ -741,6 +974,105 @@ public sealed partial class ModuleWindow
             oath.DurationMinutes = Math.Clamp(hours * 60, RulebookLimits.MinOathMinutes, RulebookLimits.MaxOathMinutes);
         ImGui.SameLine();
         ImGui.TextDisabled($"= {RestraintLock.Format(TimeSpan.FromMinutes(oath.DurationMinutes))}");
+        return changed;
+    }
+
+    /// A whole role toggles with its button; single jobs underneath.
+    private static bool DrawJobPicker(List<uint> jobIds)
+    {
+        var changed = false;
+        ImGui.TextUnformatted("Allowed jobs");
+        IconGlyph.HelpMarker("A base class counts as the jobs it becomes, so Conjurer counts for White Mage.");
+        foreach (var role in new[] { JobRole.Tank, JobRole.Healer, JobRole.Melee, JobRole.Ranged, JobRole.Caster })
+        {
+            ImGui.PushID((int)role);
+            var members = Jobs.OfRole(role).ToList();
+            var all = members.Count > 0 && members.All(jobIds.Contains);
+            var label = char.ToUpperInvariant(Jobs.RoleName(role)[0]) + Jobs.RoleName(role)[1..] + "s";
+            if (ImGui.Checkbox(label, ref all))
+            {
+                jobIds.RemoveAll(members.Contains);
+                if (all)
+                    jobIds.AddRange(members);
+                changed = true;
+            }
+            foreach (var job in Jobs.All.Where(j => j.Role == role))
+            {
+                var width = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize(job.Abbreviation).X;
+                ContinueRowOrWrap(width);
+                var on = jobIds.Contains(job.Id);
+                if (ImGui.Checkbox($"{job.Abbreviation}##job{job.Id}", ref on))
+                {
+                    if (on) jobIds.Add(job.Id);
+                    else jobIds.Remove(job.Id);
+                    changed = true;
+                }
+            }
+            ImGui.PopID();
+        }
+        return changed;
+    }
+
+    /// Strikes, streak and recurrence. Values the current condition can't use are cleared, or validation would refuse them.
+    private static bool DrawOathRepeats(Oath oath)
+    {
+        var changed = false;
+        var canStrike = OathConditions.CanStrike(oath.Condition);
+        if (!canStrike && (oath.Strikes != 0 || oath.LedgerPerStrike != 0))
+        {
+            oath.Strikes = 0;
+            oath.LedgerPerStrike = 0;
+            changed = true;
+        }
+
+        Section.SubHeading("Leniency and repeats");
+        if (canStrike)
+        {
+            var strikes = oath.Strikes;
+            ItemWidth(100);
+            if (ImGui.InputInt("strikes allowed##strikes", ref strikes, 1, 1)) { oath.Strikes = Math.Clamp(strikes, 0, RulebookLimits.MaxStrikes); changed = true; }
+            IconGlyph.HelpMarker("Slips before it breaks. With 2, the first two only count as strikes and the third breaks it. 0 breaks it on the first.");
+            if (oath.Strikes > 0)
+            {
+                ImGui.TextUnformatted("each strike");
+                ImGui.SameLine();
+                changed |= DrawLedgerDelta("perStrikeLedger", oath.LedgerPerStrike, v => oath.LedgerPerStrike = v);
+            }
+        }
+
+        var recurrence = (int)oath.Recurrence;
+        ItemWidth(200);
+        if (ImGui.Combo("when it ends##recurrence", ref recurrence, OathRecurrenceNames, OathRecurrenceNames.Length)) { oath.Recurrence = (OathRecurrence)recurrence; changed = true; }
+        IconGlyph.HelpMarker("Start again by itself: once kept or broken, a new run opens straight away - they swear to that when they swear to the oath, and can stop it renewing. Offer it again: they're asked again each time.");
+
+        var canStreak = OathConditions.IsRitual(oath.Condition) || oath.Recurrence != OathRecurrence.Once;
+        if (!canStreak && (oath.StreakEvery != 0 || oath.StreakLedger != 0 || oath.StreakDrawReward))
+        {
+            oath.StreakEvery = 0;
+            oath.StreakLedger = 0;
+            oath.StreakDrawReward = false;
+            changed = true;
+        }
+        if (canStreak)
+        {
+            var every = oath.StreakEvery;
+            ItemWidth(100);
+            var unit = OathConditions.IsRitual(oath.Condition) ? $"{OathText.Unit(oath)}s done in a row" : "runs kept in a row";
+            if (ImGui.InputInt($"streak: every##streakEvery", ref every, 1, 1))
+            {
+                oath.StreakEvery = every <= 0 ? 0 : Math.Clamp(every, RulebookLimits.MinStreak, RulebookLimits.MaxStreak);
+                changed = true;
+            }
+            ImGui.SameLine();
+            ImGui.TextUnformatted(unit);
+            IconGlyph.HelpMarker("A bonus each time the streak reaches this many, then again at twice as many, and so on. A miss or a broken run starts it over. 0 = no streak.");
+            if (oath.StreakEvery > 0)
+            {
+                changed |= DrawLedgerDelta("streakLedger", oath.StreakLedger, v => oath.StreakLedger = v);
+                var draw = oath.StreakDrawReward;
+                if (ImGui.Checkbox("and draw a reward card##streakDraw", ref draw)) { oath.StreakDrawReward = draw; changed = true; }
+            }
+        }
         return changed;
     }
 
@@ -974,6 +1306,7 @@ public sealed partial class ModuleWindow
         var t = command.Trim();
         static bool Starts(string text, string word) => text.StartsWith(word + " ", StringComparison.OrdinalIgnoreCase) || text.Equals(word, StringComparison.OrdinalIgnoreCase);
         if (Starts(t, "title")) return ConsequenceKind.Title;
+        if (Starts(t, "outfit unlock")) return ConsequenceKind.UnlockOutfit;
         if (Starts(t, "outfit")) return ConsequenceKind.Outfit;
         if (Starts(t, "gesture")) return ConsequenceKind.Animation;
         if (Starts(t, "moodle")) return ConsequenceKind.Moodle;
@@ -992,6 +1325,7 @@ public sealed partial class ModuleWindow
     private static string? FixedCommand(ConsequenceKind kind) => kind switch
     {
         ConsequenceKind.UnlockRestraints => "restraint unlock",
+        ConsequenceKind.UnlockOutfit => "outfit unlock",
         ConsequenceKind.RevertAll => "revert all",
         _ => null,
     };
@@ -1333,8 +1667,12 @@ public sealed partial class ModuleWindow
                 }
                 if (terms.Condition == OathCondition.GreetOwner)
                     DrawPerform(pairing, id, terms);
+                DrawOpenOathExtras(pairing, id, s, terms);
             }
         }
+
+        if (accepted.Shop.Count > 0)
+            DrawSubShop(pairing, accepted);
 
         using (Section.Begin("rbSubLedger", "Ledger"))
         {
@@ -1399,6 +1737,115 @@ public sealed partial class ModuleWindow
             if (held > 0)
                 IconGlyph.WrappedDisabled($"{held} consequence(s) waiting until you're out of combat or the cutscene ends.");
         }
+    }
+
+    private string? rbPutBackError;
+    private string? rbShopResult;
+    private string? rbShopConfirm;
+
+    /// Strikes, streak, renewal and the per-condition status (grace time, leave) under an open oath.
+    private void DrawOpenOathExtras(PairingState pairing, string oathId, OathState s, Oath terms)
+    {
+        var service = plugin.RulebookService;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        ImGui.PushID("extras" + oathId);
+        if (terms.Strikes > 0)
+        {
+            var left = terms.Strikes - s.StrikesUsed;
+            IconGlyph.WrappedColored(left == 0 ? Theme.Warning : Theme.TextMuted,
+                left == 0 ? "No strikes left - the next slip breaks it." : $"{left} of {terms.Strikes} strikes left.");
+        }
+        if (terms.StreakEvery > 0)
+            IconGlyph.WrappedDisabled($"Streak: {s.Streak} in a row (bonus every {terms.StreakEvery}).");
+
+        switch (terms.Condition)
+        {
+            case OathCondition.KeepItOn:
+            {
+                var outfitName = pairing.Rulebook.OwnerOutfit?.DesignName;
+                if (outfitName is null)
+                    IconGlyph.WrappedDisabled($"Nothing to keep on until {pairing.PeerName} puts an outfit on you.");
+                else if (s.GraceEndsUnixSeconds is { } graceEnds)
+                    IconGlyph.WrappedColored(Theme.Warning, $"{outfitName} came off - put it back on {Until(graceEnds)}.");
+                else
+                    IconGlyph.WrappedDisabled($"Keeping on: {outfitName}.");
+                if (outfitName is not null && ImGui.SmallButton("Put it back on"))
+                    rbPutBackError = service.PutBackOn(pairing);
+                if (rbPutBackError is not null)
+                    IconGlyph.WrappedColored(Theme.Warning, rbPutBackError);
+                break;
+            }
+            case OathCondition.StayAtSide when s.GraceEndsUnixSeconds is { } sideEnds:
+                IconGlyph.WrappedColored(Theme.Warning, $"Too far from {pairing.PeerName} - get back within {terms.RangeYalms:0} yalms {Until(sideEnds)}.");
+                break;
+            case OathCondition.AskBeforeLogoff:
+                IconGlyph.WrappedColored(s.LeaveGrantedUntilUnixSeconds > now ? Theme.Success : Theme.TextMuted,
+                    s.LeaveGrantedUntilUnixSeconds > now
+                        ? $"You have leave to log off until {DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime():HH:mm}."
+                        : $"Ask {pairing.PeerName} before you log off.");
+                break;
+        }
+
+        if (terms.Recurrence != OathRecurrence.Once)
+        {
+            if (s.StopRenewing)
+                IconGlyph.WrappedDisabled("This is the last run - it won't start again.");
+            else
+            {
+                IconGlyph.WrappedDisabled(terms.Recurrence == OathRecurrence.Renew ? "Starts again by itself when it ends." : "Offered to you again when it ends.");
+                if (ImGui.SmallButton("Stop renewing"))
+                    service.StopRenewing(pairing, oathId);
+                IconGlyph.HelpMarker("This run still counts and is judged as usual; it just won't start again afterwards.");
+            }
+        }
+        ImGui.PopID();
+    }
+
+    private void DrawSubShop(PairingState pairing, RulebookDocument accepted)
+    {
+        var service = plugin.RulebookService;
+        using var section = Section.Begin("rbSubShop", "Shop");
+        IconGlyph.WrappedDisabled($"Spend your ledger points ({pairing.Rulebook.LedgerScore}). Only you can buy something here.");
+        foreach (var item in accepted.Shop)
+        {
+            ImGui.PushID(item.Id);
+            ImGui.TextUnformatted(string.IsNullOrWhiteSpace(item.Name) ? "Item" : item.Name);
+            DrawRuleLines(RuleText.Shop(item));
+            var blocker = service.BuyBlocker(pairing, item);
+            if (rbShopConfirm == item.Id)
+            {
+                ImGui.TextUnformatted($"Spend {item.Price} points?");
+                ImGui.SameLine();
+                using (ImRaii.Disabled(blocker is not null))
+                {
+                    if (ImGui.SmallButton("Yes, buy it"))
+                    {
+                        rbShopResult = service.Buy(pairing, item.Id) ?? $"Bought \"{item.Name}\".";
+                        rbShopConfirm = null;
+                    }
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Cancel"))
+                    rbShopConfirm = null;
+            }
+            else
+            {
+                using (ImRaii.Disabled(blocker is not null))
+                {
+                    if (ImGui.SmallButton($"Buy ({item.Price})"))
+                        rbShopConfirm = item.Id;
+                }
+                if (blocker is not null)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled(blocker);
+                }
+            }
+            ImGui.Separator();
+            ImGui.PopID();
+        }
+        if (rbShopResult is not null)
+            IconGlyph.WrappedDisabled(rbShopResult);
     }
 
     private void DrawPerform(PairingState pairing, string oathId, Oath terms)

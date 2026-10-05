@@ -25,6 +25,15 @@ public sealed class OutfitCommand
     private readonly SubRuntimeState runtimeState;
     private readonly MoodlesCommand moodles;
 
+    /// The pairing whose Owner's command (or rulebook) is being run; set by ChatCommandListener around dispatch.
+    public Guid? CommandSourcePairingId { get; set; }
+
+    /// (pairing, design id, design name) after an apply that came from that pairing's Owner.
+    public event Action<Guid, Guid, string>? OwnerDesignApplied;
+
+    /// The Owner's revert all took every outfit off.
+    public event Action? RevertedToBase;
+
     /// Before the allowlist filter.
     public int? LastScanTotalDesigns { get; private set; }
 
@@ -83,10 +92,21 @@ public sealed class OutfitCommand
     /// The caller releases restraints first so only the collar is left to reassert.
     public bool RevertToBase()
     {
+        RevertedToBase?.Invoke();
         ForceUnlock();
         var reverted = glamourer.RevertToAutomationFull() == GlamourerApiEc.Success;
         slotLocks.VerifySoon();
         return reverted;
+    }
+
+    /// The Sub's "Put it back on": the same design again, leaving locks and the attached moodle as they are; any slot
+    /// another lock holds (a restraint, the collar) is put back by enforcement.
+    public bool Reapply(Guid designId)
+    {
+        if (glamourer.ApplyDesign(designId) != GlamourerApiEc.Success)
+            return false;
+        slotLocks.VerifySoon();
+        return true;
     }
 
     public bool ForceUnlock()
@@ -120,6 +140,8 @@ public sealed class OutfitCommand
 
         // This one's moodle replaces the previous outfit's, or clears it.
         moodles.HoldAttached(AttachedMoodleLedger.OutfitSource, defaultMoodle, moodleOverride);
+        if (CommandSourcePairingId is { } sourcePairingId)
+            OwnerDesignApplied?.Invoke(sourcePairingId, designId, designName);
 
         foreach (var (slot, conflictOwner) in conflicts)
         {

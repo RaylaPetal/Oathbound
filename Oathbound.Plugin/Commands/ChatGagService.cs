@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
 using Oathbound.Plugin.Safety;
 using Dalamud.Hooking;
@@ -53,6 +54,9 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
     }
 
     public bool IsAvailable { get; }
+
+    /// The heaviest level among active gags; Engage stays level-free so the rule manager's reference counting is unchanged.
+    public Func<GagLevel>? LevelSource { get; set; }
 
     public void Engage()
     {
@@ -122,7 +126,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
             var original = message->ToString();
             if (!string.IsNullOrWhiteSpace(original))
             {
-                var rewritten = RewriteOutgoingChat(original);
+                var rewritten = RewriteOutgoingChat(original, LevelSource?.Invoke() ?? GagLevel.Heavy);
                 if (!string.Equals(rewritten, original, StringComparison.Ordinal)
                     && rewritten.Length > 0
                     && rewritten.Length <= 500)
@@ -142,10 +146,10 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
 
     /// Rewrites speech in chat channels, keeping the slash command and a tell's recipient. Other slash commands
     /// pass through unchanged.
-    internal static string RewriteOutgoingChat(string text)
+    internal static string RewriteOutgoingChat(string text, GagLevel level = GagLevel.Heavy)
     {
         if (string.IsNullOrWhiteSpace(text) || text[0] != '/')
-            return Garble(text);
+            return Garble(text, level);
 
         var commandEnd = text.IndexOf(' ');
         if (commandEnd < 0)
@@ -175,7 +179,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         if (bodyStart >= text.Length || IsInternalProtocolMessage(text.AsSpan(bodyStart)))
             return text;
 
-        return text[..bodyStart] + Garble(text[bodyStart..]);
+        return text[..bodyStart] + Garble(text[bodyStart..], level);
     }
 
     private static int FindBodyStart(string text, int searchFrom)
@@ -208,43 +212,74 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
            || body.StartsWith("collarpairack ", StringComparison.OrdinalIgnoreCase)
            || body.StartsWith("collarunpair ", StringComparison.OrdinalIgnoreCase);
 
+    /// Medium keeps each word's first letter and length, so the shape of the speech stays readable.
+    private const string MuffleLetters = "mmhmpf";
+
+    /// Light leaves words this short alone.
+    private const int LightMinWordLength = 4;
+
     /// Text between `*` pairs (inline RP emotes) passes through. A simple toggle, so an unmatched `*` exempts the rest.
-    internal static string Garble(string text)
+    internal static string Garble(string text, GagLevel level = GagLevel.Heavy)
     {
-        var sb = new StringBuilder();
-        var syllableIndex = 0;
+        var words = new List<(int Start, int End)>();
         var exempt = false;
-        var i = 0;
-        while (i < text.Length)
+        for (var i = 0; i < text.Length;)
         {
             if (text[i] == '*')
             {
                 exempt = !exempt;
-                sb.Append(text[i]);
                 i++;
             }
-            else if (exempt)
+            else if (!exempt && char.IsLetter(text[i]))
             {
-                sb.Append(text[i]);
-                i++;
-            }
-            else if (char.IsLetter(text[i]))
-            {
-                var wordStart = i;
+                var start = i;
                 while (i < text.Length && char.IsLetter(text[i]))
                     i++;
-                var word = text[wordStart..i];
-                var syllable = Syllables[syllableIndex++ % Syllables.Length];
-                sb.Append(char.IsUpper(word[0]) ? char.ToUpperInvariant(syllable[0]) + syllable[1..] : syllable);
+                words.Add((start, i));
             }
             else
             {
-                sb.Append(text[i]);
                 i++;
             }
         }
 
+        var garbled = level == GagLevel.Light ? PickLightWords(words) : null;
+        var sb = new StringBuilder();
+        var syllableIndex = 0;
+        var at = 0;
+        for (var w = 0; w < words.Count; w++)
+        {
+            var (start, end) = words[w];
+            sb.Append(text, at, start - at);
+            at = end;
+            var word = text[start..end];
+            if (garbled is not null && !garbled.Contains(w))
+            {
+                sb.Append(word);
+                continue;
+            }
+            if (level == GagLevel.Medium)
+            {
+                sb.Append(word[0]);
+                for (var c = 1; c < word.Length; c++)
+                    sb.Append(char.IsUpper(word[c]) ? char.ToUpperInvariant(MuffleLetters[c % MuffleLetters.Length]) : MuffleLetters[c % MuffleLetters.Length]);
+                continue;
+            }
+            var syllable = Syllables[syllableIndex++ % Syllables.Length];
+            sb.Append(char.IsUpper(word[0]) ? char.ToUpperInvariant(syllable[0]) + syllable[1..] : syllable);
+        }
+        sb.Append(text, at, text.Length - at);
         return sb.ToString();
+    }
+
+    /// About one longer word in three, and always at least one when there is any.
+    private static HashSet<int> PickLightWords(List<(int Start, int End)> words)
+    {
+        var eligible = Enumerable.Range(0, words.Count).Where(w => words[w].End - words[w].Start >= LightMinWordLength).ToList();
+        var picked = eligible.Where(_ => Random.Shared.Next(3) == 0).ToHashSet();
+        if (picked.Count == 0 && eligible.Count > 0)
+            picked.Add(eligible[Random.Shared.Next(eligible.Count)]);
+        return picked;
     }
 
     public void Dispose()

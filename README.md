@@ -39,13 +39,13 @@ everything instantly with their safeword.
 | 👗 | **Outfit** | Dress your Sub in one of their Glamourer designs, locked in place or free to change. |
 | 🎭 | **Animation** | Play emotes and poses from your Sub's Penumbra animation mods. Your Sub is held in the pose until you press **Stop animation**. |
 | 😊 | **Moodles** | Add or clear status icons from your Sub's Moodles. |
-| ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions, gagged, or arm/leg/full-body cuffs drawn on their wrists and ankles with chains between them (gear restraints can draw them too, rule by rule). Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). |
+| ⛓️ | **Restraints** | Put gear on your Sub that comes with rules - forced pose, walk only, blocked actions, gagged chat, or arm/leg/full-body cuffs held in an animation. Or send rules on their own, with no gear: forced pose, walk only, blocked actions, gagged, or arm/leg/full-body cuffs drawn on their wrists and ankles with chains between them (gear restraints can draw them too, rule by rule). Lock them until you unlock them, or set a timer and they come off by themselves when it runs out (both of you need a version with timed locks). A gag can be Light, Medium or Heavy, and you can let your Sub **struggle** against a lock - Easy, Medium or Hard - for a chance to get free (you're told if they do). |
 | 🔗 | **Follow / Leash** | Put your Sub on a leash of the length you choose. They move freely inside it, can't walk past its end, and get pulled along when you walk farther away. It stays on until you unleash them: when you teleport or change area your Sub is brought along to you, and anywhere they can't follow (your house, an inn room, a duty) it just pauses until you're together again. When you mount, your Sub rides pillion behind you (in a party, on a multi-seat mount) or mounts up and rides or flies with you. A leash line runs from their neck to your hand, slack or taut. |
 | 🏷️ | **Status icons** | Small gagged, restrained and leashed icons next to your Sub's name. |
 | 🔒 | **Collar** | A collar piece, a left-hand ring, or both, that go on and lock together when you pair, as a visible sign of your bond. It can carry a Moodle too. If it ever comes off without you unlocking it, you see a red warning in your header - even if it happened while you were offline. |
 | 📳 | **Toy Control** | Control your Sub's connected toys through Intiface Central, plus optional triggers (low health, taking damage, being restrained, spells or emotes used on them). |
 | 💫 | **Reactions** | Make your own character react when someone uses an emote on you or says a phrase after your trigger word: play a gesture, put on an item, turn on a mod, apply a moodle or reply in chat. Works for both roles, and only for the people you're paired with unless you allow anyone. |
-| 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. Daily rituals can score the ledger each time they're done or missed, and are judged as kept or broken when the oath ends. The Sub accepts every version and every oath before anything runs; after that only the Owner can change or remove a rule, and the Owner sees what happened. |
+| 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. Daily rituals can score the ledger each time they're done or missed, and are judged as kept or broken when the oath ends. More oaths: complete a number of duties, play only certain jobs, keep on the outfit you put on them, stay at your side, and ask before logging off. An oath can allow a few strikes before it breaks, pay a streak bonus, and start again by itself or be offered again when it ends. A **schedule** runs something at a time of day or at login, and a **shop** lets the Sub spend ledger points on a reward card or something you set. The Sub accepts every version and every oath before anything runs; after that only the Owner can change or remove a rule, and the Owner sees what happened. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header puts everything back to nothing. The collar and your pairing stay. |
@@ -114,7 +114,9 @@ Sync tab shows whether it's up to date.
   once you accept it. Accepting is your consent to every rule in that version: after that you can't switch single rules
   off, only your Owner can change or remove them. It needs its own permission and acknowledgement,
   every consequence still needs the permission for its category, and a rulebook can never teleport you or
-  touch your collar. Only a presence rule can leash you, take the leash off, or have you /tell your Owner a
+  touch your collar. A recurring oath starts again (or is offered again) after each run, and swearing to it is
+  your consent to that too; you can stop it renewing at any time, and the current run still counts. Only you can
+  buy from your Owner's shop - no command or rule ever spends your points. Only a presence rule can leash you, take the leash off, or have you /tell your Owner a
   message, and only with your Follow or Custom chat messages permission on. Your safeword pauses all rulebooks and voids open oaths until you
   resume.
 - **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
@@ -209,7 +211,8 @@ further, and you should decide for yourself before turning them on:
   locked until you arrive. Walking a character around automatically looks more like a bot than anything
   else here, so only turn it on if you're comfortable with that. If it gets stuck, press **Stop teleport**
   in the header (or use your safeword). It doesn't work from inside a house or apartment.
-- **Gagged** changes chat messages you type into muffled text before they're sent.
+- **Gagged** changes chat messages you type into muffled text before they're sent - every word at Heavy,
+  muffled words that keep their first letter and length at Medium, and about one longer word in three at Light.
 - **Custom chat messages** in a Custom Trigger send text you wrote yourself, on the channel you chose.
 - **Rulebook** consequences happen on their own when something in your game matches a rule you accepted:
   breaking or keeping an oath, a wipe, dying, entering or leaving a place, your Owner coming near, a card
@@ -219,8 +222,8 @@ further, and you should decide for yourself before turning them on:
   tell so the leash follows them across areas), take it off when they leave, and **send your Owner a /tell**
   they wrote, by itself, when they arrive or leave. Leashing needs your Follow permission and the message needs
   Custom chat messages; with either off, that part is skipped.
-  Anything other than toys and moodles waits until you're out of combat and cutscenes, and each rule has a
-  cooldown of at least a minute.
+  A **schedule** rule runs at the time of day your Owner set, or each time you log in. Anything other than toys
+  and moodles waits until you're out of combat and cutscenes, and each rule has a cooldown of at least a minute.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
   reaction with a chat message **replies automatically**, in whatever channel you wrote it for, at most
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
@@ -234,7 +237,10 @@ leashed. It also sends that tell once in reply to a "leash travel" that reaches 
 from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
 other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing
 you accepted, or the optional "collarrulebook" tell when an Owner publishes a rulebook with **Tell them now**
-ticked, which only asks the Sub's plugin to pick it up right away.
+ticked, which only asks the Sub's plugin to pick it up right away. If you struggle free of a restraint lock, your
+plugin sends the Owner who set it one short "collarstruggle free" tell; failed tries send nothing. An Owner's
+**Grant leave** button (for an "ask before logging off" oath) sends one tell with the word they chose, only when
+they press it.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.

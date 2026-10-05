@@ -105,6 +105,12 @@ public sealed class ChatComposer
     public string ComposeLeashOnNotice(string name, string world) =>
         $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOnWord}";
 
+    /// The Sub struggled free of a lock this Owner set.
+    public string ComposeStruggleNotice(string name, string world) => $"/tell {name}@{world} {StruggleNoticeKeyword} {StruggleFreeWord}";
+
+    public const string StruggleNoticeKeyword = "collarstruggle";
+    public const string StruggleFreeWord = "free";
+
     /// A presence rule's message, only ever as a /tell to that Owner.
     public string ComposePresenceTell(string name, string world, string text) =>
         $"/tell {name}@{world} {text.Trim()}";

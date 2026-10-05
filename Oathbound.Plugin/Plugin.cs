@@ -201,6 +201,7 @@ public sealed class Plugin : IDalamudPlugin
         FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand, TeleportCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
+        ChatGagService.LevelSource = () => RestraintCommand.ActiveGagLevel;
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
         ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
@@ -215,6 +216,12 @@ public sealed class Plugin : IDalamudPlugin
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
+        // One tell to the Owner who set the lock; failed tries send nothing.
+        RestraintCommand.StruggledFree += pairingId =>
+        {
+            if (pairingId is { } id && Configuration.FindPairingById(id) is { IsPaired: true, Direction: PairingDirection.SubSide, PeerName: { } name, PeerWorld: { } world })
+                ChatSender.Send(ChatComposer.ComposeStruggleNotice(name, world));
+        };
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         worldStrokes = new WorldStrokeRenderer();
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
@@ -243,7 +250,7 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
-        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, () => relayBackgroundWorkCts.Token);
+        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
 

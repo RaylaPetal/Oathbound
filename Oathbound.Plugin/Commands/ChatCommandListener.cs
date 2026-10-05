@@ -128,6 +128,8 @@ public sealed class ChatCommandListener : IDisposable
                 return;
             if (TryHandleRulebookNudgeMessage(text, message.Sender))
                 return;
+            if (TryHandleStruggleNoticeMessage(text, message.Sender))
+                return;
         }
 
         // Only Sub-side pairings apply anything from chat, matched against every paired peer.
@@ -165,7 +167,7 @@ public sealed class ChatCommandListener : IDisposable
 
         try
         {
-            var outcome = Resolve(alias, matchedPairing);
+            var outcome = ResolveFromPairing(alias, matchedPairing);
             Plugin.Log.Information($"Trigger tell dispatch: {outcome.Message}");
         }
         catch (Exception ex)
@@ -315,6 +317,27 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
+    /// Only a paired Sub of an Owner-side pairing counts; anyone else is ignored.
+    private bool TryHandleStruggleNoticeMessage(string text, SeString sender)
+    {
+        if (!text.StartsWith(ChatComposer.StruggleNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var (word, _) = SplitFirstToken(text[ChatComposer.StruggleNoticeKeyword.Length..].Trim());
+        if (!word.Equals(ChatComposer.StruggleFreeWord, StringComparison.OrdinalIgnoreCase))
+            return true;
+        var (name, world) = ExtractNameAndWorld(sender);
+        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
+            return true;
+        estimates.MarkUnrestrained(ownerPairing.Id);
+        Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+        {
+            Title = "Struggled free",
+            Content = $"{ownerPairing.PeerName} struggled free of your restraints.",
+            Type = Dalamud.Interface.ImGuiNotification.NotificationType.Warning,
+        });
+        return true;
+    }
+
     /// Runs a rulebook consequence through the same dispatch as a tell from `pairing`, so every permission check
     /// applies. Re-checks the allowlist here too, so nothing outside it can run even from a tampered config.
     public LocalTestResult RunRulebookCommand(string commandText, PairingState pairing)
@@ -323,12 +346,30 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Fail(refused);
         try
         {
-            return Resolve(commandText.Trim(), pairing);
+            return ResolveFromPairing(commandText.Trim(), pairing);
         }
         catch (Exception ex)
         {
             Plugin.Log.Error(ex, "A rulebook consequence threw.");
             return LocalTestResult.Fail($"Threw an exception: {ex.Message}");
+        }
+    }
+
+    /// An outfit applied while this runs counts as that pairing's Owner's, which a Keep it on oath holds the Sub to,
+    /// and a restraint lock it sets is theirs, so a struggle escape is reported to them.
+    private LocalTestResult ResolveFromPairing(string commandText, PairingState sourcePairing)
+    {
+        outfit.CommandSourcePairingId = sourcePairing.Id;
+        restraints.PendingLockPairingId = sourcePairing.Id;
+        try
+        {
+            return Resolve(commandText, sourcePairing);
+        }
+        finally
+        {
+            outfit.CommandSourcePairingId = null;
+            restraints.PendingLockPairingId = null;
+            restraints.PendingStruggle = default;
         }
     }
 
@@ -626,6 +667,7 @@ public sealed class ChatCommandListener : IDisposable
 
     private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride, RestraintLock restraintLock)
     {
+        restraints.PendingStruggle = RestraintStruggle.FromCommand(rest);
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
             return restraints.ForceUnlock()
