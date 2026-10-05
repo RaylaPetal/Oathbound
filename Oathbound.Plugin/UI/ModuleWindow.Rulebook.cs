@@ -1625,6 +1625,8 @@ public sealed partial class ModuleWindow
                     ImGui.PushID(id);
                     ImGui.TextUnformatted(string.IsNullOrWhiteSpace(oath.Name) ? "Oath" : oath.Name);
                     DrawRuleLines(OathText.Lines(oath));
+                    if (OathConditions.IsRitual(oath.Condition))
+                        IconGlyph.WrappedDisabled("Resets at midnight - today counts as the first day.");
                     IconGlyph.WrappedDisabled($"Offer ends {Until(s.OfferedUnixSeconds + (long)RulebookService.OfferLifetime.TotalSeconds)}.");
                     if (ImGui.SmallButton("I swear"))
                         service.AcceptOath(pairing, id);
@@ -1650,19 +1652,20 @@ public sealed partial class ModuleWindow
                     (terms.Scope == OathScope.NextDuty && !s.DutyEntered ? " Starts with your next duty." : ""));
                 if (OathConditions.CountsTimes(terms.Condition))
                 {
-                    var due = s.PeriodStartUnixSeconds + Math.Max(1, terms.PeriodDays) * 86400L;
+                    var due = RitualCalendar.RepeatEnd(s.PeriodStartUnixSeconds, terms.PeriodDays);
                     var done = s.PeriodCount >= terms.TimesPerPeriod;
                     IconGlyph.WrappedColored(done ? Theme.Success : Theme.Warning,
                         done ? $"Done for now - next stretch starts {Until(due)}." : $"{s.PeriodCount}/{terms.TimesPerPeriod} done - due {Until(due)}.");
                 }
                 if (OathConditions.IsRitual(terms.Condition) && s.ScopeEndsUnixSeconds is { } ends)
                 {
-                    var length = Math.Max(1, terms.PeriodDays) * 86400L;
-                    var start = ends - terms.DurationMinutes * 60L;
-                    var total = Math.Max(1, (int)Math.Ceiling(terms.DurationMinutes * 60.0 / length));
-                    var current = Math.Clamp((int)((s.PeriodStartUnixSeconds - start) / length) + 1, 1, total);
+                    var period = Math.Max(1, terms.PeriodDays);
+                    var days = RitualCalendar.DurationDays(terms.DurationMinutes);
+                    var firstDay = RitualCalendar.LocalDate(ends).AddDays(-days);
+                    var total = Math.Max(1, (days + period - 1) / period);
+                    var current = Math.Clamp((RitualCalendar.LocalDate(s.PeriodStartUnixSeconds) - firstDay).Days / period + 1, 1, total);
                     var unit = OathText.Unit(terms);
-                    IconGlyph.WrappedDisabled($"{char.ToUpperInvariant(unit[0])}{unit[1..]} {current} of {total}. " + (s.MissedPeriods > 0
+                    IconGlyph.WrappedDisabled($"{char.ToUpperInvariant(unit[0])}{unit[1..]} {current} of {total}, resets at midnight. " + (s.MissedPeriods > 0
                         ? $"{s.MissedPeriods} missed, so it ends as broken."
                         : "The kept outcome applies when the oath ends, if none is missed."));
                 }

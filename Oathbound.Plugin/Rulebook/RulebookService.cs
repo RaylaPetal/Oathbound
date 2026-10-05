@@ -375,7 +375,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 s.OfferedTermsJson = RulebookJson.Serialize(oath);
                 continue;
             }
-            // Carried over without scoring again; the new terms run from now so a shorter oath can't pay out at once.
+            // Carried over without scoring again; the new terms run from today, so a shorter oath can't pay out before midnight.
             var carried = SameAction(old, oath) ? Math.Min(s.PeriodCount, RitualNeeded(oath)) : 0;
             StartOath(s, oath, now);
             s.PeriodCount = carried;
@@ -431,11 +431,16 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         s.ChangedUnixSeconds = now;
         s.Terms = RulebookJson.Deserialize<Oath>(RulebookJson.Serialize(terms));
         s.OfferedTermsJson = RulebookJson.Serialize(terms);
-        s.ScopeEndsUnixSeconds = terms.Scope == OathScope.ForATime ? now + terms.DurationMinutes * 60L : null;
+        // A ritual's first repeat is the whole of today, however much of it is left.
+        var ritual = OathConditions.IsRitual(terms.Condition);
+        var today = RitualCalendar.StartOfLocalDay(now);
+        s.ScopeEndsUnixSeconds = terms.Scope != OathScope.ForATime ? null
+            : ritual ? RitualCalendar.ScopeEnd(today, terms.DurationMinutes)
+            : now + terms.DurationMinutes * 60L;
         s.DutyEntered = false;
         s.DutyStartedUnixSeconds = null;
         s.CurfewArmed = !InCurfew(terms);
-        s.PeriodStartUnixSeconds = now;
+        s.PeriodStartUnixSeconds = ritual ? today : now;
         s.PeriodCount = 0;
         s.MissedPeriods = 0;
         s.LastMatchUnixSeconds = 0;
@@ -662,11 +667,10 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     /// so it's judged before the oath resolves.
     private void CloseMissedPeriods(PairingState pairing, string id, OathState s, Oath terms, long now)
     {
-        var length = Math.Max(1, terms.PeriodDays) * 86400L;
         var needed = RitualNeeded(terms);
         var name = string.IsNullOrWhiteSpace(terms.Name) ? "oath" : terms.Name;
-        while (now >= s.PeriodStartUnixSeconds + length &&
-               (s.ScopeEndsUnixSeconds is not { } ends || s.PeriodStartUnixSeconds + length <= ends))
+        while (RitualCalendar.RepeatEnd(s.PeriodStartUnixSeconds, terms.PeriodDays) is var periodEnd && now >= periodEnd &&
+               (s.ScopeEndsUnixSeconds is not { } ends || periodEnd <= ends))
         {
             if (s.PeriodCount < needed)
             {
@@ -685,7 +689,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 else
                     Notify("Oath", $"You missed \"{name}\" this time.", NotificationType.Warning);
             }
-            s.PeriodStartUnixSeconds += length;
+            s.PeriodStartUnixSeconds = periodEnd;
             s.PeriodCount = 0;
         }
     }
