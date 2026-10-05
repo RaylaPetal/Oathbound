@@ -46,6 +46,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         if (!estimates.TryGetValue(pairingId, out var estimate))
             estimates[pairingId] = estimate = new OwnerStatusEstimate();
         estimate.Leashed = true;
+        estimate.LeashedAtUtc = DateTime.UtcNow;
     }
 
     /// Returns whether the estimate showed the Sub leashed until now.
@@ -112,6 +113,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
                 // 3 when bare.
                 LengthOption.Strip(MoodleOption.Strip(rest, out _), out var length);
                 estimate.Leashed = true;
+                estimate.LeashedAtUtc = DateTime.UtcNow;
                 estimate.LeashLength = length ?? LengthOption.DefaultYalms;
                 break;
             case ControlWords.Unleash:
@@ -194,6 +196,8 @@ public sealed class OwnerStatusEstimate
     public bool Restrained { get; internal set; }
     public bool Leashed { get; internal set; }
     public float LeashLength { get; internal set; } = LengthOption.DefaultYalms;
+    /// A leash only starts with both in the same place, so one started after the Owner moved needs no travel.
+    public DateTime LeashedAtUtc { get; internal set; }
     public DateTime? RestrainedUntilUtc { get; internal set; }
     /// What the sent restraints' rules draw; None when the rules aren't known.
     public CuffSet Cuffs { get; internal set; }

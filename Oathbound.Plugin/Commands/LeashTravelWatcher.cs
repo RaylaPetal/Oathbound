@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Interface.ImGuiNotification;
 using Oathbound.Plugin.Config;
 
@@ -13,6 +14,8 @@ public sealed class LeashTravelWatcher
 {
     /// Farther than this between two updates is a relocation (an aethernet hop), not walking.
     private const float JumpDistance = 30f;
+    /// Matches the Sub's own re-attach reach: this close, the Sub just re-attaches, so no travel is sent.
+    private const float BesideReach = 30f;
     /// Lets the position settle after loading in.
     private static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(1);
 
@@ -25,6 +28,7 @@ public sealed class LeashTravelWatcher
     private Vector3 lastPosition;
     private DateTime? loadedAt;
     private bool pendingSend;
+    private DateTime movedAt;
 
     public LeashTravelWatcher(PluginConfig config, OwnerStatusEstimateTracker estimates, ChatComposer composer, ChatSender sender)
     {
@@ -39,6 +43,9 @@ public sealed class LeashTravelWatcher
         var player = Plugin.ObjectTable.LocalPlayer;
         if (player is null || Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51])
         {
+            // The start of the load: a leash-on notice arriving while loading was started at the destination.
+            if (loadedAt is not null)
+                movedAt = DateTime.UtcNow;
             loadedAt = null;
             return;
         }
@@ -61,8 +68,9 @@ public sealed class LeashTravelWatcher
             lastArea = area;
             pendingSend = true;
         }
-        else if (!pendingSend && Vector2.Distance(new Vector2(position.X, position.Z), new Vector2(lastPosition.X, lastPosition.Z)) > JumpDistance)
+        else if (!pendingSend && Vector2.Distance(Ground(position), Ground(lastPosition)) > JumpDistance)
         {
+            movedAt = now;
             pendingSend = true;
         }
         lastPosition = position;
@@ -76,7 +84,8 @@ public sealed class LeashTravelWatcher
     private void Fire()
     {
         var leashed = config.Pairings
-            .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired && estimates.For(p) is { Leashed: true })
+            .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
+                && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < movedAt && !IsBeside(p))
             .ToList();
         if (leashed.Count == 0)
             return;
@@ -101,4 +110,21 @@ public sealed class LeashTravelWatcher
         foreach (var pairing in leashed)
             sender.Send(composer.ComposeLeashTravel(pairing, target));
     }
+
+    /// Matched by name and home world, never by name alone.
+    private static bool IsBeside(PairingState pairing)
+    {
+        if (Plugin.ObjectTable.LocalPlayer is not { } me)
+            return false;
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            if (obj is IPlayerCharacter pc && pc.GameObjectId != me.GameObjectId
+                && string.Equals(pc.Name.TextValue, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(pc.HomeWorld.ValueNullable?.Name.ExtractText(), pairing.PeerWorld, StringComparison.OrdinalIgnoreCase))
+                return Vector2.Distance(Ground(pc.Position), Ground(me.Position)) <= BesideReach;
+        }
+        return false;
+    }
+
+    private static Vector2 Ground(Vector3 v) => new(v.X, v.Z);
 }
