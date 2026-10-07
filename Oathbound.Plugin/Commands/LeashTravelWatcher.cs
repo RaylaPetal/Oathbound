@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
@@ -19,6 +20,10 @@ public sealed class LeashTravelWatcher
     private const float BesideReach = 30f;
     /// Lets the position settle after loading in.
     private static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(1);
+    /// A tell sent during the duty's entry fade, or before a Sub in the party has loaded in, gets lost.
+    private static readonly TimeSpan UnleashMinDelay = TimeSpan.FromSeconds(3);
+    /// A Sub who never shows up isn't in the duty; send anyway.
+    private static readonly TimeSpan UnleashMaxWait = TimeSpan.FromSeconds(15);
 
     private readonly PluginConfig config;
     private readonly OwnerStatusEstimateTracker estimates;
@@ -32,6 +37,7 @@ public sealed class LeashTravelWatcher
     /// A jump inside a duty (a boss-arena teleport) isn't entering one.
     private bool pendingAreaChange;
     private DateTime movedAt;
+    private List<PairingState>? pendingUnleash;
 
     public LeashTravelWatcher(PluginConfig config, OwnerStatusEstimateTracker estimates, ChatComposer composer, ChatSender sender)
     {
@@ -71,6 +77,7 @@ public sealed class LeashTravelWatcher
             lastArea = area;
             pendingSend = true;
             pendingAreaChange = true;
+            pendingUnleash = null;
         }
         else if (!pendingSend && Vector2.Distance(Ground(position), Ground(lastPosition)) > JumpDistance)
         {
@@ -78,6 +85,9 @@ public sealed class LeashTravelWatcher
             pendingSend = true;
         }
         lastPosition = position;
+
+        if (pendingUnleash is not null)
+            TryUnleash(now - loadedAt.Value);
 
         if (!pendingSend || now - loadedAt.Value < SettleDelay)
             return;
@@ -89,21 +99,23 @@ public sealed class LeashTravelWatcher
 
     private void Fire(bool areaChanged)
     {
-        var inDuty = Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95];
+        var territory = Plugin.ClientState.TerritoryType;
+        // The bound-by-duty flags can lag the load; the territory's own duty link can't.
+        var inDuty = Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95]
+            || TeleportDestinations.IsDuty(territory);
         if (inDuty && areaChanged && config.QuickCommands.UnleashInDuties)
         {
-            UnleashAll();
+            // No IsBeside filter: a Sub in the party loads into the duty right next to the Owner.
+            var toUnleash = LeashedSince(movedAt).ToList();
+            if (toUnleash.Count > 0)
+                pendingUnleash = toUnleash;
             return;
         }
 
-        var leashed = config.Pairings
-            .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
-                && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < movedAt && !IsBeside(p))
-            .ToList();
+        var leashed = LeashedSince(movedAt).Where(p => !IsBeside(p)).ToList();
         if (leashed.Count == 0)
             return;
 
-        var territory = Plugin.ClientState.TerritoryType;
         var cantFollow = TeleportDestinations.IsInsideHousing() || TeleportDestinations.IsInnRoom(territory)
             || inDuty;
         if (cantFollow || !TeleportSendAction.TryResolveTarget(out var target, out _))
@@ -124,13 +136,20 @@ public sealed class LeashTravelWatcher
             sender.Send(composer.ComposeLeashTravel(pairing, target));
     }
 
-    /// No IsBeside filter: a Sub in the party loads into the duty right next to the Owner.
-    private void UnleashAll()
+    private IEnumerable<PairingState> LeashedSince(DateTime cutoff) =>
+        config.Pairings.Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
+            && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < cutoff);
+
+    private void TryUnleash(TimeSpan sinceLoad)
     {
-        var leashed = config.Pairings
-            .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
-                && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < movedAt)
-            .ToList();
+        if (sinceLoad < UnleashMinDelay || InCutscene())
+            return;
+        // Waits for the Subs to load in, since a tell to a Sub still on a loading screen can be lost.
+        if (sinceLoad < UnleashMaxWait && !pendingUnleash!.All(p => FindPeer(p) is not null))
+            return;
+
+        var leashed = pendingUnleash!.Where(p => estimates.For(p) is { Leashed: true }).ToList();
+        pendingUnleash = null;
         if (leashed.Count == 0)
             return;
 
@@ -139,6 +158,7 @@ public sealed class LeashTravelWatcher
             sender.Send(composer.ComposeUnleash(pairing));
             estimates.MarkUnleashed(pairing.Id);
         }
+        Plugin.Log.Information($"Entered a duty: sent unleash to {leashed.Count} leashed Sub(s) {sinceLoad.TotalSeconds:0.0}s after loading in.");
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Leash off",
@@ -149,19 +169,26 @@ public sealed class LeashTravelWatcher
         });
     }
 
+    private static bool InCutscene() =>
+        Plugin.Condition[ConditionFlag.OccupiedInCutSceneEvent] || Plugin.Condition[ConditionFlag.WatchingCutscene] || Plugin.Condition[ConditionFlag.WatchingCutscene78];
+
+    private static bool IsBeside(PairingState pairing) =>
+        Plugin.ObjectTable.LocalPlayer is { } me && FindPeer(pairing) is { } pc
+        && Vector2.Distance(Ground(pc.Position), Ground(me.Position)) <= BesideReach;
+
     /// Matched by name and home world, never by name alone.
-    private static bool IsBeside(PairingState pairing)
+    private static IPlayerCharacter? FindPeer(PairingState pairing)
     {
         if (Plugin.ObjectTable.LocalPlayer is not { } me)
-            return false;
+            return null;
         foreach (var obj in Plugin.ObjectTable)
         {
             if (obj is IPlayerCharacter pc && pc.GameObjectId != me.GameObjectId
                 && string.Equals(pc.Name.TextValue, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(pc.HomeWorld.ValueNullable?.Name.ExtractText(), pairing.PeerWorld, StringComparison.OrdinalIgnoreCase))
-                return Vector2.Distance(Ground(pc.Position), Ground(me.Position)) <= BesideReach;
+                return pc;
         }
-        return false;
+        return null;
     }
 
     private static Vector2 Ground(Vector3 v) => new(v.X, v.Z);

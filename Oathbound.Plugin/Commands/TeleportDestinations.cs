@@ -91,6 +91,9 @@ public static class TeleportDestinations
     /// Private instances nobody else can be brought into.
     public static bool IsInnRoom(uint territory) => IntendedUse(territory) == (uint)ECommons.ExcelServices.TerritoryIntendedUseEnum.Inn;
 
+    public static bool IsDuty(uint territory) =>
+        Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.ContentFinderCondition.RowId is > 0;
+
     private static uint? IntendedUse(uint territory) =>
         Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.TerritoryIntendedUse.RowId;
 
