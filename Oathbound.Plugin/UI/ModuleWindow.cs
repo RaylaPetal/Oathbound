@@ -3296,6 +3296,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 plugin.Configuration.Save();
             }
             DrawFixedQuickRow("Unleash", ControlWords.Unleash, canSend, FixedActionIds.UnleashDefault);
+            ImGui.Indent();
+            var unleashInDuties = plugin.Configuration.QuickCommands.UnleashInDuties;
+            if (ImGui.Checkbox("Unleash when I enter a duty##ownerUnleashInDuties", ref unleashInDuties))
+            {
+                plugin.Configuration.QuickCommands.UnleashInDuties = unleashInDuties;
+                plugin.Configuration.Save();
+            }
+            IconGlyph.HelpMarker("When you load into a duty, your plugin sends each leashed Sub one unleash tell on its own. The leash stays off afterwards until you leash them again.");
+            ImGui.Unindent();
         }
 
         if (quick.Count == 0)

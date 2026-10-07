@@ -9,7 +9,8 @@ using Oathbound.Plugin.Config;
 namespace Oathbound.Plugin.Commands;
 
 /// Owner side: after arriving in a new area (or jumping far inside one), sends one `leash travel` to every Sub it
-/// shows as leashed - an automatic tell the README documents. Where the Sub can't be sent, the leash pauses.
+/// shows as leashed - an automatic tell the README documents. Where the Sub can't be sent, the leash pauses, except
+/// that entering a duty sends `unleash` instead when the Owner opted in.
 public sealed class LeashTravelWatcher
 {
     /// Farther than this between two updates is a relocation (an aethernet hop), not walking.
@@ -28,6 +29,8 @@ public sealed class LeashTravelWatcher
     private Vector3 lastPosition;
     private DateTime? loadedAt;
     private bool pendingSend;
+    /// A jump inside a duty (a boss-arena teleport) isn't entering one.
+    private bool pendingAreaChange;
     private DateTime movedAt;
 
     public LeashTravelWatcher(PluginConfig config, OwnerStatusEstimateTracker estimates, ChatComposer composer, ChatSender sender)
@@ -67,6 +70,7 @@ public sealed class LeashTravelWatcher
         {
             lastArea = area;
             pendingSend = true;
+            pendingAreaChange = true;
         }
         else if (!pendingSend && Vector2.Distance(Ground(position), Ground(lastPosition)) > JumpDistance)
         {
@@ -78,11 +82,20 @@ public sealed class LeashTravelWatcher
         if (!pendingSend || now - loadedAt.Value < SettleDelay)
             return;
         pendingSend = false;
-        Fire();
+        var areaChanged = pendingAreaChange;
+        pendingAreaChange = false;
+        Fire(areaChanged);
     }
 
-    private void Fire()
+    private void Fire(bool areaChanged)
     {
+        var inDuty = Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95];
+        if (inDuty && areaChanged && config.QuickCommands.UnleashInDuties)
+        {
+            UnleashAll();
+            return;
+        }
+
         var leashed = config.Pairings
             .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
                 && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < movedAt && !IsBeside(p))
@@ -92,7 +105,7 @@ public sealed class LeashTravelWatcher
 
         var territory = Plugin.ClientState.TerritoryType;
         var cantFollow = TeleportDestinations.IsInsideHousing() || TeleportDestinations.IsInnRoom(territory)
-            || Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95];
+            || inDuty;
         if (cantFollow || !TeleportSendAction.TryResolveTarget(out var target, out _))
         {
             // The Sub's leash pauses on its own and picks back up once they're together again.
@@ -109,6 +122,31 @@ public sealed class LeashTravelWatcher
 
         foreach (var pairing in leashed)
             sender.Send(composer.ComposeLeashTravel(pairing, target));
+    }
+
+    /// No IsBeside filter: a Sub in the party loads into the duty right next to the Owner.
+    private void UnleashAll()
+    {
+        var leashed = config.Pairings
+            .Where(p => p.Direction == PairingDirection.OwnerSide && p.IsPaired
+                && estimates.For(p) is { Leashed: true } estimate && estimate.LeashedAtUtc < movedAt)
+            .ToList();
+        if (leashed.Count == 0)
+            return;
+
+        foreach (var pairing in leashed)
+        {
+            sender.Send(composer.ComposeUnleash(pairing));
+            estimates.MarkUnleashed(pairing.Id);
+        }
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Leash off",
+            Content = leashed.Count == 1
+                ? $"You entered a duty, so {leashed[0].PeerName} was unleashed."
+                : "You entered a duty, so your Subs were unleashed.",
+            Type = NotificationType.Info,
+        });
     }
 
     /// Matched by name and home world, never by name alone.

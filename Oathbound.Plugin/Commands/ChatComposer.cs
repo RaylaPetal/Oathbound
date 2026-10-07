@@ -39,6 +39,13 @@ public sealed class ChatComposer
         return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Leash} {LeashTravelWord} {target.ToPayload()}";
     }
 
+    /// Addressed to that pairing like ComposeLeashTravel, so it reaches a Sub that isn't the active one.
+    public string ComposeUnleash(PairingState pairing)
+    {
+        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
+        return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Unleash}";
+    }
+
     public const string LeashTravelWord = "travel";
 
     /// `gesture stop` ends a held animation on the Sub.

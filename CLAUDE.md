@@ -196,7 +196,7 @@ revocable permissions, Gagged/Chat-action being called out as materially riskier
 model is a constraint on any new feature here, not just documentation.
 
 Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
-Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
+Owner's `leash travel` on area change and its opt-in `unleash` on entering a duty (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
 a leash ends on its side (`LeashOffNotifier`), the Sub's `collarleash on` notice and an Owner-written /tell from an
 accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free` notice after struggling free of a lock (`RestraintCommand.StruggledFree`), a user-configured Reactions chat reply, and lifecycle tells tied
 to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted

@@ -307,6 +307,9 @@ public class OwnerQuickCommands
     public string? LeashMoodleOverride { get; set; }
 
     public int LeashLengthYalms { get; set; } = 3;
+
+    /// Sends each leashed Sub `unleash` on loading into a duty. Off by default: it's an automatic tell.
+    public bool UnleashInDuties { get; set; }
 }
 
 /// Shared between CollarWindow and QuickAccessMenu so the ids never drift.

@@ -232,9 +232,10 @@ further, and you should decide for yourself before turning them on:
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
   add a chat reply if you're comfortable with it.
 
-Every command the Owner sends is one deliberate click that sends one tell, with one exception: while a Sub
+Every command the Owner sends is one deliberate click that sends one tell, with two exceptions: while a Sub
 is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
-area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
+area, so the Sub can follow. If the Owner ticks **Unleash when I enter a duty** (off by default), their plugin
+instead sends each leashed Sub one "unleash" tell on its own when the Owner loads into a duty. The Sub's plugin has an automatic tell of its own: when the Sub's leash comes off on their
 side (their safeword, or a leash their plugin couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
 leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
 from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
