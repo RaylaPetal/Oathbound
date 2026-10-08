@@ -261,7 +261,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.Indent();
         using (ImRaii.Disabled(!canSend))
         {
-            if (ImGui.SmallButton("Send##subControlTeleport"))
+            if (ImGui.Button("Send##subControlTeleport"))
             {
                 var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
                 if (!success)
@@ -288,7 +288,7 @@ public sealed class SubControlWindow : Window, IDisposable
         var fits = ChatComposer.AllFit(messages);
         using (ImRaii.Disabled(!canSend || !fits))
         {
-            if (ImGui.SmallButton($"Send##subControl_{label}_{command}"))
+            if (ImGui.Button($"Send##subControl_{label}_{command}"))
                 plugin.ChatSender.SendAll(messages);
         }
         ImGui.SameLine();

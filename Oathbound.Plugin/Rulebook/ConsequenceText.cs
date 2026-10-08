@@ -19,13 +19,19 @@ public static partial class ConsequenceText
         switch (word.ToLowerInvariant())
         {
             case "title":
-                return $"set title {FirstQuoted(rest) ?? rest}";
+                {
+                    var (verb, tail) = Split(LockTimerOption.StripSeconds(rest, out var seconds));
+                    return verb.Equals("clear", StringComparison.OrdinalIgnoreCase)
+                        ? "clear title"
+                        : $"set title {FirstQuoted(tail) ?? tail}{HeldFor(seconds)}";
+                }
             case "outfit":
                 {
-                    var (verb, name) = Split(rest);
+                    var (verb, name) = Split(MoodleOption.Strip(LockTimerOption.StripSeconds(rest, out var seconds), out _));
                     return verb.ToLowerInvariant() switch
                     {
-                        "lock" => $"wear and lock outfit {Unquote(name)}",
+                        "lock" => $"wear and lock outfit {Unquote(name)}{HeldFor(seconds)}",
+                        "wear" when seconds is not null => $"wear and lock outfit {Unquote(name)}{HeldFor(seconds)}",
                         "wear" => $"wear outfit {Unquote(name)}",
                         "unlock" => "unlock outfit",
                         _ => text,
@@ -40,12 +46,12 @@ public static partial class ConsequenceText
                 }
             case "moodle":
                 {
-                    var (verb, name) = Split(rest);
+                    var (verb, name) = Split(LockTimerOption.StripSeconds(rest, out var seconds));
                     if (verb.Equals(CustomMoodle.CustomWord, StringComparison.OrdinalIgnoreCase))
-                        return CustomMoodle.TryDecode(name, out var custom) ? $"apply moodle {Config.MoodlesTextFormat.StripMarkup(custom.Title)}" : text;
+                        return CustomMoodle.TryDecode(name, out var custom) ? $"apply moodle {Config.MoodlesTextFormat.StripMarkup(custom.Title)}{(seconds is null ? "" : HeldFor(seconds))}" : text;
                     if (verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase))
-                        return "remove a moodle";
-                    return verb.Equals("apply", StringComparison.OrdinalIgnoreCase) ? $"apply moodle {Unquote(name)}" : verb.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "clear moodle" : text;
+                        return CustomMoodle.TryDecodeId(name, out _) ? "remove a moodle" : $"remove moodle {Unquote(name)}";
+                    return verb.Equals("apply", StringComparison.OrdinalIgnoreCase) ? $"apply moodle {Unquote(name)}{HeldFor(seconds)}" : verb.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "clear moodle" : text;
                 }
             case "restraint":
                 return DescribeRestraint(rest, text);
@@ -79,10 +85,10 @@ public static partial class ConsequenceText
         switch (verb.ToLowerInvariant())
         {
             case "unlock":
-                return "unlock restraints";
+                return tail.Length > 0 ? $"unlock {tail}" : "unlock restraints";
             case "timer":
                 return RestraintCommand.TryParseTimerAdjust(tail, out var delta)
-                    ? $"{(delta > 0 ? "add" : "take")} {RestraintLock.Format(TimeSpan.FromSeconds(Math.Abs(delta)))} {(delta > 0 ? "to" : "off")} the restraint timer"
+                    ? $"{(delta > 0 ? "add" : "take")} {RestraintLock.Format(TimeSpan.FromSeconds(Math.Abs(delta)))} {(delta > 0 ? "to" : "off")} every restraint timer"
                     : text;
             case "lock" or "wear" or "catalog":
                 return $"restrain with {FirstQuoted(tail) ?? "a restraint"}{LockSuffix(restraintLock)}";
@@ -91,8 +97,12 @@ public static partial class ConsequenceText
         }
     }
 
+    /// A title, outfit or moodle the Owner puts on stays locked until cleared, or for its timer.
+    private static string HeldFor(int? seconds) =>
+        RestraintLock.FromSeconds(seconds).Duration is { } d ? $" for {RestraintLock.Format(d)}" : " until the Owner clears it";
+
     private static string LockSuffix(RestraintLock restraintLock) =>
-        restraintLock.Duration is { } d ? $", locked for {RestraintLock.Format(d)}" : "";
+        (restraintLock.Duration is { } d ? $", locked for {RestraintLock.Format(d)}" : "") + (restraintLock.Key is not null ? ", with a key" : "");
 
     private static (string Head, string Tail) Split(string text)
     {
@@ -275,7 +285,7 @@ public static class RuleText
     {
         var arrive = r.Arrive.Select(ConsequenceText.Describe).ToList();
         if (r.LeashOnArrive)
-            arrive.Add($"leash you to {owner} ({r.LeashLengthYalms} yalms)");
+            arrive.Add($"leash you to {owner} ({r.LeashLengthYalms} yalms{(r.LeashPauseInDuties ? ", paused in duties" : "")})");
         if (!string.IsNullOrWhiteSpace(r.ArriveTell))
             arrive.Add($"you /tell {owner} \"{r.ArriveTell.Trim()}\"");
         var depart = r.Depart.Select(ConsequenceText.Describe).ToList();

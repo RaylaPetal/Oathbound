@@ -14,22 +14,23 @@ public static class OwnerMoodleOverride
     private const string MoodleApplyPrefix = "moodle apply ";
 
     /// Every Owner send surface goes through this, so a moodle travels only with the command it was picked for.
-    /// The fixed `leash` also carries the saved length, before the moodle.
+    /// The fixed `leash` also carries the duty pause and saved length, before the moodle.
     public static string ForSend(PluginConfig config, string command, string? commandMoodle)
     {
         if (!command.Trim().Equals(ControlWords.Leash, StringComparison.OrdinalIgnoreCase))
             return Apply(command, commandMoodle);
-        var withLength = LengthOption.Append(command.Trim(), config.QuickCommands.LeashLengthYalms);
+        var leash = config.QuickCommands.PauseLeashInDuties ? DutyPauseOption.Append(command.Trim()) : command.Trim();
+        var withLength = LengthOption.Append(leash, config.QuickCommands.LeashLengthYalms);
         return MoodleOption.Append(withLength, commandMoodle ?? config.QuickCommands.LeashMoodleOverride);
     }
 
     /// Also where its struggle setting and lock timer are added.
     public static string ForSend(PluginConfig config, QuickCommand cmd) =>
-        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.LockSeconds);
+        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.LockSeconds, cmd.LockKey);
 
     /// Uses the timer snapshotted when favorited.
     public static string ForFavoriteSend(PluginConfig config, QuickCommand cmd) =>
-        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.FavoriteLockSeconds);
+        OwnerLockOption.Apply(ForSend(config, RestraintStruggle.Insert(cmd.Command, cmd.StruggleSetting), cmd.MoodleOverride), cmd.FavoriteLockSeconds, cmd.FavoriteLockKey);
 
     public static IReadOnlyList<(string Label, string Selector)> Choices(PluginConfig config) =>
         config.QuickCommands.Moodles
@@ -57,15 +58,17 @@ public static class OwnerMoodleOverride
         chosen is not null && Accepts(command) ? MoodleOption.Append(command, chosen) : command;
 
     /// `chosen` stays null for "Sub's default".
-    public static void Draw(string id, PluginConfig config, ref string? chosen)
+    /// `bare` drops the label and help for a caller that lays them out itself and sets the width.
+    public static void Draw(string id, PluginConfig config, ref string? chosen, bool bare = false)
     {
         var choices = Choices(config);
         var current = chosen;
         var preview = current is null
             ? "Sub's default"
             : choices.Where(c => c.Selector == current).Select(c => c.Label).FirstOrDefault() ?? current;
-        Layout.ItemWidth(200);
-        if (ImGui.BeginCombo($"Moodle##ownerMoodle_{id}", preview))
+        if (!bare)
+            Layout.ItemWidth(200);
+        if (ImGui.BeginCombo($"{(bare ? "" : "Moodle")}##ownerMoodle_{id}", preview))
         {
             if (ImGui.Selectable($"Sub's default##ownerMoodle_{id}", chosen is null))
                 chosen = null;
@@ -78,6 +81,7 @@ public static class OwnerMoodleOverride
             }
             ImGui.EndCombo();
         }
-        IconGlyph.HelpMarker("Which moodle goes on your Sub with this. \"Sub's default\" uses their own pick.");
+        if (!bare)
+            IconGlyph.HelpMarker("Which moodle goes on your Sub with this. \"Sub's default\" uses their own pick.");
     }
 }

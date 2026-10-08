@@ -8,7 +8,7 @@ using Oathbound.Plugin.Ipc;
 namespace Oathbound.Plugin.Safety;
 
 /// Which source holds which Moodles status, so a status is only removed once nothing else holds it. Source keys:
-/// outfit, restraint:<deviceId>, follow, collar, manual:<statusId>. Persisted so a moodle whose source didn't survive
+/// outfit, restraint:<deviceId>, follow, collar, manual:<statusId>, lock:<statusId> (the Owner's locked moodles). Persisted so a moodle whose source didn't survive
 /// a reload can still be removed.
 public sealed class AttachedMoodleLedger
 {
@@ -17,6 +17,7 @@ public sealed class AttachedMoodleLedger
     public const string CollarSource = "collar";
     public const string RestraintPrefix = "restraint:";
     private const string ManualPrefix = "manual:";
+    public const string LockPrefix = "lock:";
 
     private readonly PluginConfig config;
     private readonly MoodlesIpc moodles;
@@ -32,6 +33,9 @@ public sealed class AttachedMoodleLedger
 
     public static string RestraintSource(string deviceId) => RestraintPrefix + deviceId;
     public static string ManualSource(Guid statusId) => ManualPrefix + statusId;
+    public static string LockSource(Guid statusId) => LockPrefix + statusId;
+
+    public bool IsHeld(Guid statusId) => Holds.ContainsValue(statusId);
 
     /// Re-holding re-applies (the collar's reassertion); holding a different status releases the previous one.
     /// False, recording nothing, if Moodles couldn't apply it.

@@ -3,7 +3,8 @@ using System;
 namespace Oathbound.Plugin.Commands;
 
 /// Permanent (until unlock, panic or pairing end) or Timed, released automatically by RestraintCommand.
-public readonly record struct RestraintLock(TimeSpan? Duration)
+/// `Key` is the wire `salt.hash` of the Owner's password, if they set one.
+public readonly record struct RestraintLock(TimeSpan? Duration, string? Key = null)
 {
     public static readonly TimeSpan MinDuration = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan MaxDuration = TimeSpan.FromDays(7);
@@ -16,6 +17,8 @@ public readonly record struct RestraintLock(TimeSpan? Duration)
 
     public static RestraintLock FromSeconds(int? seconds) =>
         seconds is { } s ? Timed(TimeSpan.FromSeconds(s)) : Permanent;
+
+    public RestraintLock WithKey(string? key) => this with { Key = key };
 
     public bool IsTimed => Duration is not null;
     public int? Seconds => Duration is { } d ? (int)d.TotalSeconds : null;

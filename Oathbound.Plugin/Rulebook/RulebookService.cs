@@ -1311,7 +1311,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             {
                 // Already on: nothing to tell the Owner.
             }
-            else if (follow.Engage(pairing, Math.Clamp(rule.LeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms)))
+            else if (follow.Engage(pairing, Math.Clamp(rule.LeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms), pauseInDuties: rule.LeashPauseInDuties))
             {
                 Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: leashed to {pairing.PeerName} ({rule.LeashLengthYalms} yalms).");
                 sender.Send(composer.ComposeLeashOnNotice(pairing.PeerName!, pairing.PeerWorld!));

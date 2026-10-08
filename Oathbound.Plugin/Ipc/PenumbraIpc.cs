@@ -144,10 +144,11 @@ public sealed class PenumbraIpc : IDisposable
         }
         catch (Exception ex) { Plugin.Log.Error(ex, "Failed to remove temporary gesture mod settings."); return false; }
     }
-    /// A no-op that reports success unless the Sub turned on "Redraw after a mod change".
-    public bool TryRedrawLocalPlayer()
+    /// A no-op that reports success unless the Sub turned on "Redraw after a mod change", or `force` (a restraint
+    /// set to always redraw when it goes on).
+    public bool TryRedrawLocalPlayer(bool force = false)
     {
-        if (!config.RedrawAfterModChange)
+        if (!config.RedrawAfterModChange && !force)
             return true;
         try { redrawObject.Invoke(0); return true; }
         catch (Exception ex) { Plugin.Log.Error(ex, "Failed to redraw the local player after a temporary Penumbra activation."); return false; }

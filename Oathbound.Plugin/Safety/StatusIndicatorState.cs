@@ -75,7 +75,9 @@ public sealed class StatusIndicatorState
         {
             if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
             if (estimates.For(pairing) is not { Leashed: true } estimate) continue;
-            yield return (pairing.Id, FindPlayer(pairing.PeerName!, pairing.PeerWorld!), me, estimate.LeashLength);
+            // Paused on the Sub's side, so no line, even with the Sub standing right here.
+            var sub = estimate.PauseInDuties && TeleportDestinations.InDuty() ? null : FindPlayer(pairing.PeerName!, pairing.PeerWorld!);
+            yield return (pairing.Id, sub, me, estimate.LeashLength);
         }
     }
 

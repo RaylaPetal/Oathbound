@@ -217,7 +217,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.SetNextItemWidth(-1);
         ImGui.Combo("##testSavedTrigger", ref testCustomTriggerIndex, triggerNames, triggerNames.Length);
         var selectedCommand = $"{config.TriggerPhrase.Trim()} {savedTriggers[testCustomTriggerIndex].Command}".Trim();
-        if (ImGui.SmallButton("Put in test box"))
+        if (ImGui.Button("Put in test box"))
             testCommandInput = selectedCommand;
         ImGui.SameLine();
         DrawTestButton("testSelectedTrigger", "Run selected trigger", () => plugin.ChatCommandListener.TestIncomingCommand(selectedCommand));
@@ -226,7 +226,7 @@ public class SettingsWindow : Window, IDisposable
 
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
         ImGui.InputTextWithHint("##testCommandInput", "e.g. ray outfit lock kagome", ref testCommandInput, 500);
-        if (ImGui.SmallButton("Paste"))
+        if (ImGui.Button("Paste"))
         {
             var clipboard = ImGui.GetClipboardText() ?? "";
             testCommandInput = clipboard[..Math.Min(clipboard.Length, 500)];
@@ -234,10 +234,10 @@ public class SettingsWindow : Window, IDisposable
         ImGui.SameLine();
         using (ImRaii.Disabled(testCommandInput.Length == 0))
         {
-            if (ImGui.SmallButton("Copy"))
+            if (ImGui.Button("Copy"))
                 ImGui.SetClipboardText(testCommandInput);
             ImGui.SameLine();
-            if (ImGui.SmallButton("Clear"))
+            if (ImGui.Button("Clear"))
                 testCommandInput = "";
         }
         DrawTestButton("testOwnerCommand", "Run test", () => plugin.ChatCommandListener.TestIncomingCommand(testCommandInput));
@@ -316,7 +316,7 @@ public class SettingsWindow : Window, IDisposable
                     ImGui.TableNextColumn();
                     using (ImRaii.Disabled(confirmingUnpairId is not null))
                     {
-                        if (ImGui.SmallButton("Unpair"))
+                        if (ImGui.Button("Unpair"))
                             confirmingUnpairId = p.Id;
                     }
                     ImGui.PopID();
@@ -618,7 +618,7 @@ public class SettingsWindow : Window, IDisposable
 
     private void DrawTestButton(string key, string label, Func<LocalTestResult> run)
     {
-        if (ImGui.SmallButton($"{label}##{key}"))
+        if (ImGui.Button($"{label}##{key}"))
             testResults[key] = (run(), Environment.TickCount64);
 
         if (testResults.TryGetValue(key, out var last))

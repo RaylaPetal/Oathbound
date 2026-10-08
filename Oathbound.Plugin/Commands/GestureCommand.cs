@@ -68,6 +68,8 @@ public sealed class GestureCommand
 
     public bool IsHeld => heldTrigger is not null;
 
+    public string? HeldName => heldTrigger?.DisplayName;
+
     public GestureCommand(PluginConfig config, PenumbraIpc penumbra, TemporaryModSettingsCoordinator temporarySettings, CatalogStore catalogStore, MovementLockService movementLock)
     {
         this.config = config;

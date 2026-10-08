@@ -74,7 +74,7 @@ public sealed class CustomizePresetPickerWindow : Window, IDisposable
 
         foreach (var profile in visible)
         {
-            if (ImGui.SmallButton($"Choose##customizePresetChoose_{profile.UniqueId}"))
+            if (ImGui.Button($"Choose##customizePresetChoose_{profile.UniqueId}"))
             {
                 onSelected?.Invoke(profile);
                 IsOpen = false;

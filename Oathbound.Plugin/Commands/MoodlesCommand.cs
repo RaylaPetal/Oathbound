@@ -46,9 +46,23 @@ public sealed class MoodlesCommand
         catalogStore.Save(config);
     }
 
-    /// Case-insensitive; the Owner only knows status names.
-    public bool ForceApply(string statusName) =>
-        TryResolveStatusId(statusName, out var statusId) && Ledger.Hold(AttachedMoodleLedger.ManualSource(statusId), statusId);
+    /// Case-insensitive; the Owner only knows status names. The Owner's moodle stays locked: put back if removed,
+    /// kept through the Sub's clear word, until its timer runs out or the Owner removes it.
+    public bool ForceApply(string statusName, DateTime? expiresAtUtc = null, Guid? byPairingId = null)
+    {
+        if (!TryResolveStatusId(statusName, out var statusId) || !Ledger.Hold(AttachedMoodleLedger.LockSource(statusId), statusId))
+            return false;
+        // The lock's hold replaces a plain one from an earlier apply.
+        Ledger.Release(AttachedMoodleLedger.ManualSource(statusId));
+        UpsertLock(new MoodleLock
+        {
+            StatusId = statusId,
+            Name = config.MoodlesMapping.LocalCatalog.GetValueOrDefault(statusId.ToString())?.Name ?? statusName,
+            ByPairingId = byPairingId,
+            ExpiresAtUtc = expiresAtUtc,
+        });
+        return true;
+    }
 
     /// A status name or a `"name" #hash` selector.
     public bool TryResolveStatusId(string statusName, out Guid statusId)
@@ -59,16 +73,99 @@ public sealed class MoodlesCommand
         return entry is not null && Guid.TryParse(entry.StatusId, out statusId);
     }
 
-    /// Keeps moodles an active outfit/restraint/leash/collar holds.
-    public bool ForceClear() => Ledger.ClearUnheld();
+    /// The Owner's `moodle clear`: ends every lock, then keeps only what an outfit, restraint, leash or collar holds.
+    public bool ForceClear()
+    {
+        EndAllLocks();
+        return Ledger.ClearUnheld();
+    }
 
-    /// Applied from its data; never held by the ledger, so nothing puts it back once the Sub removes it.
-    public LocalTestResult ApplyCustom(CustomMoodle moodle, string applier) =>
-        moodles.ApplyData(moodle, applier) is { } problem
-            ? LocalTestResult.Fail(problem)
-            : LocalTestResult.Ok($"Custom moodle \"{MoodlesTextFormat.StripMarkup(moodle.Title)}\" applied.");
+    /// The Sub's clear word. Locked moodles stay: held ones survive in the ledger, written ones are put straight back.
+    public bool Clear()
+    {
+        var cleared = Ledger.ClearUnheld();
+        foreach (var locked in config.OwnerLocks.Moodles.Where(l => l.Custom is not null))
+            moodles.ApplyData(locked.Custom!, locked.Applier);
+        return cleared;
+    }
 
-    public bool RemoveCustom(Guid id) => moodles.RemoveStatus(id);
+    /// Applied from its data and never in the ledger. Without `locked` nothing puts it back once the Sub removes it.
+    public LocalTestResult ApplyCustom(CustomMoodle moodle, string applier, bool locked = false, DateTime? expiresAtUtc = null, Guid? byPairingId = null)
+    {
+        if (moodles.ApplyData(moodle, applier) is { } problem)
+            return LocalTestResult.Fail(problem);
+        if (locked)
+            UpsertLock(new MoodleLock { StatusId = moodle.Id, Name = MoodlesTextFormat.StripMarkup(moodle.Title), Custom = moodle, Applier = applier, ByPairingId = byPairingId, ExpiresAtUtc = expiresAtUtc });
+        else
+            DropLock(moodle.Id);
+        return LocalTestResult.Ok($"Custom moodle \"{MoodlesTextFormat.StripMarkup(moodle.Title)}\" applied.");
+    }
+
+    public bool RemoveCustom(Guid id)
+    {
+        DropLock(id);
+        return moodles.RemoveStatus(id);
+    }
+
+    /// The Owner's `moodle remove "<name>"`: ends that moodle's lock and takes it off unless something else holds it.
+    public bool Remove(string statusName)
+    {
+        var name = CommandSelector.TryRead(statusName, out var selector, out var tail) && tail.Length == 0 ? selector : statusName.Trim();
+        var locked = config.OwnerLocks.Moodles.FirstOrDefault(l => string.Equals(MoodlesTextFormat.StripMarkup(l.Name), MoodlesTextFormat.StripMarkup(name), StringComparison.OrdinalIgnoreCase));
+        if (locked is not null)
+        {
+            EndLock(locked);
+            return true;
+        }
+        if (!TryResolveStatusId(statusName, out var statusId))
+            return false;
+        Ledger.Release(AttachedMoodleLedger.ManualSource(statusId));
+        return Ledger.IsHeld(statusId) || moodles.RemoveStatus(statusId);
+    }
+
+    public void EndLock(MoodleLock locked)
+    {
+        config.OwnerLocks.Moodles.Remove(locked);
+        config.Save();
+        if (locked.Custom is not null)
+            moodles.RemoveStatus(locked.StatusId);
+        else
+            Ledger.Release(AttachedMoodleLedger.LockSource(locked.StatusId));
+    }
+
+    public void EndAllLocks()
+    {
+        foreach (var locked in config.OwnerLocks.Moodles.ToList())
+            EndLock(locked);
+    }
+
+    /// Puts back any locked moodle that's gone from the Sub, whoever took it off.
+    public void ReassertLocks()
+    {
+        if (config.OwnerLocks.Moodles.Count == 0 || moodles.GetActiveStatusIds() is not { } active)
+            return;
+        foreach (var locked in config.OwnerLocks.Moodles.Where(l => !active.Contains(l.StatusId)))
+        {
+            Plugin.Log.Debug($"Locked moodle \"{locked.Name}\" was removed - putting it back.");
+            if (locked.Custom is { } custom)
+                moodles.ApplyData(custom, locked.Applier);
+            else
+                Ledger.Hold(AttachedMoodleLedger.LockSource(locked.StatusId), locked.StatusId);
+        }
+    }
+
+    private void UpsertLock(MoodleLock locked)
+    {
+        config.OwnerLocks.Moodles.RemoveAll(l => l.StatusId == locked.StatusId);
+        config.OwnerLocks.Moodles.Add(locked);
+        config.Save();
+    }
+
+    private void DropLock(Guid statusId)
+    {
+        if (config.OwnerLocks.Moodles.RemoveAll(l => l.StatusId == statusId) > 0)
+            config.Save();
+    }
 
     /// Both the Moodles permission and the Sub's opt-in to moodles their Owner writes.
     public bool CustomAllowed => config.Permissions.Moodles && config.Permissions.OwnerWrittenMoodles;
@@ -103,10 +200,9 @@ public sealed class MoodlesCommand
         if (!string.IsNullOrEmpty(alias.StatusId) && config.MoodlesMapping.LocalCatalog.TryGetValue(alias.StatusId, out var exact))
             return Guid.TryParse(exact.StatusId, out var statusId) && Ledger.Hold(AttachedMoodleLedger.ManualSource(statusId), statusId);
 
-        return ForceApply(alias.StatusName);
+        // A Sub's alias is never a lock.
+        return TryResolveStatusId(alias.StatusName, out var byName) && Ledger.Hold(AttachedMoodleLedger.ManualSource(byName), byName);
     }
-
-    public bool Clear() => ForceClear();
 
     public IReadOnlyList<string> ExportNames() =>
         config.MoodlesMapping.LocalCatalog.Values.Select(s => s.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();

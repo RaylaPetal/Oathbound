@@ -97,9 +97,8 @@ public static class TutorialCatalog
         ["title"] =
         [
             Help("title", "Send your Sub a title to wear."),
-            new("Commands", "Ready-made title commands, like clearing your Sub's title.", S("titleQuickFixed"), n => n.Module("title")),
-            new("Add a title command", "Type a title, choose prefix or suffix and an optional glow, and save it for one-click sending.", S("titleQuickAdd"), n => n.Module("title")),
-            new("Saved titles", "Your saved titles. Each row can be sent, copied, starred, edited or deleted.", S("titleQuickSaved"), n => n.Module("title"), "Nothing saved yet - add one above."),
+            new("Commands", "One-click commands, like clearing your Sub's title. The star adds one to your favorites.", S("titleQuickFixed"), n => n.Module("title")),
+            new("Saved titles", "Pick a title to send, star, edit or delete it beside the list. + New makes one: the text, prefix or suffix, a colour and an optional glow.", S("titleQuickSaved"), n => n.Module("title")),
             SendRow("wear that title"),
             Star(),
         ],
@@ -107,6 +106,7 @@ public static class TutorialCatalog
         [
             Help("outfit", "Dress your Sub in one of their own Glamourer designs."),
             new("Commands", "Unlock lets your Sub change outfits again after a locked one.", S("outfitQuickFixed"), n => n.Module("outfit")),
+            new("Your Sub's outfits", "Pick an outfit to send it locked or not, set its moodle, star it or delete it beside the list.", S("outfitQuickList"), n => n.Module("outfit"), "Nothing yet - your Sub's outfits arrive when their catalog syncs."),
             new("Saved outfits", "Your Sub's designs, synced from their catalog. Each row can be sent locked (they can't change out of it) or unlocked.", TutorialAnchors.QuickRow, n => n.Module("outfit"), "No outfits yet - they arrive when your Sub's catalog syncs (see the Sync module)."),
             SendRow("put on that outfit"),
             Star(),
@@ -115,7 +115,8 @@ public static class TutorialCatalog
         [
             Help("animation", "Make your Sub perform an emote or pose from their Penumbra animation mods."),
             new("Stop animation", "An animation you send holds your Sub in place until you stop it. This sends the stop.", TutorialAnchors.Fixed(Config.FixedActionIds.StopAnimation), n => n.Module("animation")),
-            new("Search", "Find an animation by mod, group or name.", S("gestureQuickSearchBox"), n => n.Module("animation"), "No animations yet - they arrive when your Sub's catalog syncs."),
+            new("Stop animation", "Stops an animation you sent and gives your Sub their movement back.", S("gestureQuickFixed"), n => n.Module("animation")),
+            new("Your Sub's animations", "Grouped by mod. Search, then pick one to send it, set a hold time, star it or edit it beside the list.", S("gestureQuickList"), n => n.Module("animation"), "No animations yet - they arrive when your Sub's catalog syncs."),
             new("Animations", "Grouped by mod. Each row plays that animation on your Sub.", TutorialAnchors.QuickRow, n => n.Module("animation"), "No animations yet."),
             SendRow("play that animation"),
             Star(),
@@ -123,9 +124,8 @@ public static class TutorialCatalog
         ["moodles"] =
         [
             Help("moodles", "Put one of your Sub's own Moodles statuses on them, or clear it."),
-            new("Commands", "Clear moodle, and every status your Sub has shared. Each row can be sent, copied or starred.", S("moodlesQuickFixed"), n => n.Module("moodles")),
-            new("Your custom moodles", "Moodles you wrote yourself. Send one, take it off again, or use it in a rulebook or Custom Trigger.", S("customMoodles"), n => n.Module("moodles")),
-            new("Build a moodle", "Write a title and description, pick an icon and how long it lasts. Your Sub has to allow moodles you write.", S("customMoodleBuilder"), n => n.Module("moodles")),
+            new("Clear moodle", "Clears your Sub's moodles, except ones attached to something active.", S("moodlesQuickFixed"), n => n.Module("moodles")),
+            new("Moodles", "Your Sub's statuses, and moodles you write yourself. Pick one to send it, star it or edit it beside the list. + New moodle writes one: a title, description, icon and how long it lasts - your Sub has to allow moodles you write.", S("customMoodles"), n => n.Module("moodles")),
             SendRow("show that status"),
             Star(),
         ],
@@ -133,10 +133,7 @@ public static class TutorialCatalog
         [
             Help("restraints", "Restrain your Sub with gear or rules - forced pose, walk only, blocked actions, gagged chat, cuffs."),
             new("Commands", "Restraint unlock takes every restraint you put on them off again.", S("restraintQuickCommands"), n => n.Module("restraints")),
-            new("Available restraint mods", "Restraint mods your Sub has. Configure one here to give it rules.", S("restraintQuickBrowser"), n => n.Module("restraints"), "Nothing shared yet - see the Sync module."),
-            new("Configured mod restraints", "Mods you've set up with rules, ready to send.", S("restraintQuickConfigured"), n => n.Module("restraints"), "None configured yet."),
-            new("Shared rules-only restraints", "Restraints your Sub set up themselves, with rules but no gear.", S("restraintQuickShared"), n => n.Module("restraints"), "Your Sub hasn't shared any."),
-            new("Rules-only restraint", "Build a restraint from rules alone, without any gear, and send it.", S("restraintQuickAdHoc"), n => n.Module("restraints")),
+            new("Your restraints", "Your saved restraint mods and the rules-only restraints your Sub shared. Pick one to set it up and send it, or use + New to add one of your Sub's mods or a one-off rules-only restraint.", S("restraintQuickConfigured"), n => n.Module("restraints")),
             new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
             new("Lock timer", "Locked restraints stay on until you unlock them, or until a timer you set here runs out.", TutorialAnchors.QuickLock, n => n.Module("restraints"), "Appears on a restraint row."),
             Star(),
@@ -147,13 +144,13 @@ public static class TutorialCatalog
             new("Status", "Whether your Sub's toy is connected, as far as your client knows.", S("toyQuickStatus"), n => n.Module("toycontrol")),
             new("Vibrate", "Pick an intensity and a duration, or run it until stopped, and send.", S("toyQuickVibrate"), n => n.Module("toycontrol")),
             new("Patterns & stop", "Send one of the patterns, or stop the toy.", S("toyQuickPatterns"), n => n.Module("toycontrol")),
+            new("Your patterns", "Patterns you made. Pick one to send it or edit its steps beside the list, or use + New.", S("toyQuickCustomPatterns"), n => n.Module("toycontrol")),
         ],
         ["customtriggers"] =
         [
             Help("customtriggers", "Bundle several actions into one command."),
             new("Revert", "Undoes what custom triggers put on your Sub: title, outfit, animation, moodles and restraints.", S("ctqRevert"), n => n.Module("customtriggers")),
-            new("Saved", "Bundles you've saved, and your Sub's own custom trigger words.", S("ctqSaved"), n => n.Module("customtriggers")),
-            new("Build a bundle", "Add actions - a title, an outfit, an animation, a moodle, a restraint, a chat line - and save or send them together.", S("ctqBuilder"), n => n.Module("customtriggers")),
+            new("Bundles", "Bundles you've saved, and your Sub's own custom trigger words. Pick one to send or edit it beside the list. + New builds one: add actions - a title, an outfit, an animation, a moodle, a restraint, a chat line - and save or send them together.", S("ctqSaved"), n => n.Module("customtriggers")),
             new("One-off command", "Type any command and send it once without saving it.", S("freeformComposer"), n => n.Module("customtriggers")),
         ],
         ["collar"] =
@@ -172,7 +169,7 @@ public static class TutorialCatalog
         [
             Help("reactions", "Make your own character react by itself when someone uses an emote on you or says a phrase."),
             new("New reaction", "Start a reaction: choose what triggers it and who may trigger it.", TutorialAnchors.ReactionNew, n => n.Module("reactions")),
-            new("Your reactions", "Each reaction can play an animation, use an item, turn on a mod, add a moodle or send a chat line. Test actions tries them on you now.", S("reactionList"), n => n.Module("reactions"), "No reactions yet."),
+            new("Your reactions", "Each reaction can play an animation, use an item, turn on a mod, add a moodle or send a chat line. Test actions tries them on you now. Pick one to edit it beside the list.", S("reactionList"), n => n.Module("reactions"), "No reactions yet."),
             new("Mods turned on by reactions", "Mods a reaction switched on, so you can see them and turn them back off.", S("reactionActiveMods"), n => n.Module("reactions"), "Shown while a reaction has a mod on."),
         ],
         ["rulebook"] =
@@ -228,36 +225,30 @@ public static class TutorialCatalog
         [
             Help("title", "Titles your Owner can put on you, through Honorific."),
             new("Fixed words", "Words your Owner can always use, like clearing your title.", S("titleFixed"), n => n.Module("title")),
-            new("Your title aliases", "Short words you've defined that put a specific title on you.", S("titleAliases"), n => n.Module("title"), "None yet - add one below."),
-            new("Add a title alias", "Pick a word, the title text, prefix or suffix and an optional glow.", S("titleAdd"), n => n.Module("title")),
+            new("Your title aliases", "Short words that put a specific title on you. Pick one to edit it beside the list, or use + New: a word, the title text, prefix or suffix and an optional glow.", S("titleAliases"), n => n.Module("title")),
         ],
         ["outfit"] =
         [
             Help("outfit", "Outfits your Owner can put on you, from your own Glamourer designs."),
             new("Fixed words", "Words your Owner can always use, like unlocking your outfit.", S("outfitFixed"), n => n.Module("outfit")),
-            new("Your outfit aliases", "Words that put a specific design on you.", S("outfitAliases"), n => n.Module("outfit"), "None yet - add one below."),
-            new("Add an outfit alias", "Pick a word and a design, and whether wearing it locks you in it until your Owner unlocks it.", S("outfitAdd"), n => n.Module("outfit")),
+            new("Your outfit aliases", "Words that put a specific design on you. Pick one to change its design, lock or moodle beside the list, or use + New to add one: a word, a design, and whether wearing it locks you in it until your Owner unlocks it.", S("outfitAliases"), n => n.Module("outfit")),
         ],
         ["animation"] =
         [
             Help("animation", "Animations your Owner can play on you, from your Penumbra animation mods. An animation holds you in place until your Owner stops it or you use your safeword."),
-            new("Your animation aliases", "Words that play a specific animation on you.", S("gestureAliases"), n => n.Module("animation"), "None yet - add one below."),
-            new("Add an animation alias", "Pick a word and one of your animations.", S("gestureAdd"), n => n.Module("animation")),
-            new("Active animation", "Shows whether an animation is active. While your Owner holds you in one, only they, revert all or your safeword can end it.", S("gestureActive"), n => n.Module("animation")),
+            new("Your animations", "Every animation your scan found, grouped by mod. Pick one to see what it plays and which options it turns on, and to give it an alias your Owner can send.", S("gestureAliases"), n => n.Module("animation"), "Shown once animation mods are scanned in Settings."),
         ],
         ["moodles"] =
         [
             Help("moodles", "Moodles statuses your Owner can put on you."),
             new("Fixed words", "Words your Owner can always use, like clearing a moodle.", S("moodleFixed"), n => n.Module("moodles")),
-            new("Your moodle aliases", "Words that apply one of your statuses.", S("moodleAliases"), n => n.Module("moodles"), "None yet - add one below."),
-            new("Add a moodle alias", "Pick a word and a status.", S("moodleAdd"), n => n.Module("moodles")),
+            new("Your moodles", "Every status your scan found. Pick one to give it an alias your Owner can send.", S("moodleAliases"), n => n.Module("moodles"), "Shown once your Moodles statuses are scanned in Settings."),
         ],
         ["restraints"] =
         [
             Help("restraints", "Restraints your Owner can put on you."),
-            new("Rules-only restraints", "Restraints made of rules without gear - forced pose, walk only, blocked actions, gagged, and drawn cuffs. Your Owner sees these.", S("capturedDevices"), n => n.Module("restraints"), "None yet."),
-            new("Detected restraint mods", "Restraint mods found in Penumbra. Configure one to make it usable.", S("detectedRestraintMods"), n => n.Module("restraints"), "Shown when Penumbra has restraint mods."),
-            new("My configured mod restraints", "Mods you've set up, each with its own rules.", S("configuredRestraintMods"), n => n.Module("restraints"), "None configured yet."),
+            new("Active now", "What you're wearing now, and each one's lock. You can take off an unlocked one, struggle if allowed, or use a key your Owner gave you.", S("activeBanner"), n => n.Module("restraints")),
+            new("Your restraints", "Every restraint you've set up, mod or rules-only. Pick one to edit it beside the list, or use + New to add a restraint mod from Penumbra or a rules-only one.", S("configuredRestraintMods"), n => n.Module("restraints")),
             new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
         ],
         ["toycontrol"] =
@@ -266,13 +257,13 @@ public static class TutorialCatalog
             new("Connection", "The Intiface address to connect to, and connect/disconnect.", S("toyConnection"), n => n.Module("toycontrol")),
             new("Status", "What's connected, and Stop now.", S("toyStatus"), n => n.Module("toycontrol")),
             new("Limits", "The most your Owner can ever do - maximum intensity and duration.", S("toyLimits"), n => n.Module("toycontrol")),
-            new("Patterns", "Patterns your Owner can play.", S("toyPatterns"), n => n.Module("toycontrol")),
-            new("Automatic triggers", "Make your toy react to your own game - health, emotes, spells. These run without anyone clicking.", S("toyTriggers"), n => n.Module("toycontrol")),
+            new("Patterns", "Patterns your Owner can play. Pick one to edit its steps beside the list, or use + New.", S("toyPatterns"), n => n.Module("toycontrol")),
+            new("Automatic triggers", "Make your toy react to your own game - health, emotes, spells. These run without anyone clicking. Pick one to edit it beside the list, or use + New.", S("toyTriggers"), n => n.Module("toycontrol")),
         ],
         ["customtriggers"] =
         [
             Help("customtriggers", "One word that does several things at once."),
-            new("Your custom triggers", "Each trigger is a list of actions: a title, an outfit, an animation, a moodle, a restraint, or a chat line (which needs its own acknowledgement).", S("customTriggerList"), n => n.Module("customtriggers"), "None yet."),
+            new("Your custom triggers", "Each trigger is a list of actions: a title, an outfit, an animation, a moodle, a restraint, or a chat line (which needs its own acknowledgement). Pick one to edit it beside the list, or use + New to build one.", S("customTriggerList"), n => n.Module("customtriggers")),
         ],
         ["collar"] =
         [

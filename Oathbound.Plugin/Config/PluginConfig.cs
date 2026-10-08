@@ -274,6 +274,15 @@ public class QuickCommand
     /// LockSeconds when favorited, so a later change on the row doesn't change the favorite.
     public int? FavoriteLockSeconds { get; set; }
 
+    /// Restraint locks only: the Owner's own password for the lock, kept so they can see it. Only a salted hash is sent.
+    public string? LockKey { get; set; }
+    public string? FavoriteLockKey { get; set; }
+
+    /// Restraint commands only: the Owner's own picture for it, in the plugin's images folder. Never sent or synced.
+    public string? ImageFile { get; set; }
+    /// The Sub's shared picture for it, written on import. ImageFile wins when both are set.
+    public string? SharedImageFile { get; set; }
+
     /// CustomMoodles entries only: what the builder edits; Command is regenerated from it on save.
     public Commands.CustomMoodle? CustomMoodle { get; set; }
 
@@ -308,8 +317,8 @@ public class OwnerQuickCommands
 
     public int LeashLengthYalms { get; set; } = 3;
 
-    /// Sends each leashed Sub `unleash` on loading into a duty. Off by default: it's an automatic tell.
-    public bool UnleashInDuties { get; set; }
+    /// Sent with each leash as `duty:pause`; the Sub's client then pauses that leash while in a duty.
+    public bool PauseLeashInDuties { get; set; }
 }
 
 /// Shared between CollarWindow and QuickAccessMenu so the ids never drift.
@@ -349,6 +358,45 @@ public class CollarState
     public bool HasRing => RingItemId is not null;
     public bool IsConfigured => HasNeckItem || HasRing;
     public bool HasMoodleAssigned => MoodleStatusId is not null;
+}
+
+public enum WornRestraintKind { Device, Catalog, AdHoc }
+
+/// Enough to apply the restraint again: Device by its saved device, Catalog by catalog id and item, AdHoc inline.
+[Serializable]
+public class WornRestraint
+{
+    public string RuntimeId { get; set; } = "";
+    public WornRestraintKind Kind { get; set; }
+    /// The name the Owner's command used; what `restraint unlock <name>` and the struggle/key notices carry.
+    public string Reference { get; set; } = "";
+    public string? DeviceId { get; set; }
+    public string? CatalogId { get; set; }
+    public ApiEquipSlot? Slot { get; set; }
+    public ulong? ItemId { get; set; }
+    public byte Stain { get; set; }
+    public byte Stain2 { get; set; }
+    public List<RestraintRuleAssignment> Rules { get; set; } = new();
+    public string? MoodleOverride { get; set; }
+    /// Null while the restraint isn't locked.
+    public WornRestraintLock? Lock { get; set; }
+}
+
+[Serializable]
+public class WornRestraintLock
+{
+    /// The pairing whose Owner set it; escapes and key unlocks are reported to them.
+    public Guid? ByPairingId { get; set; }
+    /// UTC so it keeps counting through restarts. Null = Permanent.
+    public DateTime? ExpiresAtUtc { get; set; }
+    public Commands.StruggleLevel StruggleLevel { get; set; }
+    public int StrugglePenaltyMinutes { get; set; }
+    public DateTime? StruggleNextTryUtc { get; set; }
+    /// `salt.hash` of the Owner's password, never the password itself.
+    public string? Key { get; set; }
+    public DateTime? KeyNextTryUtc { get; set; }
+
+    public Commands.StruggleSetting Struggle => new(StruggleLevel, StrugglePenaltyMinutes);
 }
 
 /// Persisted so SlotLockManager can keep enforcing after a reload.
@@ -479,6 +527,9 @@ public class RestraintDeviceDefinition
     public List<RestraintRuleAssignment> Rules { get; set; } = new();
 
     public AttachedMoodleRef? AttachedMoodle { get; set; }
+
+    /// Redraws the character when it goes on, whatever "Redraw after a mod change" is set to.
+    public bool RedrawOnApply { get; set; }
 }
 
 public enum RestraintSourceKind { Item, PenumbraCatalog }
@@ -585,6 +636,55 @@ public class ConfiguredModRestraint
     public List<RestraintRuleAssignment> Rules { get; set; } = new();
 
     public AttachedMoodleRef? AttachedMoodle { get; set; }
+
+    /// Redraws the character when it goes on, whatever "Redraw after a mod change" is set to.
+    public bool RedrawOnApply { get; set; }
+
+    /// A copied picture's file name in the plugin's images folder. Only its small copy is shared.
+    public string? ImageFile { get; set; }
+    /// The small JPEG copy of ImageFile that travels to the Owner in the catalog.
+    public string? ThumbnailFile { get; set; }
+}
+
+/// `ExpiresAtUtc` null = until the Owner clears it.
+[Serializable]
+public sealed class OwnerLockState
+{
+    public TitleLock? Title { get; set; }
+    public OutfitLock? Outfit { get; set; }
+    public List<MoodleLock> Moodles { get; set; } = new();
+}
+
+[Serializable]
+public sealed class TitleLock
+{
+    public string Text { get; set; } = "";
+    public bool IsPrefix { get; set; }
+    public Vector3 Color { get; set; } = new(1, 1, 1);
+    public Vector3? Glow { get; set; }
+    public Guid? ByPairingId { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+}
+
+[Serializable]
+public sealed class OutfitLock
+{
+    public string DesignName { get; set; } = "";
+    public Guid? ByPairingId { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+}
+
+/// A moodle from the Sub's library (`StatusId`), or one the Owner wrote (`Custom`, re-applied from its data).
+[Serializable]
+public sealed class MoodleLock
+{
+    public Guid StatusId { get; set; }
+    public string Name { get; set; } = "";
+    public Commands.CustomMoodle? Custom { get; set; }
+    /// Who Moodles shows as having applied a custom one.
+    public string Applier { get; set; } = "Owner";
+    public Guid? ByPairingId { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
 }
 
 [Serializable]
@@ -598,6 +698,9 @@ public class ConfiguredModRestraintExportEntry
 
     /// Null on an older export.
     public string? Moodle { get; set; }
+
+    /// Base64 JPEG thumbnail of the Sub's picture, or null. An older Owner ignores it.
+    public string? Picture { get; set; }
 
     public static ConfiguredModRestraintExportEntry From(ConfiguredModRestraint entry) => new()
     {
@@ -689,19 +792,19 @@ public class PluginConfig : IPluginConfiguration
     /// While true, the Sub's own alias-triggered changes for that category are refused.
     public bool OutfitForceLocked { get; set; }
     public bool CollarForceLocked { get; set; }
+    /// The single restraints lock older versions saved. Only read once, to release it: the restraints it covered
+    /// weren't saved, so it can't be tied to any of them.
     public bool RestraintsForceLocked { get; set; }
-    /// UTC so it keeps counting through restarts. Null while RestraintsForceLocked = Permanent.
-    public DateTime? RestraintsLockExpiresAtUtc { get; set; }
-    /// The Owner's struggle setting for the current lock, cleared with it.
-    public Commands.StruggleLevel RestraintsStruggleLevel { get; set; }
-    public int RestraintsStrugglePenaltyMinutes { get; set; }
-    public DateTime? RestraintsStruggleNextTryUtc { get; set; }
-    /// The pairing whose Owner set the current lock; an escape is reported to them.
-    public Guid? RestraintsLockedByPairingId { get; set; }
+
+    /// Every restraint the Sub wears, with its lock, so it can be put back after a reload or relog.
+    public List<WornRestraint> WornRestraints { get; set; } = new();
     public bool ToyControlForceLocked { get; set; }
 
     /// Persisted so moodles whose source didn't survive a reload can still be removed.
     public Dictionary<string, Guid> AttachedMoodleHolds { get; set; } = new();
+
+    /// Titles, outfits and moodles the Owner locked on the Sub, put back after a reload and ended by their timers.
+    public OwnerLockState OwnerLocks { get; set; } = new();
 
     public OwnerQuickCommands QuickCommands { get; set; } = new();
 

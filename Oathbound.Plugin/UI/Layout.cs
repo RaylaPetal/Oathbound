@@ -47,6 +47,9 @@ public static class Layout
         var narrow = textWidth < Scaled(MinTextWidth);
         var fits = !narrow && ImGui.CalcTextSize(text).X <= textWidth;
 
+        // One line beside the buttons: centre it on their height.
+        if (fits)
+            ImGui.AlignTextToFramePadding();
         ImGui.PushTextWrapPos(narrow ? 0f : startX + textWidth);
         if (draw is null)
             ImGui.TextUnformatted(text);

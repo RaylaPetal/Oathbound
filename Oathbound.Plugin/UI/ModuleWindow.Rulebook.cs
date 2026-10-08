@@ -230,6 +230,8 @@ public sealed partial class ModuleWindow
         var invalid = RulebookValidation.Check(state.Draft);
         if (invalid is not null)
             IconGlyph.WrappedColored(Theme.Warning, $"Fix this first: {invalid}");
+        if (state.Draft.RequiredSchemaVersion >= 3)
+            IconGlyph.WrappedColored(Theme.Warning, $"A title, outfit or moodle here lasts a set time. {NewSubNote}");
 
         if (rbPublishTask is { IsCompleted: true } done)
         {
@@ -257,7 +259,7 @@ public sealed partial class ModuleWindow
         var startingOver = state.Draft.ResetCount > sentResets;
         if (startingOver)
             IconGlyph.WrappedColored(Theme.Warning, $"Your next send starts over: when {pairing.PeerName} accepts it, their oaths, ledger score, switched-off rules and history are cleared, and every oath is offered again.");
-        if (ImGui.SmallButton(startingOver ? "Don't start over" : "Start over"))
+        if (ImGui.Button(startingOver ? "Don't start over" : "Start over"))
         {
             state.Draft.ResetCount = startingOver ? sentResets : sentResets + 1;
             plugin.Configuration.Save();
@@ -304,10 +306,10 @@ public sealed partial class ModuleWindow
         Section.SubHeading("Right now");
         using (ImRaii.Disabled(plugin.Configuration.ActivePairing?.Id != pairing.Id))
         {
-            if (ImGui.SmallButton("Draw a reward"))
+            if (ImGui.Button("Draw a reward"))
                 plugin.RulebookService.SendOwnerCommand(CardPiles.DrawCommand(CardPile.Reward));
             ContinueRowOrWrap(ButtonWidth("Draw a punishment"));
-            if (ImGui.SmallButton("Draw a punishment"))
+            if (ImGui.Button("Draw a punishment"))
                 plugin.RulebookService.SendOwnerCommand(CardPiles.DrawCommand(CardPile.Punishment));
 
             ItemWidth(90);
@@ -319,7 +321,7 @@ public sealed partial class ModuleWindow
             ContinueRowOrWrap(ButtonWidth("Penalize"));
             using (ImRaii.Disabled(rbLedgerAward == 0))
             {
-                if (ImGui.SmallButton(rbLedgerAward < 0 ? "Penalize" : "Award"))
+                if (ImGui.Button(rbLedgerAward < 0 ? "Penalize" : "Award"))
                     plugin.RulebookService.SendOwnerCommand(LedgerCommandText(rbLedgerAward, rbLedgerReason));
             }
             IconGlyph.HelpMarker("Changes their ledger score. Thresholds you set in the Ledger tab fire when it crosses them.");
@@ -331,7 +333,7 @@ public sealed partial class ModuleWindow
             foreach (var word in grantWords)
             {
                 ImGui.PushID("grant" + word);
-                if (ImGui.SmallButton(grantWords.Count == 1 ? "Grant leave" : $"Grant leave (\"{word}\")"))
+                if (ImGui.Button(grantWords.Count == 1 ? "Grant leave" : $"Grant leave (\"{word}\")"))
                     plugin.RulebookService.SendGrantLeave(pairing, word);
                 IconGlyph.HelpMarker($"Sends {pairing.PeerName} a /tell with only \"{word}\", which lets them log off for the time their oath says.");
                 ImGui.PopID();
@@ -348,22 +350,64 @@ public sealed partial class ModuleWindow
 
     // ---- Tabs ----
 
+    private readonly Dictionary<string, ListDetail> rbLists = new();
+
+    /// One tab's rules beside the selected rule's editor. Editors write into the draft directly (Publish is what sends
+    /// it), so there's nothing unsaved to guard. `display` sets the list order when it differs from the draft's.
+    private void DrawRuleListDetail<T>(string id, List<T> list, Func<T, string> idOf, Func<T, string> nameOf, string kind,
+        Func<T, List<(string Label, string Text)>> lines, Action<T> editor, Action? toolbar, string emptyText,
+        Func<T, string?>? status = null, Func<T, string?>? group = null, Func<T, string?>? badge = null, IEnumerable<T>? display = null)
+    {
+        if (!rbLists.TryGetValue(id, out var listDetail))
+            rbLists[id] = listDetail = new ListDetail();
+        // A rule just made with + New becomes the selection.
+        if (rbEditingId is { } editing && list.Any(x => idOf(x) == editing) && listDetail.Selected != editing)
+            listDetail.Select(editing);
+
+        string Name(T x) => string.IsNullOrWhiteSpace(nameOf(x)) ? $"(unnamed {kind})" : nameOf(x);
+        var items = (display ?? list).Select(x => new ListDetailItem(idOf(x), Name(x), badge?.Invoke(x), Group: group?.Invoke(x))).ToList();
+        listDetail.Draw(id, items, toolbar, item =>
+            {
+                if (item is null || list.FirstOrDefault(x => idOf(x) == item.Key) is not { } rule)
+                {
+                    IconGlyph.WrappedDisabled(toolbar is null ? $"Choose a {kind}." : $"Choose a {kind}, or make a new one.");
+                    return;
+                }
+                ImGui.PushID(item.Key);
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextColored(Theme.AccentHover, Name(rule));
+                ImGui.SameLine();
+                if (ImGui.Button("Delete"))
+                {
+                    list.Remove(rule);
+                    rbEditingId = null;
+                    plugin.Configuration.Save();
+                    listDetail.Select(null);
+                    ImGui.PopID();
+                    return;
+                }
+                DrawRuleLines(lines(rule));
+                if (status?.Invoke(rule) is { } text)
+                    IconGlyph.WrappedColored(Theme.AccentHover, text);
+                ImGui.Separator();
+                editor(rule);
+                ImGui.PopID();
+            },
+            null, item => rbEditingId = item?.Key, emptyText);
+    }
+
     private void DrawOathsTab(RulebookDocument draft)
     {
         var state = plugin.Configuration.ActivePairing!.Rulebook;
-        using (Section.Begin("rbOaths", "Oaths"))
-        {
-            IconGlyph.WrappedDisabled("Something your Sub swears to. They say yes to each oath on its own. Keeping or breaking it runs what you set.");
-            if (draft.Oaths.Count == 0)
-                IconGlyph.WrappedDisabled("No oaths yet.");
-            foreach (var oath in draft.Oaths.ToList())
-                DrawRuleRow(oath.Id, oath.Name, "oath", RuleText.Oath(oath), StatusOf(state, oath.Id), () => draft.Oaths.Remove(oath));
-            if (ImGui.SmallButton("New oath"))
-                StartNew(draft.Oaths, new Oath { Name = "Greet me every day", Condition = OathCondition.GreetOwner, Scope = OathScope.ForATime, DurationMinutes = 7 * 1440 }, o => o.Id);
-        }
-        if (draft.Oaths.FirstOrDefault(o => o.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit oath"))
-                DrawOathEditor(editing);
+        using var section = Section.Begin("rbOaths", "Oaths");
+        IconGlyph.WrappedDisabled("Something your Sub swears to. They say yes to each oath on its own. Keeping or breaking it runs what you set.");
+        DrawRuleListDetail("rbOathList", draft.Oaths, o => o.Id, o => o.Name, "oath", RuleText.Oath, DrawOathEditor,
+            () =>
+            {
+                if (ImGui.Button("+ New oath"))
+                    StartNew(draft.Oaths, new Oath { Name = "Greet me every day", Condition = OathCondition.GreetOwner, Scope = OathScope.ForATime, DurationMinutes = 7 * 1440 }, o => o.Id);
+            },
+            "No oaths yet.", status: o => StatusOf(state, o.Id));
     }
 
     private void DrawDeckTab(RulebookDocument draft)
@@ -374,145 +418,121 @@ public sealed partial class ModuleWindow
             IconGlyph.WrappedDisabled("These apply to the whole deck. Bad things draw from your punishments, good things from your rewards.");
             var d = draft.DrawOn;
             var changed = false;
-            ImGui.TextUnformatted("A punishment when:");
-            var b = d.OathBroken; if (ImGui.Checkbox("an oath is broken", ref b)) { d.OathBroken = b; changed = true; }
-            var w = d.Wipe; if (ImGui.Checkbox("the party wipes", ref w)) { d.Wipe = w; changed = true; }
-            var de = d.Death; if (ImGui.Checkbox("their character dies", ref de)) { d.Death = de; changed = true; }
-            ImGui.TextUnformatted("A reward when:");
-            var k = d.OathKept; if (ImGui.Checkbox("an oath is kept", ref k)) { d.OathKept = k; changed = true; }
+            if (ImGui.BeginTable("rbDrawOn", 2, ImGuiTableFlags.SizingStretchSame))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted("A punishment when:");
+                var b = d.OathBroken; if (ImGui.Checkbox("an oath is broken", ref b)) { d.OathBroken = b; changed = true; }
+                var w = d.Wipe; if (ImGui.Checkbox("the party wipes", ref w)) { d.Wipe = w; changed = true; }
+                var de = d.Death; if (ImGui.Checkbox("their character dies", ref de)) { d.Death = de; changed = true; }
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted("A reward when:");
+                var k = d.OathKept; if (ImGui.Checkbox("an oath is kept", ref k)) { d.OathKept = k; changed = true; }
+                ImGui.EndTable();
+            }
             var cd = d.CooldownSeconds;
             if (DrawCooldown("drawOnCooldown", ref cd, "At most one automatic draw in this many seconds.")) { d.CooldownSeconds = cd; changed = true; }
             if (changed) config.Save();
         }
 
-        using (Section.Begin("rbDeck", $"Cards ({draft.Deck.Count}/{RulebookLimits.MaxDeckCards})"))
+        using var section = Section.Begin("rbDeck", $"Cards ({draft.Deck.Count}/{RulebookLimits.MaxDeckCards})");
+        IconGlyph.WrappedDisabled("A draw picks one card from its pile at random. You can also draw by hand from the Overview tab.");
+        float Chance(DeckCard card)
         {
-            IconGlyph.WrappedDisabled("A draw picks one card from its pile at random. You can also draw by hand from the Overview tab.");
-            foreach (var pile in new[] { CardPile.Punishment, CardPile.Reward })
-            {
-                var cards = draft.Deck.Where(c => c.Pile == pile).ToList();
-                Section.SubHeading(pile == CardPile.Punishment ? "Punishments" : "Rewards");
-                if (cards.Count == 0)
-                    IconGlyph.WrappedDisabled("None yet - a draw from this pile does nothing.");
-                var total = cards.Sum(c => c.Weight);
-                foreach (var card in cards)
-                {
-                    var chance = total > 0 ? card.Weight * 100f / total : 0;
-                    DrawRuleRow(card.Id, card.Name, "card",
-                        [("Does", RuleText.Cap(ConsequenceText.Describe(card.Consequence))), ("Chance", $"{chance:0}%{(card.Once ? ", only once" : "")}")],
-                        null, () => draft.Deck.Remove(card));
-                }
-                using (ImRaii.Disabled(draft.Deck.Count >= RulebookLimits.MaxDeckCards))
-                {
-                    var label = pile == CardPile.Punishment ? "New punishment" : "New reward";
-                    if (ImGui.SmallButton(label))
-                        StartNew(draft.Deck, new DeckCard { Name = label[4..], Pile = pile }, c => c.Id);
-                }
-            }
+            var total = draft.Deck.Where(c => c.Pile == card.Pile).Sum(c => c.Weight);
+            return total > 0 ? card.Weight * 100f / total : 0;
         }
-        if (draft.Deck.FirstOrDefault(c => c.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit card"))
-                DrawCardEditor(draft, editing);
+        DrawRuleListDetail("rbCardList", draft.Deck, c => c.Id, c => c.Name, "card",
+            c => [("Does", RuleText.Cap(ConsequenceText.Describe(c.Consequence))), ("Chance", $"{Chance(c):0}%{(c.Once ? ", only once" : "")}")],
+            c => DrawCardEditor(draft, c),
+            () =>
+            {
+                using var full = ImRaii.Disabled(draft.Deck.Count >= RulebookLimits.MaxDeckCards);
+                if (ImGui.Button("+ Punishment"))
+                    StartNew(draft.Deck, new DeckCard { Name = "Punishment", Pile = CardPile.Punishment }, c => c.Id);
+                ImGui.SameLine();
+                if (ImGui.Button("+ Reward"))
+                    StartNew(draft.Deck, new DeckCard { Name = "Reward", Pile = CardPile.Reward }, c => c.Id);
+            },
+            "No cards yet - a draw from an empty pile does nothing.",
+            group: c => c.Pile == CardPile.Punishment ? "Punishments" : "Rewards",
+            badge: c => $"{Chance(c):0}%",
+            display: draft.Deck.OrderBy(c => c.Pile == CardPile.Punishment ? 0 : 1));
     }
 
     private void DrawPlacesTab(RulebookDocument draft)
     {
-        using (Section.Begin("rbPlaces", "Places"))
-        {
-            IconGlyph.WrappedDisabled("Run something when your Sub enters or leaves a place.");
-            if (draft.Places.Count == 0)
-                IconGlyph.WrappedDisabled("No place rules yet.");
-            foreach (var rule in draft.Places.ToList())
-                DrawRuleRow(rule.Id, rule.Name, "place rule", RuleText.Place(rule), null, () => draft.Places.Remove(rule));
-            if (ImGui.SmallButton("New place rule"))
-                StartNew(draft.Places, new PlaceRule { Name = "In a city", Places = { new PlaceRef { Kind = PlaceKind.MainCity } } }, r => r.Id);
-        }
-        if (draft.Places.FirstOrDefault(r => r.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit place rule"))
-                DrawPlaceEditor(editing);
+        using var section = Section.Begin("rbPlaces", "Places");
+        IconGlyph.WrappedDisabled("Run something when your Sub enters or leaves a place.");
+        DrawRuleListDetail("rbPlaceList", draft.Places, r => r.Id, r => r.Name, "place rule", RuleText.Place, DrawPlaceEditor,
+            () =>
+            {
+                if (ImGui.Button("+ New place rule"))
+                    StartNew(draft.Places, new PlaceRule { Name = "In a city", Places = { new PlaceRef { Kind = PlaceKind.MainCity } } }, r => r.Id);
+            },
+            "No place rules yet.");
     }
 
     private void DrawPresenceTab(RulebookDocument draft)
     {
-        using (Section.Begin("rbPresence", "Presence"))
-        {
-            IconGlyph.WrappedDisabled("Run something when your character comes near your Sub, or leaves.");
-            if (draft.Presence.Count == 0)
-                IconGlyph.WrappedDisabled("No presence rules yet.");
-            foreach (var rule in draft.Presence.ToList())
-                DrawRuleRow(rule.Id, rule.Name, "presence rule", RuleText.Presence(rule, "you"), null, () => draft.Presence.Remove(rule));
-            if (ImGui.SmallButton("New presence rule"))
-                StartNew(draft.Presence, new PresenceRule { Name = "When I arrive" }, r => r.Id);
-        }
-        if (draft.Presence.FirstOrDefault(r => r.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit presence rule"))
-                DrawPresenceEditor(editing);
+        using var section = Section.Begin("rbPresence", "Presence");
+        IconGlyph.WrappedDisabled("Run something when your character comes near your Sub, or leaves.");
+        DrawRuleListDetail("rbPresenceList", draft.Presence, r => r.Id, r => r.Name, "presence rule", r => RuleText.Presence(r, "you"), DrawPresenceEditor,
+            () =>
+            {
+                if (ImGui.Button("+ New presence rule"))
+                    StartNew(draft.Presence, new PresenceRule { Name = "When I arrive" }, r => r.Id);
+            },
+            "No presence rules yet.");
     }
 
     private void DrawLedgerTab(RulebookDocument draft)
     {
-        using (Section.Begin("rbLedger", "Ledger thresholds"))
-        {
-            IconGlyph.WrappedDisabled("The ledger is a running score. Oaths and your Award/Penalize buttons move it; a threshold runs something when the score reaches it.");
-            if (draft.Thresholds.Count == 0)
-                IconGlyph.WrappedDisabled("No thresholds yet.");
-            foreach (var t in draft.Thresholds.ToList())
-                DrawRuleRow(t.Id, t.Name, "threshold", RuleText.Threshold(t), null, () => draft.Thresholds.Remove(t));
-            using (ImRaii.Disabled(draft.Thresholds.Count >= RulebookLimits.MaxThresholds))
+        using var section = Section.Begin("rbLedger", "Ledger thresholds");
+        IconGlyph.WrappedDisabled("The ledger is a running score. Oaths and your Award/Penalize buttons move it; a threshold runs something when the score reaches it.");
+        DrawRuleListDetail("rbThresholdList", draft.Thresholds, t => t.Id, t => t.Name, "threshold", RuleText.Threshold, DrawThresholdEditor,
+            () =>
             {
-                if (ImGui.SmallButton("New threshold"))
+                using var full = ImRaii.Disabled(draft.Thresholds.Count >= RulebookLimits.MaxThresholds);
+                if (ImGui.Button("+ New threshold"))
                     StartNew(draft.Thresholds, new LedgerThreshold { Name = "Too many demerits", Score = -5, Direction = ThresholdDirection.AtOrBelow, DrawCard = true, ResetTo = 0 }, t => t.Id);
-            }
-        }
-        if (draft.Thresholds.FirstOrDefault(t => t.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit threshold"))
-                DrawThresholdEditor(editing);
+            },
+            "No thresholds yet.");
     }
 
     private const string NewSubNote = "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.";
 
     private void DrawScheduleTab(RulebookDocument draft)
     {
-        using (Section.Begin("rbTimes", $"Schedule ({draft.Times.Count}/{RulebookLimits.MaxTimeRules})"))
-        {
-            IconGlyph.WrappedDisabled("Run something at a time of day, or each time your Sub logs in. Times are in your Sub's local time.");
-            if (draft.Times.Count > 0)
-                IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
-            else
-                IconGlyph.WrappedDisabled("No time rules yet.");
-            foreach (var rule in draft.Times.ToList())
-                DrawRuleRow(rule.Id, rule.Name, "time rule", RuleText.Time(rule), null, () => draft.Times.Remove(rule));
-            using (ImRaii.Disabled(draft.Times.Count >= RulebookLimits.MaxTimeRules))
+        using var section = Section.Begin("rbTimes", $"Schedule ({draft.Times.Count}/{RulebookLimits.MaxTimeRules})");
+        IconGlyph.WrappedDisabled("Run something at a time of day, or each time your Sub logs in. Times are in your Sub's local time.");
+        if (draft.Times.Count > 0)
+            IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+        DrawRuleListDetail("rbTimeList", draft.Times, t => t.Id, t => t.Name, "time rule", RuleText.Time, DrawTimeEditor,
+            () =>
             {
-                if (ImGui.SmallButton("New time rule"))
+                using var full = ImRaii.Disabled(draft.Times.Count >= RulebookLimits.MaxTimeRules);
+                if (ImGui.Button("+ New time rule"))
                     StartNew(draft.Times, new TimeRule { Name = "Bedtime" }, t => t.Id);
-            }
-        }
-        if (draft.Times.FirstOrDefault(t => t.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit time rule"))
-                DrawTimeEditor(editing);
+            },
+            "No time rules yet.");
     }
 
     private void DrawShopTab(RulebookDocument draft)
     {
-        using (Section.Begin("rbShop", $"Shop ({draft.Shop.Count}/{RulebookLimits.MaxShopItems})"))
-        {
-            IconGlyph.WrappedDisabled("Things your Sub can buy with ledger points, when they choose. Nothing - not you, not a rule - buys for them.");
-            if (draft.Shop.Count > 0)
-                IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
-            else
-                IconGlyph.WrappedDisabled("Nothing for sale yet.");
-            foreach (var item in draft.Shop.ToList())
-                DrawRuleRow(item.Id, item.Name, "shop item", RuleText.Shop(item), null, () => draft.Shop.Remove(item));
-            using (ImRaii.Disabled(draft.Shop.Count >= RulebookLimits.MaxShopItems))
+        using var section = Section.Begin("rbShop", $"Shop ({draft.Shop.Count}/{RulebookLimits.MaxShopItems})");
+        IconGlyph.WrappedDisabled("Things your Sub can buy with ledger points, when they choose. Nothing - not you, not a rule - buys for them.");
+        if (draft.Shop.Count > 0)
+            IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+        DrawRuleListDetail("rbShopList", draft.Shop, i => i.Id, i => i.Name, "shop item", RuleText.Shop, DrawShopEditor,
+            () =>
             {
-                if (ImGui.SmallButton("New shop item"))
+                using var full = ImRaii.Disabled(draft.Shop.Count >= RulebookLimits.MaxShopItems);
+                if (ImGui.Button("+ New shop item"))
                     StartNew(draft.Shop, new ShopItem { Name = "A treat", Price = 10, DrawReward = true }, i => i.Id);
-            }
-        }
-        if (draft.Shop.FirstOrDefault(i => i.Id == rbEditingId) is { } editing)
-            using (Section.Begin("rbEditor", "Edit shop item"))
-                DrawShopEditor(editing);
+            },
+            "Nothing for sale yet.", badge: i => $"{i.Price} pts");
     }
 
     private static readonly string[] TimeTriggerNames = ["At a time", "When they log in"];
@@ -655,10 +675,10 @@ public sealed partial class ModuleWindow
         DrawRuleLines(lines);
         if (status is not null)
             IconGlyph.WrappedColored(Theme.AccentHover, status);
-        if (ImGui.SmallButton(editing ? "Close" : "Edit"))
+        if (ImGui.Button(editing ? "Close" : "Edit"))
             rbEditingId = editing ? null : id;
         ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.SmallButton("Delete"))
+        if (ImGui.Button("Delete"))
         {
             remove();
             if (editing) rbEditingId = null;
@@ -749,9 +769,10 @@ public sealed partial class ModuleWindow
                 }
                 else
                 {
+                    ImGui.AlignTextToFramePadding();
                     ImGui.TextUnformatted(string.IsNullOrEmpty(oath.AnimationLabel) ? "No animation picked." : oath.AnimationLabel);
                     ImGui.SameLine();
-                    if (ImGui.SmallButton("Pick animation"))
+                    if (ImGui.Button("Pick animation"))
                     {
                         var target = oath;
                         plugin.AnimationPickerWindow.OpenImported(entry =>
@@ -892,7 +913,7 @@ public sealed partial class ModuleWindow
             IconGlyph.WrappedColored(Theme.Warning, "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.");
 
         ImGui.Spacing();
-        if (ImGui.SmallButton("Offer again"))
+        if (ImGui.Button("Offer again"))
         {
             // A new id is a new offer; the old one keeps whatever state the Sub's client gave it.
             oath.Id = RuleIds.New();
@@ -1148,6 +1169,11 @@ public sealed partial class ModuleWindow
             var length = rule.LeashLengthYalms;
             ItemWidth(110);
             if (ImGui.SliderInt("yalms##presenceLeash", ref length, LengthOption.MinYalms, LengthOption.MaxYalms)) { rule.LeashLengthYalms = length; changed = true; }
+            ImGui.Indent();
+            var pauseInDuties = rule.LeashPauseInDuties;
+            if (ImGui.Checkbox("Pause the leash in duties##presenceLeash", ref pauseInDuties)) { rule.LeashPauseInDuties = pauseInDuties; changed = true; }
+            IconGlyph.HelpMarker("While your Sub is in a duty, this leash pauses as if you were apart, and picks back up once they leave. Needs your Sub on this version of Oathbound or newer - an older one keeps the leash on.");
+            ImGui.Unindent();
         }
         changed |= DrawPresenceTell("arriveTell", rule.ArriveTell, v => rule.ArriveTell = v);
         Section.SubHeading("When you leave");
@@ -1248,7 +1274,7 @@ public sealed partial class ModuleWindow
             ImGui.PushID(i);
             ImGui.BulletText(RulebookPlaces.Describe(places[i]));
             ContinueRowOrWrap(ButtonWidth("x"));
-            if (ImGui.SmallButton("x"))
+            if (ImGui.Button("x"))
             {
                 places.RemoveAt(i);
                 changed = true;
@@ -1258,7 +1284,7 @@ public sealed partial class ModuleWindow
             ImGui.PopID();
         }
 
-        if (ImGui.SmallButton("+ Add place"))
+        if (ImGui.Button("+ Add place"))
             ImGui.OpenPopup("addPlace");
         // Popups auto-size to their widest item; a long saved label would otherwise stretch it across the screen.
         ImGui.SetNextWindowSizeConstraints(new Vector2(Scaled(320), 0), new Vector2(Scaled(320), float.MaxValue));
@@ -1321,6 +1347,69 @@ public sealed partial class ModuleWindow
         return ConsequenceKind.Typed;
     }
 
+    private const int DefaultConsequenceSeconds = 3600;
+    private static readonly (string Label, int? Seconds)[] DurationPresets =
+    [
+        ("Until I clear it", null), ("15 minutes", 900), ("30 minutes", 1800), ("1 hour", 3600), ("2 hours", 7200), ("6 hours", 21600),
+        ("12 hours", 43200), ("1 day", 86400), ("3 days", 259200), ("7 days", 604800),
+    ];
+
+    private static float DurationComboWidth =>
+        DurationPresets.Max(p => ImGui.CalcTextSize(p.Label).X) + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetFrameHeight();
+
+    /// A title, outfit, moodle or restraint that a consequence puts on, which a duration takes off again.
+    private static bool TakesDuration(string command)
+    {
+        var bare = WithDuration(command, null);
+        return OwnerLockOption.IsOwnerLock(bare) || (OwnerLockOption.Accepts(bare) && !OwnerLockOption.IsGesture(bare));
+    }
+
+    private static int? DurationOf(string command)
+    {
+        var (word, rest) = SplitCommand(command);
+        LockTimerOption.StripSeconds(rest, out var seconds);
+        return word.Length == 0 ? null : seconds;
+    }
+
+    /// Rewrites the command's `lockfor:`; a restraint keeps its key.
+    private static string WithDuration(string command, int? seconds)
+    {
+        var (word, rest) = SplitCommand(command);
+        if (rest.Length == 0)
+            return command;
+        var bare = $"{word} {LockTimerOption.Strip(rest, out var existing)}";
+        if (OwnerLockOption.IsOwnerLock(bare))
+            return seconds is { } s ? LockTimerOption.InsertSeconds(bare, s) : bare;
+        return LockTimerOption.Insert(bare, RestraintLock.FromSeconds(seconds).WithKey(existing.Key));
+    }
+
+    private static (string Word, string Tail) SplitCommand(string command)
+    {
+        var t = command.Trim();
+        var space = t.IndexOf(' ');
+        return space < 0 ? (t, "") : (t[..space], t[(space + 1)..]);
+    }
+
+    /// Returns the rewritten command when the Owner picks another duration.
+    private static string? DrawDurationCombo(string command)
+    {
+        var current = DurationOf(command);
+        var index = Array.FindIndex(DurationPresets, p => p.Seconds == current);
+        var preview = index >= 0 ? DurationPresets[index].Label : RestraintLock.Format(TimeSpan.FromSeconds(current ?? 0));
+        string? result = null;
+        ImGui.SetNextItemWidth(DurationComboWidth);
+        if (ImGui.BeginCombo("##duration", preview))
+        {
+            foreach (var (label, seconds) in DurationPresets)
+                if (ImGui.Selectable(label, seconds == current) && seconds != current)
+                    result = WithDuration(command, seconds);
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("How long it stays on, locked, before it comes off by itself. You can always end it sooner.");
+        return result;
+    }
+
     /// Kinds with nothing to choose are added straight from their checkbox.
     private static string? FixedCommand(ConsequenceKind kind) => kind switch
     {
@@ -1366,17 +1455,25 @@ public sealed partial class ModuleWindow
             var kind = KindOf(commands[i]);
             var label = ConsequenceKinds.First(k => k.Kind == kind).Label;
             var canChange = FixedCommand(kind) is null;
-            var actions = (canChange ? ButtonWidth("Change") + style.ItemSpacing.X : 0) + ButtonWidth("x");
+            var timed = TakesDuration(commands[i]);
+            var actions = (timed ? DurationComboWidth + style.ItemSpacing.X : 0) + (canChange ? ButtonWidth("Change") + style.ItemSpacing.X : 0) + ButtonWidth("x");
             TextWithActions($"{label}: {RuleText.Cap(ConsequenceText.Describe(commands[i]))}", actions, t => ImGui.TextColored(Theme.TextMuted, t));
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(commands[i]);
+            if (timed && DrawDurationCombo(commands[i]) is { } retimed)
+            {
+                commands[i] = retimed;
+                changed = true;
+            }
+            if (timed)
+                ImGui.SameLine();
             if (canChange)
             {
-                if (ImGui.SmallButton("Change"))
+                if (ImGui.Button("Change"))
                     OpenConsequencePicker(kind, i);
                 ImGui.SameLine();
             }
-            if (ImGui.SmallButton("x"))
+            if (ImGui.Button("x"))
             {
                 commands.RemoveAt(i);
                 changed = true;
@@ -1521,7 +1618,8 @@ public sealed partial class ModuleWindow
                 if (ImGui.Selectable($"{display}##{cmd.Command}", ReferenceEquals(rbAddPick, cmd)))
                 {
                     rbAddPick = cmd;
-                    rbAddLock = cmd.LockSeconds;
+                    // A reward or punishment that puts something on lasts an hour unless the saved command says otherwise.
+                    rbAddLock = cmd.LockSeconds ?? (TakesDuration(cmd.Command) ? DefaultConsequenceSeconds : null);
                 }
                 if (ImGui.IsItemHovered() && display != cmd.Label)
                     ImGui.SetTooltip(cmd.Label);
@@ -1533,7 +1631,7 @@ public sealed partial class ModuleWindow
         if (rbAddPick is not { } pick)
             return null;
         if (OwnerLockOption.Accepts(pick.Command))
-            OwnerLockOption.Draw("rbAdd", ref rbAddLock, OwnerLockOption.IsGesture(pick.Command));
+            OwnerLockOption.Draw("rbAdd", ref rbAddLock, OwnerLockOption.IsGesture(pick.Command), OwnerLockOption.IsOwnerLock(pick.Command));
         return OwnerLockOption.Apply(OwnerMoodleOverride.ForSend(config, pick), rbAddLock);
     }
 
@@ -1579,7 +1677,7 @@ public sealed partial class ModuleWindow
             using (Section.Begin("rbSubSuspended"))
             {
                 IconGlyph.WrappedColored(Theme.Warning, "Your rulebooks are paused because panic was triggered. Nothing fires until you resume.");
-                if (ImGui.SmallButton("Resume rulebooks"))
+                if (ImGui.Button("Resume rulebooks"))
                     service.Resume();
             }
         }
@@ -1628,10 +1726,10 @@ public sealed partial class ModuleWindow
                     if (OathConditions.IsRitual(oath.Condition))
                         IconGlyph.WrappedDisabled("Resets at midnight - today counts as the first day.");
                     IconGlyph.WrappedDisabled($"Offer ends {Until(s.OfferedUnixSeconds + (long)RulebookService.OfferLifetime.TotalSeconds)}.");
-                    if (ImGui.SmallButton("I swear"))
+                    if (ImGui.Button("I swear"))
                         service.AcceptOath(pairing, id);
                     ImGui.SameLine();
-                    if (ImGui.SmallButton("Decline"))
+                    if (ImGui.Button("Decline"))
                         service.DeclineOath(pairing, id);
                     ImGui.Separator();
                     ImGui.PopID();
@@ -1639,6 +1737,11 @@ public sealed partial class ModuleWindow
             }
         }
 
+        TwoColumns("rbSubColumns", () => DrawSubRulebookOaths(pairing, state, accepted), () => DrawSubRulebookRules(pairing, state, accepted, service));
+    }
+
+    private void DrawSubRulebookOaths(PairingState pairing, RulebookPairingState state, RulebookDocument accepted)
+    {
         var open = state.Oaths.Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null).ToList();
         using (Section.Begin("rbSubOpen", "Your oaths"))
         {
@@ -1689,7 +1792,10 @@ public sealed partial class ModuleWindow
                     IconGlyph.WrappedDisabled($"{Ago(d.At)} - {d.Text}");
             }
         }
+    }
 
+    private void DrawSubRulebookRules(PairingState pairing, RulebookPairingState state, RulebookDocument accepted, Rulebook.RulebookService service)
+    {
         using (Section.Begin("rbSubRules", "Rules"))
         {
             IconGlyph.WrappedDisabled($"Everything in the version you accepted. Only {pairing.PeerName ?? "your Owner"} can change or remove a rule. Your safeword, or turning the Rulebook permission off, pauses all of it.");
@@ -1773,7 +1879,7 @@ public sealed partial class ModuleWindow
                     IconGlyph.WrappedColored(Theme.Warning, $"{outfitName} came off - put it back on {Until(graceEnds)}.");
                 else
                     IconGlyph.WrappedDisabled($"Keeping on: {outfitName}.");
-                if (outfitName is not null && ImGui.SmallButton("Put it back on"))
+                if (outfitName is not null && ImGui.Button("Put it back on"))
                     rbPutBackError = service.PutBackOn(pairing);
                 if (rbPutBackError is not null)
                     IconGlyph.WrappedColored(Theme.Warning, rbPutBackError);
@@ -1797,7 +1903,7 @@ public sealed partial class ModuleWindow
             else
             {
                 IconGlyph.WrappedDisabled(terms.Recurrence == OathRecurrence.Renew ? "Starts again by itself when it ends." : "Offered to you again when it ends.");
-                if (ImGui.SmallButton("Stop renewing"))
+                if (ImGui.Button("Stop renewing"))
                     service.StopRenewing(pairing, oathId);
                 IconGlyph.HelpMarker("This run still counts and is judged as usual; it just won't start again afterwards.");
             }
@@ -1822,21 +1928,21 @@ public sealed partial class ModuleWindow
                 ImGui.SameLine();
                 using (ImRaii.Disabled(blocker is not null))
                 {
-                    if (ImGui.SmallButton("Yes, buy it"))
+                    if (ImGui.Button("Yes, buy it"))
                     {
                         rbShopResult = service.Buy(pairing, item.Id) ?? $"Bought \"{item.Name}\".";
                         rbShopConfirm = null;
                     }
                 }
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Cancel"))
+                if (ImGui.Button("Cancel"))
                     rbShopConfirm = null;
             }
             else
             {
                 using (ImRaii.Disabled(blocker is not null))
                 {
-                    if (ImGui.SmallButton($"Buy ({item.Price})"))
+                    if (ImGui.Button($"Buy ({item.Price})"))
                         rbShopConfirm = item.Id;
                 }
                 if (blocker is not null)
@@ -1850,6 +1956,84 @@ public sealed partial class ModuleWindow
         }
         if (rbShopResult is not null)
             IconGlyph.WrappedDisabled(rbShopResult);
+    }
+
+    /// The Sub's open oaths in the main window's header, a line each with the action it needs, so the Rulebook doesn't
+    /// have to be opened to keep them.
+    public void DrawHeaderOaths()
+    {
+        var config = plugin.Configuration;
+        var subPairings = config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.SubSide && p.Rulebook.Accepted is not null).ToList();
+        var rows = subPairings
+            .SelectMany(p => p.Rulebook.Oaths.Where(kv => kv.Value.Status == OathStatus.Open && kv.Value.Terms is not null).Select(kv => (Pairing: p, Id: kv.Key, State: kv.Value)))
+            .ToList();
+        if (rows.Count == 0)
+            return;
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        IconGlyph.Text(FontAwesomeIcon.Scroll, "Your oaths");
+        if (config.RulebookSuspended)
+            IconGlyph.WrappedColored(Theme.Warning, "Paused since panic - resume them in the Rulebook.");
+        foreach (var (pairing, id, s) in rows)
+        {
+            var terms = s.Terms!;
+            ImGui.PushID($"headerOath_{pairing.Id}_{id}");
+            var name = string.IsNullOrWhiteSpace(terms.Name) ? "Oath" : terms.Name;
+            if (subPairings.Count > 1)
+                name += $" ({pairing.PeerName})";
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(name);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"{OathText.Describe(terms)}. {OathStatusText(s.Status, s.ScopeEndsUnixSeconds)}");
+            if (HeaderOathStatus(pairing, s, terms) is { } status)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(status.Color, status.Text);
+            }
+
+            if (terms.Condition == OathCondition.GreetOwner)
+            {
+                ImGui.Indent();
+                DrawPerform(pairing, id, terms);
+                ImGui.Unindent();
+            }
+            else if (terms.Condition == OathCondition.KeepItOn && s.GraceEndsUnixSeconds is not null && pairing.Rulebook.OwnerOutfit?.DesignName is not null)
+            {
+                ContinueRowOrWrap(ButtonWidth("Put it back on"));
+                if (ImGui.Button("Put it back on"))
+                    rbPutBackError = plugin.RulebookService.PutBackOn(pairing);
+                if (rbPutBackError is not null)
+                    IconGlyph.WrappedColored(Theme.Warning, rbPutBackError);
+            }
+            ImGui.PopID();
+        }
+    }
+
+    private static (string Text, Vector4 Color)? HeaderOathStatus(PairingState pairing, OathState s, Oath terms)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (terms.Scope == OathScope.NextDuty && !s.DutyEntered)
+            return ("starts with your next duty", Theme.TextMuted);
+        switch (terms.Condition)
+        {
+            case OathCondition.KeepItOn when s.GraceEndsUnixSeconds is { } graceEnds:
+                return ($"came off - put it back on {Until(graceEnds)}", Theme.Warning);
+            case OathCondition.StayAtSide when s.GraceEndsUnixSeconds is { } sideEnds:
+                return ($"too far - get back {Until(sideEnds)}", Theme.Warning);
+            case OathCondition.AskBeforeLogoff:
+                return s.LeaveGrantedUntilUnixSeconds > now
+                    ? ($"leave to log off until {DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime():HH:mm}", Theme.Success)
+                    : ($"ask {pairing.PeerName} before you log off", Theme.TextMuted);
+        }
+        if (OathConditions.CountsTimes(terms.Condition))
+        {
+            var due = RitualCalendar.RepeatEnd(s.PeriodStartUnixSeconds, terms.PeriodDays);
+            return s.PeriodCount >= terms.TimesPerPeriod
+                ? ("done for now", Theme.Success)
+                : ($"{s.PeriodCount}/{terms.TimesPerPeriod} - due {Until(due)}", Theme.Warning);
+        }
+        return null;
     }
 
     private void DrawPerform(PairingState pairing, string oathId, Oath terms)
@@ -1866,7 +2050,7 @@ public sealed partial class ModuleWindow
             var blocker = service.PerformBlocker(pairing, oathId);
             using (ImRaii.Disabled(blocker is not null))
             {
-                if (ImGui.SmallButton($"Perform ({OathText.Hold(terms)})"))
+                if (ImGui.Button($"Perform ({OathText.Hold(terms)})"))
                     rbPerformError = service.Perform(pairing, oathId);
             }
             var full = string.IsNullOrEmpty(terms.AnimationId) ? "" : $"\n\nAnimation: {terms.AnimationLabel}";

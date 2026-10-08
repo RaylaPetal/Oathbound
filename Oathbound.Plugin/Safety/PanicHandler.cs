@@ -89,7 +89,7 @@ public sealed class PanicHandler
         RunStep("release restriction rules", restrictionRules.ReleaseAllForPanic);
         // Repeated directly so a failed rule release can never leave the hotbars greyed out.
         RunStep("restore hotbars", hotbarVisuals.Hide);
-        RunStep("release restraint bound animations", restraints.ReleaseAllBoundAnimationsForPanic);
+        RunStep("release restraints and forget saved ones", restraints.ReleaseAllForPanic);
         // Oathbound locks the mods it holds, so only panic can turn them off.
         RunStep("release gesture animation", gesture.ResetActiveTemporary);
         RunStep("stop toy control", toyControl.ReleaseAllForPanic);

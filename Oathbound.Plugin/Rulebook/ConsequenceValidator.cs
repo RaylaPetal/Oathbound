@@ -71,19 +71,31 @@ public static class ConsequenceValidator
     }
 
     /// Every consequence in a document, for the Sub's whole-version check.
-    public static string? CheckDocument(RulebookDocument doc)
+    public static string? CheckDocument(RulebookDocument doc) =>
+        AllConsequences(doc).Select(CheckAll).FirstOrDefault(e => e is not null);
+
+    public static IEnumerable<List<string>> AllConsequences(RulebookDocument doc)
     {
-        IEnumerable<List<string>> All()
-        {
-            foreach (var o in doc.Oaths) { yield return o.Kept; yield return o.Broken; }
-            foreach (var c in doc.Deck) yield return c.Consequence;
-            foreach (var p in doc.Places) { yield return p.Enter; yield return p.Leave; }
-            foreach (var p in doc.Presence) { yield return p.Arrive; yield return p.Depart; }
-            foreach (var t in doc.Thresholds) yield return t.Consequence;
-            foreach (var t in doc.Times) yield return t.Consequence;
-            foreach (var i in doc.Shop) yield return i.Consequence;
-        }
-        return All().Select(CheckAll).FirstOrDefault(e => e is not null);
+        foreach (var o in doc.Oaths) { yield return o.Kept; yield return o.Broken; }
+        foreach (var c in doc.Deck) yield return c.Consequence;
+        foreach (var p in doc.Places) { yield return p.Enter; yield return p.Leave; }
+        foreach (var p in doc.Presence) { yield return p.Arrive; yield return p.Depart; }
+        foreach (var t in doc.Thresholds) yield return t.Consequence;
+        foreach (var t in doc.Times) yield return t.Consequence;
+        foreach (var i in doc.Shop) yield return i.Consequence;
+    }
+
+    /// A title, outfit or moodle with a timer, which a Sub from before timed locks would refuse when it ran.
+    public static bool IsTimedOwnerLock(string command)
+    {
+        var text = command.Trim();
+        var space = text.IndexOf(' ');
+        if (space < 0)
+            return false;
+        var word = text[..space];
+        return (word.Equals("title", StringComparison.OrdinalIgnoreCase) || word.Equals("outfit", StringComparison.OrdinalIgnoreCase)
+                || word.Equals("moodle", StringComparison.OrdinalIgnoreCase))
+            && text[(space + 1)..].TrimStart().StartsWith("lockfor:", StringComparison.OrdinalIgnoreCase);
     }
 }
 

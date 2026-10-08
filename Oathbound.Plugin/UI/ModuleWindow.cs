@@ -49,7 +49,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private Vector3 newTitleColor = new(1, 1, 1);
     private bool newTitleHasGlow;
     private Vector3 newTitleGlow = new(1, 1, 1);
-    private int? selectedTitleIndex;
 
     private string newOutfitAlias = "";
     private int newOutfitDesignIndex;
@@ -60,6 +59,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Null = Permanent.
     private int? adHocLockSeconds;
     private int? ctqLockSeconds;
+    private string adHocLockKey = "";
+    private string ctqLockKey = "";
     private StruggleLevel adHocStruggle;
     private int adHocStrugglePenalty;
     private StruggleLevel ctqStruggle;
@@ -68,15 +69,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private int ctqStrugglePenalty;
     private string? editingQuickMoodle;
     private bool newOutfitLocked = true;
-    private int? selectedOutfitIndex;
 
     private string newGestureAlias = "";
-    private GestureCatalogEntry? selectedAliasGesture;
-    private int? selectedGestureAliasIndex;
 
     private string newMoodleAlias = "";
-    private int newMoodleStatusIndex;
-    private int? selectedMoodleAliasIndex;
 
     private string ctNewAlias = "";
     private readonly List<CustomTriggerAction> ctDraftActions = new();
@@ -93,7 +89,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private string ctChatText = "";
     private int? editingCustomTriggerIndex;
     private int? editingCustomTriggerActionIndex;
-    private int? selectedCustomTriggerIndex;
 
     /// Owner-side ad-hoc Custom Trigger draft. Actions are typed by name, since the Owner can't see the Sub's catalogs.
     private string ctqLabel = "";
@@ -114,11 +109,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private string newDeviceName = "";
     private AttachedMoodleRef? newDeviceMoodle;
+    private bool newDeviceRedraw;
     private ApiEquipSlot? newDeviceSlot;
     private ulong? newDeviceItemId;
     private readonly RestraintRuleEditState newDeviceRuleEdit = new();
     private string? editingDeviceId;
-    private string? selectedDeviceId;
 
     private string ownerRestraintSearch = "";
     private string subRestraintSearch = "";
@@ -156,7 +151,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private readonly List<PatternStep> toyPatternStepsInput = new();
     private string? toyPatternEditingId;
     private string? toyPatternError;
-    private int? selectedToyPatternIndex;
 
     private ToyTriggerKind toyTriggerKindInput = ToyTriggerKind.HealthPercent;
     private int toyTriggerHealthThresholdInput = 50;
@@ -180,7 +174,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// A gap means the tab was just (re)opened.
     private int lastSyncTabFrame = -10;
 
-    private string gestureQuickSearch = "";
     private QuickCommand? editingQuickCommand;
     private List<QuickCommand>? editingQuickList;
     private string editingQuickLabel = "";
@@ -203,7 +196,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private QuickEditCategory editingQuickCategory;
 
     /// Keyed by the quick command's Label; transient.
-    private readonly HashSet<string> expandedRestraintRuleEditors = new();
     private string? expandedSubModKey;
     private readonly Dictionary<string, RestraintRuleEditState> restraintRuleEdits = new();
 
@@ -254,6 +246,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
+        DrawActiveBanner(isOwner);
+
         switch (activeModule)
         {
             case "title":
@@ -286,15 +280,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     var canSend = DrawOwnerCanSendBanner();
                     IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
                     ImGui.Separator();
-                    using (Section.Begin("ctqRevert", "Revert"))
-                    {
-                        DrawFixedQuickRow("Revert custom triggers", "customtrigger revert", canSend, FixedActionIds.CustomTriggerRevert);
-                        IconGlyph.HelpMarker("Undoes the title, outfit, animation, moodles and restraints your Custom Triggers applied. Sent chat can't be taken back.");
-                    }
-                    using (Section.Begin("ctqSaved", "Saved"))
-                        DrawSavedAliasCommands(canSend);
-                    using (Section.Begin("ctqBuilder", "Build a bundle"))
-                        DrawCustomTriggerQuickSection(canSend);
+                    DrawCommandRow("ctqRevert", canSend, new RowCommand("Revert custom triggers", "customtrigger revert", FixedActionIds.CustomTriggerRevert,
+                        "Undoes the title, outfit, animation, moodles and restraints your Custom Triggers applied. Sent chat can't be taken back."));
+                    using (Section.Begin("ctqSaved", "Bundles"))
+                        DrawOwnerBundles(canSend);
                     using (Section.Begin("freeformComposer", "One-off command"))
                         DrawFreeformComposer(canSend);
                 }
@@ -306,9 +295,21 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 else DrawCollarModule();
                 break;
             case "follow":
-                if (isOwner) DrawFollowQuickSection(DrawOwnerCanSendBanner());
-                else DrawFollowLeashModule();
-                DrawLeashLineSection(plugin.Configuration);
+                // Heading and status span both columns, so the two columns' boxes start level.
+                if (isOwner)
+                {
+                    var canSendLeash = DrawOwnerCanSendBanner();
+                    IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
+                    ImGui.Separator();
+                    OwnerStatusView.Draw(plugin);
+                    TwoColumns("followColumns", () => DrawFollowQuickSectionBody(canSendLeash), () => DrawLeashLineSection(plugin.Configuration));
+                }
+                else
+                {
+                    IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
+                    ImGui.Separator();
+                    TwoColumns("followColumns", DrawFollowLeashModule, () => DrawLeashLineSection(plugin.Configuration));
+                }
                 break;
             case "sync":
                 DrawSyncTab(isOwner);
@@ -345,7 +346,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawGoToSyncTabPrompt(string message)
     {
         IconGlyph.WrappedDisabled(message);
-        if (ImGui.SmallButton("Go to Sync tab"))
+        if (ImGui.Button("Go to Sync tab"))
             Show("sync");
     }
     private void DrawSyncTab(bool ownerMode)
@@ -353,6 +354,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (!ownerMode)
         {
             DrawSubExportSection();
+            if (plugin.RestraintCommand.PicturesLeftOut is { Count: > 0 } leftOut)
+                IconGlyph.WrappedColored(Theme.Warning, $"Shared without their picture (over the size limit): {string.Join(", ", leftOut)}.");
             return;
         }
 
@@ -362,17 +365,22 @@ public sealed partial class ModuleWindow : Window, IDisposable
             plugin.CatalogAutoSync.RequestOwnerCheck(openedPairing, force: false);
         lastSyncTabFrame = frame;
 
-        using (Section.Begin("catalogRelay"))
-            DrawCatalogRelaySection();
-
-        using (Section.Begin("catalogFileFallback"))
-        {
-            if (ImGui.CollapsingHeader("Offline / legacy file fallback##catalogFileFallback"))
+        TwoColumns("syncColumns", () =>
             {
-                IconGlyph.WrappedDisabled("Only for importing a catalog file by hand. Sync normally happens automatically.");
-                DrawImportCommandsButton();
-            }
-        }
+                using (Section.Begin("catalogRelay"))
+                    DrawCatalogRelaySection();
+            },
+            () =>
+            {
+                using (Section.Begin("catalogFileFallback"))
+                {
+                    if (ImGui.CollapsingHeader("Offline / legacy file fallback##catalogFileFallback"))
+                    {
+                        IconGlyph.WrappedDisabled("Only for importing a catalog file by hand. Sync normally happens automatically.");
+                        DrawImportCommandsButton();
+                    }
+                }
+            });
     }
 
     private void DrawSubExportSection()
@@ -521,7 +529,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (matched == 0)
             return;
 
-        if (ImGui.SmallButton("Copy names##wardrobe"))
+        if (ImGui.Button("Copy names##wardrobe"))
             ImGui.SetClipboardText(string.Join("\n", wardrobe.LocalDesigns.Values.Select(d => d.Name)));
         IconGlyph.HelpMarker("Copies the list as text so you can send your Owner the names.");
 
@@ -608,7 +616,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             var missing = !folders.Contains(folder, StringComparer.OrdinalIgnoreCase);
             TextWithActions(missing ? $"{folder} (missing)" : folder, ButtonWidth("Remove"));
-            if (ImGui.SmallButton($"Remove##{label}{folder}")) { selected.Remove(folder); config.Save(); }
+            if (ImGui.Button($"Remove##{label}{folder}")) { selected.Remove(folder); config.Save(); }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip(folder);
         }
     }
@@ -651,7 +659,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (matched == 0)
             return;
 
-        if (ImGui.SmallButton("Copy names##gesture"))
+        if (ImGui.Button("Copy names##gesture"))
         {
             ImGui.SetClipboardText(plugin.GestureCommand.ExportCatalog());
         }
@@ -702,7 +710,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (lastScanTotal == 0)
             return;
 
-        if (ImGui.SmallButton("Copy names##moodles"))
+        if (ImGui.Button("Copy names##moodles"))
             ImGui.SetClipboardText(string.Join("\n", moodlesMapping.LocalCatalog.Values.Select(s => s.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x)));
         IconGlyph.HelpMarker("Copies the list as text so you can send your Owner the names.");
 
@@ -724,7 +732,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.Bullet();
             ImGui.SameLine();
             TextWithActions(allowlist[i], ButtonWidth("Remove"));
-            if (ImGui.SmallButton("Remove"))
+            if (ImGui.Button("Remove"))
             {
                 allowlist.RemoveAt(i);
                 plugin.Configuration.Save();
@@ -859,63 +867,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         group.Dispose();
     }
 
-    private void DrawTitleModule()
-    {
-        var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Heading, "Title Aliases");
-        ImGui.Separator();
-
-        using (Section.Begin("titleFixed", "Fixed words"))
-        {
-            DrawFixedWord("Clear title", ControlWords.ClearTitle);
-            IconGlyph.HelpMarker("Removes your current title. It can't be renamed, so your Owner always knows it.");
-        }
-
-        var titles = config.Aliases.Titles;
-        using (Section.Begin("titleAliases", "Your title aliases"))
-        {
-            if (titles.Count == 0)
-            {
-                IconGlyph.WrappedDisabled("No title aliases yet - add one below.");
-            }
-            else
-            {
-                var labels = titles.Select(t => t.Alias).ToArray();
-                var i = DrawItemSelector("##titleSelect", labels, ref selectedTitleIndex);
-                var t = titles[i];
-                ImGui.Indent();
-                ImGui.TextUnformatted($"\"{t.Text}\" ({(t.IsPrefix ? "prefix" : "suffix")})");
-                ImGui.Unindent();
-                if (ImGui.SmallButton("Remove"))
-                {
-                    titles.RemoveAt(i);
-                    config.Save();
-                    selectedTitleIndex = null;
-                }
-            }
-        }
-
-        using (Section.Begin("titleAdd", "Add a title alias"))
-        {
-            ImGui.InputText("Alias##newTitle", ref newTitleAlias, 32);
-            IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this title, e.g. \"command goodgirl\".");
-            ImGui.InputText("Title text##newTitle", ref newTitleText, 64);
-            IconGlyph.HelpMarker("The exact title text applied via Honorific.");
-            ImGui.Checkbox("Prefix (not suffix)##newTitle", ref newTitleIsPrefix);
-            IconGlyph.HelpMarker("Show the title before your name instead of after it.");
-            ImGui.ColorEdit3("Color##newTitle", ref newTitleColor);
-            IconGlyph.HelpMarker("Honorific title color.");
-            DrawGlowPicker("newTitle", ref newTitleHasGlow, ref newTitleGlow);
-            DrawReservedWordWarning(newTitleAlias);
-            if (ImGui.Button("Add title alias") && newTitleAlias.Length > 0 && newTitleText.Length > 0 && !IsReserved(newTitleAlias))
-            {
-                titles.Add(new TitleAliasDefinition { Alias = newTitleAlias, Text = newTitleText, IsPrefix = newTitleIsPrefix, Color = newTitleColor, Glow = newTitleHasGlow ? newTitleGlow : null });
-                config.Save();
-                newTitleAlias = "";
-                newTitleText = "";
-            }
-        }
-    }
+    private readonly ListDetail outfitList = new();
+    private bool creatingOutfitAlias;
+    private const string NewOutfitKey = "new:outfit";
 
     private void DrawWardrobeModule()
     {
@@ -931,42 +885,108 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
 
         var outfits = config.Aliases.Outfits;
+        var items = outfits.Select((o, i) => new ListDetailItem($"alias:{i}", o.Alias, o.Locked ? "locked" : null)).ToList();
+        if (creatingOutfitAlias)
+            items.Add(new ListDetailItem(NewOutfitKey, "New outfit alias"));
+
         using (Section.Begin("outfitAliases", "Your outfit aliases"))
         {
-            if (outfits.Count == 0)
-            {
-                IconGlyph.WrappedDisabled("No outfit aliases yet - add one below.");
-            }
-            else
-            {
-                var labels = outfits.Select(o => o.Alias).ToArray();
-                var i = DrawItemSelector("##outfitSelect", labels, ref selectedOutfitIndex);
-                var o = outfits[i];
-                ImGui.Indent();
-                ImGui.TextUnformatted($"{o.DesignName} ({(o.Locked ? "locked" : "unlocked")})");
-                if (DrawAttachedMoodlePicker($"outfitAlias_{i}", o.AttachedMoodle, config, out var aliasMoodle))
+            outfitList.Draw("outfits", items, DrawOutfitToolbar, item => DrawOutfitDetail(config, item),
+                () => outfitList.Selected == NewOutfitKey && newOutfitAlias.Trim().Length > 0,
+                item =>
                 {
-                    o.AttachedMoodle = aliasMoodle;
-                    config.Save();
-                }
-                ImGui.Unindent();
-                if (ImGui.SmallButton("Remove"))
-                {
-                    outfits.RemoveAt(i);
-                    config.Save();
-                    selectedOutfitIndex = null;
-                }
-            }
+                    if (item?.Key != NewOutfitKey)
+                        creatingOutfitAlias = false;
+                },
+                "No outfit aliases yet. Use + New to add one.");
+        }
+    }
+
+    private void DrawOutfitToolbar()
+    {
+        if (!ImGui.Button("+ New##outfitAlias"))
+            return;
+        creatingOutfitAlias = true;
+        newOutfitAlias = "";
+        newOutfitMoodle = null;
+        newOutfitLocked = true;
+        outfitList.Select(NewOutfitKey);
+    }
+
+    private void DrawOutfitDetail(PluginConfig config, ListDetailItem? item)
+    {
+        var designs = config.WardrobeMapping.LocalDesigns.Values.ToList();
+        var designNames = designs.Select(d => d.Name).ToArray();
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose an outfit alias, or use + New to add one.");
+            return;
         }
 
-        var designs = config.WardrobeMapping.LocalDesigns.Values.ToList();
+        if (item.Key == NewOutfitKey)
+        {
+            DrawOutfitAddForm(config, designs, designNames);
+            return;
+        }
+
+        var outfits = config.Aliases.Outfits;
+        if (!int.TryParse(item.Key["alias:".Length..], out var index) || index >= outfits.Count)
+            return;
+        var o = outfits[index];
+        ImGui.PushID($"outfitAlias_{index}");
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextColored(Theme.AccentHover, o.Alias);
+        ImGui.SameLine();
+        if (ImGui.Button("Delete"))
+        {
+            outfits.RemoveAt(index);
+            config.Save();
+            outfitList.Select(null);
+            ImGui.PopID();
+            return;
+        }
+
+        if (DrawDeferredTextInput("Alias##outfitAliasEdit", (o, "alias"), o.Alias, 32, out var aliasBuffer) && aliasBuffer.Trim().Length > 0 && !IsReserved(aliasBuffer))
+        {
+            o.Alias = aliasBuffer.Trim();
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this outfit.");
+
+        var designIndex = designs.FindIndex(d => d.DesignId == o.DesignId);
+        if (designs.Count > 0 && ImGui.Combo("Design##outfitAliasEdit", ref designIndex, designNames, designNames.Length) && designIndex >= 0)
+        {
+            o.DesignId = designs[designIndex].DesignId;
+            o.DesignName = designs[designIndex].Name;
+            config.Save();
+        }
+        if (designIndex < 0)
+            IconGlyph.WrappedDisabled($"Design: {o.DesignName} (not in the latest scan)");
+
+        var locked = o.Locked;
+        if (ImGui.Checkbox("Lock##outfitAliasEdit", ref locked))
+        {
+            o.Locked = locked;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Locks the design's slots so only an unlock can change them.");
+
+        if (DrawAttachedMoodlePicker($"outfitAlias_{index}", o.AttachedMoodle, config, out var aliasMoodle))
+        {
+            o.AttachedMoodle = aliasMoodle;
+            config.Save();
+        }
+        ImGui.PopID();
+    }
+
+    private void DrawOutfitAddForm(PluginConfig config, List<WardrobeDesignEntry> designs, string[] designNames)
+    {
         if (designs.Count == 0)
         {
             IconGlyph.WrappedDisabled("No scanned designs yet - rescan in Settings (gear icon) first.");
             return;
         }
 
-        var designNames = designs.Select(d => d.Name).ToArray();
         using (Section.Begin("outfitAdd", "Add an outfit alias"))
         {
             newOutfitDesignIndex = Math.Clamp(newOutfitDesignIndex, 0, designNames.Length - 1);
@@ -979,12 +999,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.Checkbox("Lock##newOutfit", ref newOutfitLocked);
             IconGlyph.HelpMarker("Locks the design's slots so only an unlock can change them.");
             DrawReservedWordWarning(newOutfitAlias);
-            if (ImGui.Button("Add outfit alias") && newOutfitAlias.Length > 0 && !IsReserved(newOutfitAlias))
+            if (ImGui.Button("Add outfit alias") && newOutfitAlias.Trim().Length > 0 && !IsReserved(newOutfitAlias))
             {
                 var design = designs[newOutfitDesignIndex];
-                outfits.Add(new OutfitAliasDefinition
+                config.Aliases.Outfits.Add(new OutfitAliasDefinition
                 {
-                    Alias = newOutfitAlias,
+                    Alias = newOutfitAlias.Trim(),
                     DesignId = design.DesignId,
                     DesignName = design.Name,
                     Locked = newOutfitLocked,
@@ -993,94 +1013,394 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 config.Save();
                 newOutfitAlias = "";
                 newOutfitMoodle = null;
+                creatingOutfitAlias = false;
+                outfitList.Select($"alias:{config.Aliases.Outfits.Count - 1}");
             }
         }
     }
 
-    private string? struggleResult;
+    private string? restraintActionResult;
+    private readonly Dictionary<string, string> restraintKeyGuesses = new();
 
-    /// Shown only while the Owner's lock allows struggling. Also drawn in the main window's header.
+    /// One Struggle button per lock that allows it. Also drawn in the main window's header.
     public void DrawStruggleRow(string id)
     {
-        var restraints = plugin.RestraintCommand;
-        if (restraints.StruggleAvailable is not { } setting)
+        var any = false;
+        foreach (var worn in plugin.RestraintCommand.Worn.ToList())
         {
-            struggleResult = null;
-            return;
+            if (RestraintCommand.StruggleAvailable(worn) is not { } setting)
+                continue;
+            any = true;
+            ImGui.PushID($"struggle{id}_{worn.RuntimeId}");
+            DrawStruggleButton(worn, setting);
+            ImGui.PopID();
         }
-        ImGui.PushID("struggle" + id);
-        var wait = restraints.StruggleWait;
+        if (!any && plugin.RestraintCommand.Worn.Count == 0)
+            restraintActionResult = null;
+        if (any && restraintActionResult is not null)
+            IconGlyph.WrappedDisabled(restraintActionResult);
+    }
+
+    private void DrawStruggleButton(WornRestraint worn, StruggleSetting setting)
+    {
+        var wait = RestraintCommand.StruggleWait(worn);
         using (ImRaii.Disabled(wait is not null))
         {
-            if (ImGui.SmallButton(wait is { } w ? $"Struggle (again in {RestraintLock.Format(w)})" : "Struggle"))
-                struggleResult = restraints.Struggle().Message;
+            if (ImGui.Button(wait is { } w ? $"Struggle: {worn.Reference} (again in {RestraintLock.Format(w)})" : $"Struggle: {worn.Reference}"))
+                restraintActionResult = plugin.RestraintCommand.Struggle(worn.RuntimeId).Message;
         }
-        IconGlyph.HelpMarker($"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes everything off, like the lock running out, and your Owner is told.");
-        if (struggleResult is not null)
-            IconGlyph.WrappedDisabled(struggleResult);
-        ImGui.PopID();
+        IconGlyph.HelpMarker($"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes this restraint off, and your Owner is told.");
     }
+
+    private void DrawRestraintKeyRow(WornRestraint worn)
+    {
+        var guess = restraintKeyGuesses.GetValueOrDefault(worn.RuntimeId, "");
+        ItemWidth(140);
+        if (ImGui.InputTextWithHint("##key", "Key...", ref guess, RestraintKey.MaxLength, ImGuiInputTextFlags.Password))
+            restraintKeyGuesses[worn.RuntimeId] = guess;
+        var wait = RestraintCommand.KeyWait(worn);
+        ImGui.SameLine();
+        using (ImRaii.Disabled(wait is not null || guess.Trim().Length == 0))
+        {
+            if (ImGui.Button(wait is { } w ? $"Unlock (again in {RestraintLock.Format(w)})" : "Unlock"))
+            {
+                restraintActionResult = plugin.RestraintCommand.TryKey(worn.RuntimeId, guess).Message;
+                restraintKeyGuesses.Remove(worn.RuntimeId);
+            }
+        }
+        IconGlyph.HelpMarker("If your Owner gave you the key, type it here to take this restraint off. Your Owner is told.");
+    }
+
+    private readonly ListDetail subRestraintList = new();
+    private bool creatingRulesOnly;
+    private const string NewRulesOnlyKey = "new:rulesonly";
 
     private void DrawRestraintsModule()
     {
         var config = plugin.Configuration;
         IconGlyph.Text(FontAwesomeIcon.Handcuffs, "Restraints");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Pick restraint mods and set up the restraints your Owner can use.");
-        IconGlyph.WrappedDisabled("Each alias toggles its restraint. `restraint unlock` releases everything.");
+        IconGlyph.WrappedDisabled("Set up the restraints your Owner can use. Each alias toggles its restraint; `restraint unlock` releases everything.");
 
-        // Recomputed every frame so a Timed lock's countdown stays live.
-        if (config.RestraintsForceLocked)
+        using (Section.Begin("configuredRestraintMods", "Your restraints"))
         {
-            IconGlyph.WrappedColored(Theme.Warning, config.RestraintsLockExpiresAtUtc is { } expiresAt
-                ? $"Restraints locked by your Owner - unlocks in {RestraintLock.Format(expiresAt - DateTime.UtcNow)}."
-                : "Restraints locked by your Owner until they unlock them.");
-            DrawStruggleRow("module");
+            subRestraintList.Draw("subRestraints", BuildSubRestraintItems(config), DrawSubRestraintToolbar,
+                item => DrawSubRestraintDetail(config, item), SubRestraintDirty, OnSubRestraintSelected,
+                "No restraints yet. Use + New to make one.");
         }
 
-        DrawSubModRestraints(config);
+        DrawDrawnRestraintsSection(config);
+    }
 
-        // Rules-only restraints. Older devices captured with gear keep it when edited here.
-        var devices = config.RestraintMapping.Devices.Values.ToList();
-        if (devices.Count > 0)
+    private List<ListDetailItem> BuildSubRestraintItems(PluginConfig config)
+    {
+        string? Marker(string runtimeId) => plugin.RestraintCommand.Worn.FirstOrDefault(w => w.RuntimeId == runtimeId) is { } worn
+            ? worn.Lock is null ? "on" : "locked"
+            : null;
+
+        var items = new List<ListDetailItem>();
+        foreach (var mod in config.RestraintMapping.ConfiguredMods)
+            items.Add(new ListDetailItem($"mod:{mod.Id}", mod.Name, "mod", Marker($"catalog:{mod.CatalogId}"), mod.ImageFile,
+                mod.ImageFile is null ? FontAwesomeIcon.Image : null));
+        foreach (var device in config.RestraintMapping.Devices.Values.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
+            items.Add(new ListDetailItem($"dev:{device.Id}", device.Name, "rules-only", Marker(device.Id), null, FontAwesomeIcon.Handcuffs));
+        if (creatingRulesOnly)
+            items.Add(new ListDetailItem(NewRulesOnlyKey, "New rules-only restraint", "rules-only", null, null, FontAwesomeIcon.Handcuffs));
+        return items;
+    }
+
+    private void DrawSubRestraintToolbar()
+    {
+        if (ImGui.Button("+ New##subRestraint"))
         {
-            var selectedBox = Section.Begin("capturedDevices", "Rules-only restraints");
-            var selDeviceIndex = selectedDeviceId is { } selId ? devices.FindIndex(d => d.Id == selId) : -1;
-            var indexHolder = selDeviceIndex < 0 ? (int?)null : selDeviceIndex;
-            var labels = devices.Select(d => $"{d.Name}{(plugin.RestraintCommand.IsActive(d.Id) ? "  • Active" : "")}").ToArray();
-            var i = DrawItemSelector("##deviceSelect", labels, ref indexHolder);
-            var device = devices[i];
-            selectedDeviceId = device.Id;
+            subRestraintSearch = "";
+            ImGui.OpenPopup("newSubRestraint");
+        }
+        if (!ImGui.BeginPopup("newSubRestraint"))
+            return;
 
-            ImGui.PushID($"device_{device.Id}");
-            IconGlyph.WrappedDisabled($"Rules: {string.Join(" · ", device.Rules.Select(CommandPresentation.Rule))}");
-            if (device.ItemId is { } deviceItemId)
-                IconGlyph.WrappedDisabled($"Gear (from an older version): {device.Slot} · {GetItemName(deviceItemId)}");
-            IconGlyph.WrappedDisabled($"Moodle: {(device.AttachedMoodle is { } m ? MoodlesTextFormat.StripMarkup(m.StatusName) : "none")}");
-            var staleAnimation = device.Rules.Any(r =>
-                CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId) && !config.GestureMapping.LocalCatalog.ContainsKey(r.AnimationId));
-            if (staleAnimation)
-                IconGlyph.WrappedColored(Theme.Warning, "A cuff animation is stale. Choose Edit and select the animation again before using this restraint.");
+        if (ImGui.Selectable("Rules-only restraint (no gear)"))
+        {
+            CloseSubModEditor();
+            ResetDeviceDraft();
+            creatingRulesOnly = true;
+            subRestraintList.Select(NewRulesOnlyKey);
+        }
+        ImGui.Separator();
+        ImGui.TextDisabled("Or a restraint mod found in Penumbra:");
+        ImGui.SetNextItemWidth(Scaled(260));
+        ImGui.InputTextWithHint("##subRestraintSearch", "Search restraint mods...", ref subRestraintSearch, 128);
+        var config = plugin.Configuration;
+        var configured = config.RestraintMapping.ConfiguredMods;
+        using (ImRaii.Child("subRestraintModBrowser", new Vector2(Scaled(260), Scaled(200)), true))
+        {
+            var mods = config.RestraintMapping.LocalCatalog.Values
+                .Where(x => string.IsNullOrWhiteSpace(subRestraintSearch) || x.ModName.Contains(subRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+                .OrderBy(x => x.ModName).ToList();
+            if (mods.Count == 0)
+                IconGlyph.WrappedDisabled(config.RestraintMapping.LocalCatalog.Count == 0 ? "No restraint mods found. Rescan in the scan settings." : "Nothing matches.");
+            foreach (var entry in mods)
+            {
+                if (!ImGui.Selectable($"{entry.ModName}##subRestraint_{entry.Id}"))
+                    continue;
+                // The same mod can be configured more than once, so each gets a distinct name.
+                var count = configured.Count(x => x.CatalogId == entry.Id);
+                var created = new ConfiguredModRestraint { CatalogId = entry.Id, Name = count == 0 ? entry.ModName : $"{entry.ModName} ({count + 1})" };
+                configured.Add(created);
+                config.Save();
+                creatingRulesOnly = false;
+                OpenSubModEditor($"submod:{created.Id}", new RestraintRuleEditState());
+                subRestraintList.Select($"mod:{created.Id}");
+                ImGui.CloseCurrentPopup();
+            }
+        }
+        ImGui.EndPopup();
+    }
 
-            if (ImGui.SmallButton("Edit"))
-                LoadDeviceDraft(device);
-            ImGui.SameLine();
-            // "Delete", not "Remove": this deletes the saved restraint, it doesn't take it off anyone.
-            if (ImGui.SmallButton("Delete"))
+    private void OnSubRestraintSelected(ListDetailItem? item)
+    {
+        var config = plugin.Configuration;
+        if (item?.Key is not { } key || key == NewRulesOnlyKey)
+            return;
+        creatingRulesOnly = false;
+        if (key.StartsWith("mod:") && config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod)
+        {
+            ResetDeviceDraft();
+            OpenSubModEditor($"submod:{mod.Id}", FromRules(mod.Rules));
+        }
+        else if (key.StartsWith("dev:") && config.RestraintMapping.Devices.TryGetValue(key[4..], out var device))
+        {
+            CloseSubModEditor();
+            LoadDeviceDraft(device);
+        }
+    }
+
+    private bool SubRestraintDirty()
+    {
+        var config = plugin.Configuration;
+        var key = subRestraintList.Selected;
+        if (key == NewRulesOnlyKey)
+            return newDeviceName.Trim().Length > 0 || HasAnyRule(newDeviceRuleEdit);
+        if (key?.StartsWith("mod:") == true && config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod
+            && restraintRuleEdits.TryGetValue($"submod:{mod.Id}", out var edit))
+            return RestraintCommand.EncodeRuleTokens(ToRules(edit)) != RestraintCommand.EncodeRuleTokens(mod.Rules);
+        if (key?.StartsWith("dev:") == true && editingDeviceId is { } id && config.RestraintMapping.Devices.TryGetValue(id, out var device))
+            return newDeviceName.Trim() != device.Name
+                || newDeviceMoodle?.StatusId != device.AttachedMoodle?.StatusId
+                || RestraintCommand.EncodeRuleTokens(ToRules(newDeviceRuleEdit, rulesOnly: true)) != RestraintCommand.EncodeRuleTokens(device.Rules);
+        return false;
+    }
+
+    private void DrawSubRestraintDetail(PluginConfig config, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a restraint, or use + New to make one.");
+            return;
+        }
+        if (item.Key == NewRulesOnlyKey)
+            DrawRulesOnlyDetail(config, null);
+        else if (item.Key.StartsWith("dev:") && config.RestraintMapping.Devices.TryGetValue(item.Key[4..], out var device))
+            DrawRulesOnlyDetail(config, device);
+        else if (config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == item.Key) is { } mod)
+            DrawSubModDetail(config, mod);
+    }
+
+    private static float DetailTileWidth => Scaled(110);
+
+    /// Started once per restraint and session; a failure (no JPEG encoder) isn't retried until the picture changes.
+    private readonly HashSet<string> thumbnailsStarted = new();
+
+    private void EnsureThumbnail(ConfiguredModRestraint mod)
+    {
+        if (mod.ImageFile is not { } image || mod.ThumbnailFile is not null || !thumbnailsStarted.Add($"{mod.Id}:{image}"))
+            return;
+        _ = ImageTile.MakeThumbnailAsync(image).ContinueWith(task => Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            if (task.Result is not { } thumbnail)
+                return;
+            if (mod.ImageFile != image)
+            {
+                ImageTile.Delete(thumbnail);
+                return;
+            }
+            mod.ThumbnailFile = thumbnail;
+            plugin.Configuration.Save();
+        }));
+    }
+
+    /// Picture on the left; name, actions and the picture's buttons beside it. The picture buttons stay out of the
+    /// picture's column, which would otherwise grow as wide as their row and push everything beside it away.
+    private void DrawDetailHeader(string name, string kind, string? imageFile, FontAwesomeIcon? icon, Action? pictureActions, Action headerActions)
+    {
+        if (!ImGui.BeginTable("##restraintDetailHeader", 2, ImGuiTableFlags.SizingStretchProp))
+            return;
+        ImGui.TableSetupColumn("picture", ImGuiTableColumnFlags.WidthFixed, DetailTileWidth);
+        ImGui.TableSetupColumn("actions", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableNextColumn();
+        ImageTile.Draw(imageFile, DetailTileWidth, imageFile is null ? icon : null, "No picture");
+        ImGui.TableNextColumn();
+        ImGui.TextColored(Theme.AccentHover, name);
+        ImGui.TextDisabled(kind);
+        headerActions();
+        if (pictureActions is not null)
+        {
+            Section.SubHeading("Picture");
+            pictureActions();
+        }
+        ImGui.EndTable();
+        ImGui.Spacing();
+    }
+
+    private void DrawSubModDetail(PluginConfig config, ConfiguredModRestraint created)
+    {
+        var key = $"submod:{created.Id}";
+        var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
+        if (!restraintRuleEdits.TryGetValue(key, out var edit))
+        {
+            OpenSubModEditor(key, FromRules(created.Rules));
+            edit = restraintRuleEdits[key];
+        }
+
+        EnsureThumbnail(created);
+        DrawDetailHeader(created.Name, "Mod restraint", created.ImageFile, FontAwesomeIcon.Image,
+            () => ImageTile.DrawPicker(key, created.ImageFile, plugin.FileDialogManager, plugin.Snapshot, file =>
+            {
+                ImageTile.Delete(created.ThumbnailFile);
+                created.ThumbnailFile = null;
+                created.ImageFile = file;
+                config.Save();
+                EnsureThumbnail(created);
+            }),
+            () =>
+            {
+                if (missing)
+                    IconGlyph.WrappedColored(Theme.Warning, "This mod is outside the latest scan and will not be exported.");
+                // "Delete", not "Remove": this deletes the saved restraint, it doesn't take it off anyone.
+                if (ImGui.Button($"Delete##{key}"))
+                {
+                    ImageTile.Delete(created.ImageFile);
+                    ImageTile.Delete(created.ThumbnailFile);
+                    config.RestraintMapping.ConfiguredMods.Remove(created);
+                    CloseSubModEditor();
+                    config.Save();
+                }
+            });
+
+        Section.SubHeading("Name, alias & item");
+        if (DrawDeferredTextInput($"Name##{key}", (created, "name"), created.Name, 80, out var nameBuffer) && nameBuffer.Trim().Length > 0)
+        {
+            created.Name = nameBuffer;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Your own label for this restraint - rename it so you can tell entries for the same mod apart.");
+        if (DrawDeferredTextInput($"Alias##{key}", (created, "alias"), created.Alias, 32, out var aliasBuffer, "optional"))
+        {
+            created.Alias = aliasBuffer.Trim();
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Optional word your Owner sends to toggle this restraint.");
+        DrawReservedWordWarning(created.Alias);
+        if (created.Alias.Length > 0
+            && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))
+                || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))))
+            IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias - only one of them will respond to it.");
+        TextWithActions($"Glamourer item: {(created.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
+        if (ImGui.Button($"Choose item...##{key}"))
+        {
+            var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
+            plugin.ItemPickerWindow.OpenForItemIds(created.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) =>
+            {
+                created.ItemId = chosenId;
+                config.Save();
+            });
+        }
+
+        Section.SubHeading("Restrictions");
+        DrawRestraintRuleCheckboxes(edit, key, allowCustomizePreset: true);
+
+        Section.SubHeading("Attached moodle");
+        if (DrawAttachedMoodlePicker(key, created.AttachedMoodle, config, out var modMoodle))
+        {
+            created.AttachedMoodle = modMoodle;
+            config.Save();
+        }
+        var modRedraw = created.RedrawOnApply;
+        if (DrawRedrawOnApply(key, ref modRedraw))
+        {
+            created.RedrawOnApply = modRedraw;
+            config.Save();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        var valid = created.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)created.ItemId.Value) is not null && HasAnyRule(edit) && BoundAnimationsConfigured(edit);
+        using (ImRaii.Disabled(!valid || missing))
+        {
+            if (ImGui.Button($"Save restraint##{key}"))
+            {
+                created.Rules = ToRules(edit);
+                config.Save();
+                OpenSubModEditor(key, FromRules(created.Rules));
+            }
+        }
+        if (!valid)
+            IconGlyph.WrappedDisabled("Choose an item and at least one rule before saving.");
+    }
+
+    private static bool DrawRedrawOnApply(string id, ref bool redraw)
+    {
+        var changed = ImGui.Checkbox($"Redraw on apply##redraw_{id}", ref redraw);
+        IconGlyph.HelpMarker("Redraws your character when this restraint goes on, even with \"Redraw after a mod change\" off in Settings. Turn it on if the restraint's mod or animation doesn't show until you redraw. Sync plugins re-send your character on every redraw.");
+        return changed;
+    }
+
+    /// `device` null = the new rules-only restraint being drafted.
+    private void DrawRulesOnlyDetail(PluginConfig config, RestraintDeviceDefinition? device)
+    {
+        var devices = config.RestraintMapping.Devices.Values.ToList();
+        DrawDetailHeader(device?.Name ?? "New rules-only restraint", "Rules-only restraint", null, FontAwesomeIcon.Handcuffs, null, () =>
+        {
+            if (device is null)
+            {
+                if (ImGui.Button("Cancel##newDevice"))
+                {
+                    creatingRulesOnly = false;
+                    ResetDeviceDraft();
+                    subRestraintList.Select(null);
+                }
+                return;
+            }
+            if (ImGui.Button($"Delete##dev_{device.Id}"))
             {
                 plugin.RestraintCommand.RemoveDevice(device.Id);
-                selectedDeviceId = null;
+                ResetDeviceDraft();
             }
-            ImGui.PopID();
-            selectedBox.Dispose();
-        }
+        });
 
-        var formBox = Section.Begin("deviceForm", editingDeviceId is null ? "New rules-only restraint" : "Edit rules-only restraint");
+        if (device?.ItemId is { } deviceItemId)
+            IconGlyph.WrappedDisabled($"Gear (from an older version): {device.Slot} · {GetItemName(deviceItemId)}");
+        if (device is not null && device.Rules.Any(r =>
+                CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId) && !config.GestureMapping.LocalCatalog.ContainsKey(r.AnimationId)))
+            IconGlyph.WrappedColored(Theme.Warning, "A cuff animation is stale. Select the animation again before using this restraint.");
+
         ImGui.InputText("Alias##newDevice", ref newDeviceName, 32);
         IconGlyph.HelpMarker("The word your Owner sends to toggle this restraint.");
         DrawReservedWordWarning(newDeviceName);
         if (DrawAttachedMoodlePicker("newDevice", newDeviceMoodle, config, out var pickedDeviceMoodle, width: null))
             newDeviceMoodle = pickedDeviceMoodle;
+        // Saved at once on an existing restraint, like its moodle; a new one takes it when added.
+        var deviceRedraw = device?.RedrawOnApply ?? newDeviceRedraw;
+        if (DrawRedrawOnApply("newDevice", ref deviceRedraw))
+        {
+            if (device is null)
+                newDeviceRedraw = deviceRedraw;
+            else
+            {
+                device.RedrawOnApply = deviceRedraw;
+                config.Save();
+            }
+        }
 
         Section.SubHeading("Restrictions");
         DrawRestraintRuleCheckboxes(newDeviceRuleEdit, "newDevice", allowCustomizePreset: true, rulesOnly: true);
@@ -1104,156 +1424,25 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Separator();
         using (ImRaii.Disabled(newDeviceName.Trim().Length == 0 || IsReserved(newDeviceName) || !hasAnyRule || !boundAnimationsConfigured || duplicateDeviceName || !safeDeviceCommand))
         {
-            if (ImGui.Button(editingDeviceId is null ? "Add restraint" : "Save restraint"))
+            if (ImGui.Button(device is null ? "Add restraint" : "Save restraint"))
             {
                 var rules = ToRules(newDeviceRuleEdit, rulesOnly: true);
-
-                // New ones never carry gear; an edited older device keeps its gear.
-                var saved = editingDeviceId is null
-                    ? plugin.RestraintCommand.CaptureDeviceFromItem(null, null, newDeviceName, rules, newDeviceMoodle)
-                    : SaveDeviceDraft(newDeviceSlot, newDeviceItemId, rules);
-                if (saved)
+                if (device is null)
                 {
-                    ResetDeviceDraft();
-                }
-            }
-        }
-        if (editingDeviceId is not null)
-        {
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel##editDevice"))
-                ResetDeviceDraft();
-        }
-        formBox.Dispose();
-
-        DrawDrawnRestraintsSection(config);
-    }
-
-    private void DrawSubModRestraints(PluginConfig config)
-    {
-        var configured = config.RestraintMapping.ConfiguredMods;
-        using (Section.Begin("detectedRestraintMods", "Detected restraint mods"))
-        {
-            ImGui.InputTextWithHint("##subRestraintSearch", "Search scanned restraint mods...", ref subRestraintSearch, 128);
-            using (ImRaii.Child("subRestraintModBrowser", new Vector2(0, Scaled(130)), true))
-            {
-                foreach (var entry in config.RestraintMapping.LocalCatalog.Values
-                             .Where(x => string.IsNullOrWhiteSpace(subRestraintSearch) || x.ModName.Contains(subRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase))
-                             .OrderBy(x => x.ModName))
-                {
-                    var alreadyConfiguredCount = configured.Count(x => x.CatalogId == entry.Id);
-                    var chooseLabel = alreadyConfiguredCount > 0 ? "Choose again" : "Choose";
-                    TextWithActions(entry.ModName, ButtonWidth(chooseLabel));
-                    if (ImGui.SmallButton($"{chooseLabel}##subRestraint_{entry.Id}"))
+                    var name = newDeviceName.Trim();
+                    if (plugin.RestraintCommand.CaptureDeviceFromItem(null, null, name, rules, newDeviceMoodle)
+                        && config.RestraintMapping.Devices.Values.FirstOrDefault(d => d.Name == name) is { } added)
                     {
-                        // The same mod can be configured more than once, so each gets a distinct name.
-                        var name = alreadyConfiguredCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyConfiguredCount + 1})";
-                        var created = new ConfiguredModRestraint { CatalogId = entry.Id, Name = name };
-                        configured.Add(created);
-                        OpenSubModEditor($"submod:{created.Id}", new RestraintRuleEditState());
+                        added.RedrawOnApply = newDeviceRedraw;
                         config.Save();
+                        creatingRulesOnly = false;
+                        LoadDeviceDraft(added);
+                        subRestraintList.Select($"dev:{added.Id}");
                     }
                 }
-            }
-        }
-
-        using var configuredBox = Section.Begin("configuredRestraintMods", "My configured mod restraints");
-        if (configured.Count == 0)
-        {
-            IconGlyph.WrappedDisabled("Choose a detected mod above, then assign its restriction rules.");
-            return;
-        }
-        // The editor is drawn below the list rather than inline, so the list's viewport never clips it.
-        var style = ImGui.GetStyle();
-        var listMaxHeight = 6 * ImGui.GetFrameHeightWithSpacing() + 2 * style.WindowPadding.Y;
-        using (Section.List("configuredRestraintModsList", listMaxHeight))
-        {
-            foreach (var created in configured.ToArray())
-            {
-                var key = $"submod:{created.Id}";
-                var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
-                var toggleLabel = expandedSubModKey == key ? "Close" : "Configure";
-                TextWithActions(created.Name, ActionsWidth(toggleLabel, "Delete"));
-                if (ImGui.SmallButton($"{toggleLabel}##{key}"))
-                {
-                    if (expandedSubModKey == key)
-                        CloseSubModEditor();
-                    else
-                        OpenSubModEditor(key, FromRules(created.Rules));
-                }
-                ContinueRowOrWrap(ButtonWidth("Delete"));
-                if (ImGui.SmallButton($"Delete##{key}"))
-                {
-                    configured.Remove(created);
-                    if (expandedSubModKey == key)
-                        CloseSubModEditor();
-                    config.Save();
-                    continue;
-                }
-                if (missing) IconGlyph.WrappedColored(Theme.Warning, "This mod is outside the latest scan and will not be exported.");
-            }
-        }
-
-        {
-            var created = configured.FirstOrDefault(x => $"submod:{x.Id}" == expandedSubModKey);
-            if (created is null)
-                return;
-            var key = $"submod:{created.Id}";
-            var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
-            if (restraintRuleEdits.TryGetValue(key, out var edit))
-            {
-                using (Section.Begin(key))
-                {
-                    Section.Heading("Name, alias & item");
-                    if (DrawDeferredTextInput($"Name##{key}", (created, "name"), created.Name, 80, out var nameBuffer) && nameBuffer.Trim().Length > 0)
-                    {
-                        created.Name = nameBuffer;
-                        config.Save();
-                    }
-                    IconGlyph.HelpMarker("Your own label for this configured restraint - rename it so you can tell entries for the same mod apart.");
-                    if (DrawDeferredTextInput($"Alias##{key}", (created, "alias"), created.Alias, 32, out var aliasBuffer, "optional"))
-                    {
-                        created.Alias = aliasBuffer.Trim();
-                        config.Save();
-                    }
-                    IconGlyph.HelpMarker("Optional word your Owner sends to toggle this restraint.");
-                    DrawReservedWordWarning(created.Alias);
-                    if (created.Alias.Length > 0
-                        && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))
-                            || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))))
-                        IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias - only one of them will respond to it.");
-                    TextWithActions($"Glamourer item: {(created.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
-                    if (ImGui.SmallButton($"Choose item...##{key}"))
-                    {
-                        var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
-                        plugin.ItemPickerWindow.OpenForItemIds(created.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) =>
-                        {
-                            created.ItemId = chosenId;
-                            config.Save();
-                        });
-                    }
-
-                    Section.SubHeading("Restrictions");
-                    DrawRestraintRuleCheckboxes(edit, key, allowCustomizePreset: true);
-
-                    Section.SubHeading("Attached moodle");
-                    if (DrawAttachedMoodlePicker(key, created.AttachedMoodle, config, out var modMoodle))
-                    {
-                        created.AttachedMoodle = modMoodle;
-                        config.Save();
-                    }
-
-                    ImGui.Spacing();
-                    ImGui.Separator();
-                    var valid = created.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)created.ItemId.Value) is not null && HasAnyRule(edit) && BoundAnimationsConfigured(edit);
-                    using (ImRaii.Disabled(!valid || missing))
-                    if (ImGui.Button($"Save restraint##{key}"))
-                    {
-                        created.Rules = ToRules(edit);
-                        config.Save();
-                        CloseSubModEditor();
-                    }
-                }
+                // An edited older device keeps its gear.
+                else if (SaveDeviceDraft(newDeviceSlot, newDeviceItemId, rules))
+                    LoadDeviceDraft(device);
             }
         }
     }
@@ -1364,16 +1553,20 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.HelpMarker("Blocks hotbar action/skill usage until released, without affecting movement.");
         });
 
-        // One Columns block per row keeps each toggle's dependent controls under it.
+        // A table, not legacy Columns: Columns break inside a ListDetail table cell and hide the left column. One row
+        // per pair keeps each toggle's dependent controls under it.
+        if (!ImGui.BeginTable($"restraintRules_{idSuffix}", 2, ImGuiTableFlags.SizingStretchSame))
+            return;
         for (var i = 0; i < cells.Count; i += 2)
         {
-            ImGui.Columns(2, $"restraintRules_{idSuffix}_row{i / 2 + 1}", false);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
             cells[i]();
-            ImGui.NextColumn();
+            ImGui.TableNextColumn();
             if (i + 1 < cells.Count)
                 cells[i + 1]();
-            ImGui.Columns(1);
         }
+        ImGui.EndTable();
     }
 
     private static readonly string[] GagLevelNames = ["Heavy", "Medium", "Light"];
@@ -1501,160 +1694,312 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawChoiceClearButton(idSuffix, () => onChosen(null, null));
     }
 
+    private readonly ListDetail gestureList = new();
+
     private void DrawGestureModule()
     {
         var config = plugin.Configuration;
         IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Select animation mods and scan them in Settings, then define aliases from their named options here.");
+        IconGlyph.WrappedDisabled("Select animation mods and scan them in Settings. Pick an animation to see it and give it an alias.");
 
-        var gestures = config.Aliases.Gestures;
-        using (Section.Begin("gestureAliases", "Your animation aliases"))
+        var held = plugin.GestureCommand.IsHeld;
+        if (plugin.GestureCommand.HasActiveTemporary && !held)
         {
-            if (gestures.Count == 0)
-            {
-                IconGlyph.WrappedDisabled("No animation aliases yet - add one below.");
-            }
-            else
-            {
-                var labels = gestures.Select(g => g.Alias).ToArray();
-                var i = DrawItemSelector("##gestureSelect", labels, ref selectedGestureAliasIndex);
-                var g = gestures[i];
-                var invalid = string.IsNullOrEmpty(g.GestureId) || !config.GestureMapping.LocalCatalog.ContainsKey(g.GestureId);
-                ImGui.Indent();
-                ImGui.TextWrapped($"{(g.AnimationName.Length > 0 ? g.AnimationName : g.EmoteName)} ({g.ModName}){(invalid ? " — rescan/recreate required" : "")}");
-                ImGui.Unindent();
-                if (ImGui.SmallButton("Remove"))
-                {
-                    gestures.RemoveAt(i);
-                    config.Save();
-                    selectedGestureAliasIndex = null;
-                }
-            }
+            if (ImGui.Button("Reset active animation"))
+                plugin.GestureCommand.ResetActiveTemporary();
+            IconGlyph.HelpMarker("Puts the animation mod back to its saved settings now, instead of after the ~30s idle timeout.");
         }
 
-        var allOptions = config.GestureMapping.LocalCatalog.Values.Where(e => e.Trigger != null).ToList();
-        if (allOptions.Count == 0)
+        var gestures = config.Aliases.Gestures;
+        var catalog = config.GestureMapping.LocalCatalog.Values.Where(e => e.Trigger != null)
+            .OrderBy(e => e.ModName, StringComparer.OrdinalIgnoreCase).ThenBy(e => e.GroupOrder).ThenBy(e => e.OptionOrder).ThenBy(e => e.TriggerOrder)
+            .ToList();
+        var items = catalog.GroupBy(e => e.ModDirectory).Select(mod =>
         {
-            IconGlyph.WrappedDisabled("No scanned/resolved gestures yet - rescan in Settings (gear icon) first.");
+            var withAlias = mod.Count(e => gestures.Any(g => g.GestureId == e.Id));
+            return new ListDetailItem($"mod:{mod.Key}", mod.First().ModName, $"{mod.Count()}",
+                Tooltip: $"{mod.Count()} animation{(mod.Count() == 1 ? "" : "s")}, {withAlias} with an alias");
+        }).ToList();
+        // Aliases whose animation is gone from the latest scan, so they can still be found and deleted.
+        var staleCount = gestures.Count(g => string.IsNullOrEmpty(g.GestureId) || !config.GestureMapping.LocalCatalog.ContainsKey(g.GestureId));
+        if (staleCount > 0)
+            items.Add(new ListDetailItem(StaleGesturesKey, "Missing from the scan", $"{staleCount}", Group: "Needs rescan"));
+
+        using (Section.Begin("gestureAliases", "Your animations"))
+        {
+            gestureList.Draw("gestures", items, null, item => DrawGestureModDetail(config, gestures, catalog, item),
+                () => newGestureAlias.Trim().Length > 0,
+                _ =>
+                {
+                    newGestureAlias = "";
+                    gestureAnimId = null;
+                },
+                "No scanned animations yet - rescan in Settings (gear icon) first.");
+        }
+    }
+
+    private const string StaleGesturesKey = "stale";
+    private string? gestureAnimId;
+
+    private void DrawGestureModDetail(PluginConfig config, List<GestureAliasDefinition> gestures, List<GestureCatalogEntry> catalog, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose an animation mod.");
             return;
         }
 
-        using (Section.Begin("gestureAdd", "Add an animation alias"))
+        if (item.Key == StaleGesturesKey)
         {
-            ImGui.InputText("Alias##newGesture", ref newGestureAlias, 32);
-            IconGlyph.HelpMarker("Short word your Owner sends to play this animation.");
-            DrawReservedWordWarning(newGestureAlias);
-
-            if (ImGui.Button(selectedAliasGesture is null ? "Add animation..." : "Change animation..."))
-                plugin.AnimationPickerWindow.Open(entry => selectedAliasGesture = entry);
-
-            var canAdd = newGestureAlias.Length > 0 && !IsReserved(newGestureAlias) && selectedAliasGesture is not null;
-            using (ImRaii.Disabled(!canAdd))
+            IconGlyph.WrappedColored(Theme.Warning, "These aliases point at animations that aren't in the latest scan. Rescan, or delete them and make them again.");
+            foreach (var (stale, index) in gestures.Select((g, i) => (g, i)).ToList())
             {
-                if (ImGui.Button("Add gesture alias") && selectedAliasGesture is { } chosen)
-                {
-                    gestures.Add(new GestureAliasDefinition
-                    {
-                        Alias = newGestureAlias,
-                        GestureId = chosen.Id,
-                        AnimationName = chosen.AnimationName,
-                        ModDirectory = chosen.ModDirectory,
-                        ModName = chosen.ModName,
-                        EmoteName = chosen.Trigger!.DisplayName.TrimStart('/'),
-                    });
-                    config.Save();
-                    newGestureAlias = "";
-                    selectedAliasGesture = null;
-                }
-            }
-            if (selectedAliasGesture is { } picked)
-            {
+                if (!string.IsNullOrEmpty(stale.GestureId) && config.GestureMapping.LocalCatalog.ContainsKey(stale.GestureId))
+                    continue;
+                ImGui.PushID($"staleGesture_{index}");
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextColored(Theme.AccentHover, stale.Alias);
                 ImGui.SameLine();
-                IconGlyph.WrappedDisabled($"Selected: {picked.Label}");
+                ImGui.TextDisabled($"{(stale.AnimationName.Length > 0 ? stale.AnimationName : stale.EmoteName)} ({stale.ModName})");
+                ContinueRowOrWrap(ButtonWidth("Delete"));
+                if (ImGui.Button("Delete"))
+                {
+                    gestures.RemoveAt(index);
+                    config.Save();
+                    ImGui.PopID();
+                    break;
+                }
+                ImGui.PopID();
             }
+            return;
         }
 
-        using (Section.Begin("gestureActive", "Active animation"))
-        {
-            var held = plugin.GestureCommand.IsHeld;
-            using (ImRaii.Disabled(!plugin.GestureCommand.HasActiveTemporary || held))
+        var anims = catalog.Where(e => $"mod:{e.ModDirectory}" == item.Key).ToList();
+        if (anims.Count == 0)
+            return;
+        var selected = anims.FirstOrDefault(e => e.Id == gestureAnimId) ?? anims[0];
+        ImGui.TextColored(Theme.AccentHover, anims[0].ModName);
+        ImGui.TextDisabled($"{anims.Count} animation{(anims.Count == 1 ? "" : "s")}");
+
+        Section.SubHeading("Animations");
+        DrawAnimationPicker(anims, selected.Id, e => gestures.Where(g => g.GestureId == e.Id).Select(g => g.Alias), e => e.GroupName,
+            e => $"{e.AnimationName} - {e.Trigger!.Label}", e => e.Id, id =>
             {
-                if (ImGui.Button("Reset active gesture"))
-                    plugin.GestureCommand.ResetActiveTemporary();
+                gestureAnimId = id;
+                newGestureAlias = "";
+            });
+
+        DrawGestureDetail(config, gestures, selected);
+    }
+
+    /// The selected mod's animations as a short scrolling list, under their option group names.
+    private static void DrawAnimationPicker<T>(List<T> anims, string selectedId, Func<T, IEnumerable<string>> badges, Func<T, string?> groupOf,
+        Func<T, string> labelOf, Func<T, string> idOf, Action<string> onPick, Func<T, bool>? locked = null)
+    {
+        var rows = anims.Count + anims.Select(groupOf).Where(g => !string.IsNullOrEmpty(g)).Distinct().Count();
+        var height = Math.Min(rows, 10) * ImGui.GetTextLineHeightWithSpacing() + ImGui.GetStyle().WindowPadding.Y * 2;
+        using var child = ImRaii.Child("animPicker", new Vector2(-1, height), true);
+        if (!child)
+            return;
+        string? lastGroup = null;
+        foreach (var anim in anims)
+        {
+            var group = groupOf(anim);
+            if (!string.IsNullOrEmpty(group) && group != lastGroup)
+                ImGui.TextDisabled(group);
+            lastGroup = group;
+
+            var id = idOf(anim);
+            var badge = string.Join(", ", badges(anim));
+            var startX = ImGui.GetCursorPosX();
+            var avail = ImGui.GetContentRegionAvail().X;
+            using (ImRaii.Disabled(locked?.Invoke(anim) == true))
+            {
+                if (ImGui.Selectable($"{labelOf(anim)}##anim_{id}", id == selectedId))
+                    onPick(id);
             }
-            IconGlyph.HelpMarker(held
-                ? "Your Owner is holding you in this animation. It ends when they stop it or revert all, or when you use your safeword (/obpanic)."
-                : "Reverts the currently active temporary mod activation back to its saved settings right now, instead of waiting for the automatic ~30s idle-timeout. Only enabled while a gesture's temporary activation is active.");
+            if (locked?.Invoke(anim) == true && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Save or cancel your edit first.");
+            if (id == selectedId && ImGui.IsWindowAppearing())
+                ImGui.SetScrollHereY();
+            if (badge.Length > 0)
+            {
+                var width = ImGui.CalcTextSize(badge).X;
+                ImGui.SameLine(startX + Math.Max(0, avail - width));
+                ImGui.TextColored(Theme.AccentHover, badge);
+            }
         }
     }
+
+    private void DrawGestureDetail(PluginConfig config, List<GestureAliasDefinition> gestures, GestureCatalogEntry entry)
+    {
+        if (entry.Trigger is null)
+            return;
+        ImGui.PushID($"gesture_{entry.Id}");
+        ImGui.Spacing();
+        ImGui.TextColored(Theme.AccentHover, entry.AnimationName);
+        if (entry.GroupName.Length > 0)
+            ImGui.TextDisabled(entry.GroupName);
+        ImGui.TextUnformatted($"Plays: {entry.Trigger.DisplayName}");
+        if (entry.Trigger.Label != entry.Trigger.DisplayName)
+            ImGui.TextDisabled(entry.Trigger.Label);
+        if (entry.GroupSelections.Count > 0)
+        {
+            Section.SubHeading("Mod options it turns on");
+            foreach (var (group, options) in entry.GroupSelections)
+                IconGlyph.WrappedDisabled($"{group}: {string.Join(", ", options)}");
+        }
+
+        Section.SubHeading("Aliases");
+        var bound = gestures.Select((g, i) => (g, i)).Where(x => x.g.GestureId == entry.Id).ToList();
+        if (bound.Count == 0)
+            IconGlyph.WrappedDisabled("No alias plays this yet.");
+        foreach (var (alias, index) in bound)
+        {
+            ImGui.PushID($"gestureAlias_{index}");
+            if (DrawDeferredTextInput("##aliasEdit", (alias, "alias"), alias.Alias, 32, out var renamed) && renamed.Trim().Length > 0 && !IsReserved(renamed))
+            {
+                alias.Alias = renamed.Trim();
+                config.Save();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Delete"))
+            {
+                gestures.RemoveAt(index);
+                config.Save();
+                ImGui.PopID();
+                break;
+            }
+            ImGui.PopID();
+        }
+
+        Section.SubHeading("Add an alias");
+        ItemWidth(160);
+        ImGui.InputTextWithHint("##newGesture", "word", ref newGestureAlias, 32);
+        IconGlyph.HelpMarker("Short word your Owner sends to play this animation.");
+        DrawReservedWordWarning(newGestureAlias);
+        using (ImRaii.Disabled(newGestureAlias.Trim().Length == 0 || IsReserved(newGestureAlias)))
+        {
+            if (ImGui.Button("Add alias##newGesture"))
+            {
+                gestures.Add(new GestureAliasDefinition
+                {
+                    Alias = newGestureAlias.Trim(),
+                    GestureId = entry.Id,
+                    AnimationName = entry.AnimationName,
+                    ModDirectory = entry.ModDirectory,
+                    ModName = entry.ModName,
+                    EmoteName = entry.Trigger.DisplayName.TrimStart('/'),
+                });
+                config.Save();
+                newGestureAlias = "";
+            }
+        }
+        ImGui.PopID();
+    }
+
+    private readonly ListDetail moodleList = new();
 
     private void DrawMoodlesModule()
     {
         var config = plugin.Configuration;
         IconGlyph.Text(FontAwesomeIcon.Smile, "Moodles Aliases");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Scan your own registered Moodles statuses in Settings, then define aliases from them here.");
-
-        using (Section.Begin("moodleFixed", "Fixed words"))
-        {
-            DrawFixedWord("Clear moodles", ControlWords.ClearMoodle);
-            IconGlyph.HelpMarker("Clears your Moodles, except ones attached to something active. It can't be renamed.");
-        }
+        IconGlyph.WrappedDisabled("Scan your own registered Moodles statuses in Settings, then pick one to give it an alias.");
+        DrawFixedWordRow("moodleFixed", new FixedWordInfo("Clear moodles", ControlWords.ClearMoodle,
+            "Clears your Moodles, except ones attached to something active. It can't be renamed."));
 
         var moodleAliases = config.Aliases.Moodles;
-        using (Section.Begin("moodleAliases", "Your moodle aliases"))
+        var statuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => MoodlesTextFormat.StripMarkup(s.Name), StringComparer.OrdinalIgnoreCase).ToList();
+        var items = statuses.Select(st =>
         {
-            if (moodleAliases.Count == 0)
-            {
-                IconGlyph.WrappedDisabled("No Moodle aliases yet - add one below.");
-            }
-            else
-            {
-                var labels = moodleAliases.Select(m => m.Alias).ToArray();
-                var i = DrawItemSelector("##moodleAliasSelect", labels, ref selectedMoodleAliasIndex);
-                var m = moodleAliases[i];
-                var invalid = string.IsNullOrEmpty(m.StatusId) || !config.MoodlesMapping.LocalCatalog.ContainsKey(m.StatusId);
-                ImGui.Indent();
-                ImGui.TextUnformatted($"{MoodlesTextFormat.StripMarkup(m.StatusName)}{(invalid ? " — rescan/recreate required" : "")}");
-                ImGui.Unindent();
-                if (ImGui.SmallButton("Remove"))
-                {
-                    moodleAliases.RemoveAt(i);
-                    config.Save();
-                    selectedMoodleAliasIndex = null;
-                }
-            }
-        }
+            var aliases = moodleAliases.Where(m => m.StatusId == st.StatusId).Select(m => m.Alias).ToList();
+            return new ListDetailItem($"status:{st.StatusId}", MoodlesTextFormat.StripMarkup(st.Name), aliases.Count > 0 ? string.Join(", ", aliases) : null);
+        }).ToList();
+        items.AddRange(moodleAliases.Select((m, i) => (m, i))
+            .Where(x => string.IsNullOrEmpty(x.m.StatusId) || !config.MoodlesMapping.LocalCatalog.ContainsKey(x.m.StatusId))
+            .Select(x => new ListDetailItem($"stale:{x.i}", x.m.Alias, "needs rescan", Group: "Needs rescan")));
 
-        var statuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-        if (statuses.Count == 0)
+        using (Section.Begin("moodleAliases", "Your moodles"))
         {
-            IconGlyph.WrappedDisabled("No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
+            moodleList.Draw("moodles", items, null, item => DrawMoodleStatusDetail(config, moodleAliases, item),
+                () => newMoodleAlias.Trim().Length > 0, _ => newMoodleAlias = "",
+                "No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
+        }
+    }
+
+    private void DrawMoodleStatusDetail(PluginConfig config, List<MoodlesAliasDefinition> moodleAliases, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a status.");
             return;
         }
-
-        using (Section.Begin("moodleAdd", "Add a moodle alias"))
+        if (item.Key.StartsWith("stale:") && int.TryParse(item.Key["stale:".Length..], out var staleIndex) && staleIndex < moodleAliases.Count)
         {
-            ImGui.InputText("Alias##newMoodle", ref newMoodleAlias, 32);
-            IconGlyph.HelpMarker("Short word the Owner types. With Moodles permission enabled, this immediately applies the chosen status.");
-            DrawReservedWordWarning(newMoodleAlias);
-
-            var statusNames = statuses.Select(s => MoodlesTextFormat.StripMarkup(s.Name)).ToArray();
-            newMoodleStatusIndex = Math.Clamp(newMoodleStatusIndex, 0, statusNames.Length - 1);
-            ImGui.Combo("Status##newMoodle", ref newMoodleStatusIndex, statusNames, statusNames.Length);
-
-            if (ImGui.Button("Add Moodle alias") && newMoodleAlias.Length > 0 && !IsReserved(newMoodleAlias))
+            var stale = moodleAliases[staleIndex];
+            ImGui.TextColored(Theme.AccentHover, stale.Alias);
+            IconGlyph.WrappedColored(Theme.Warning, $"{MoodlesTextFormat.StripMarkup(stale.StatusName)} isn't in the latest scan. Rescan, or delete this alias and make it again.");
+            if (ImGui.Button("Delete##staleMoodle"))
             {
-                var chosen = statuses[newMoodleStatusIndex];
-                moodleAliases.Add(new MoodlesAliasDefinition { Alias = newMoodleAlias, StatusId = chosen.StatusId, StatusName = chosen.Name });
+                moodleAliases.RemoveAt(staleIndex);
+                config.Save();
+                moodleList.Select(null);
+            }
+            return;
+        }
+        if (!config.MoodlesMapping.LocalCatalog.TryGetValue(item.Key["status:".Length..], out var status))
+            return;
+
+        ImGui.PushID($"moodleStatus_{status.StatusId}");
+        ImGui.TextColored(Theme.AccentHover, MoodlesTextFormat.StripMarkup(status.Name));
+
+        Section.SubHeading("Aliases");
+        var bound = moodleAliases.Select((m, i) => (m, i)).Where(x => x.m.StatusId == status.StatusId).ToList();
+        if (bound.Count == 0)
+            IconGlyph.WrappedDisabled("No alias applies this yet.");
+        foreach (var (alias, index) in bound)
+        {
+            ImGui.PushID($"moodleAlias_{index}");
+            if (DrawDeferredTextInput("##aliasEdit", (alias, "alias"), alias.Alias, 32, out var renamed) && renamed.Trim().Length > 0 && !IsReserved(renamed))
+            {
+                alias.Alias = renamed.Trim();
+                config.Save();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Delete"))
+            {
+                moodleAliases.RemoveAt(index);
+                config.Save();
+                ImGui.PopID();
+                break;
+            }
+            ImGui.PopID();
+        }
+
+        Section.SubHeading("Add an alias");
+        ItemWidth(160);
+        ImGui.InputTextWithHint("##newMoodle", "word", ref newMoodleAlias, 32);
+        IconGlyph.HelpMarker("Short word the Owner types. With Moodles permission enabled, this immediately applies the status.");
+        DrawReservedWordWarning(newMoodleAlias);
+        using (ImRaii.Disabled(newMoodleAlias.Trim().Length == 0 || IsReserved(newMoodleAlias)))
+        {
+            if (ImGui.Button("Add alias##newMoodle"))
+            {
+                moodleAliases.Add(new MoodlesAliasDefinition { Alias = newMoodleAlias.Trim(), StatusId = status.StatusId, StatusName = status.Name });
                 config.Save();
                 newMoodleAlias = "";
             }
         }
+        ImGui.PopID();
     }
 
     /// Each bundled action checks its own permission at apply time; this UI only builds the definition.
+    private readonly ListDetail customTriggerListDetail = new();
+    private bool creatingCustomTrigger;
+    private const string NewCustomTriggerKey = "new:customtrigger";
+
     private void DrawCustomTriggersModule()
     {
         var config = plugin.Configuration;
@@ -1663,40 +2008,82 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.WrappedDisabled("Run several actions from one alias. Each action still needs its own permission.");
 
         var triggers = config.Aliases.CustomTriggers;
+        var items = triggers.Select((t, i) => new ListDetailItem($"ct:{i}", t.Alias, t.Actions.Count == 1 ? "1 action" : $"{t.Actions.Count} actions")).ToList();
+        if (creatingCustomTrigger)
+            items.Add(new ListDetailItem(NewCustomTriggerKey, "New trigger"));
+
         using (Section.Begin("customTriggerList", "Your custom triggers"))
         {
-            if (triggers.Count == 0)
+            customTriggerListDetail.Draw("customTriggers", items, DrawCustomTriggerToolbar,
+                item => DrawCustomTriggerDetail(config, triggers, item), () => CustomTriggerDirty(triggers),
+                item => LoadCustomTriggerDraft(triggers, item), "No custom triggers yet. Use + New to build one.");
+        }
+    }
+
+    private void DrawCustomTriggerToolbar()
+    {
+        if (!ImGui.Button("+ New##customTrigger"))
+            return;
+        ResetCustomTriggerDraft();
+        creatingCustomTrigger = true;
+        customTriggerListDetail.Select(NewCustomTriggerKey);
+    }
+
+    private void ResetCustomTriggerDraft()
+    {
+        ctNewAlias = "";
+        ctDraftActions.Clear();
+        editingCustomTriggerIndex = null;
+        editingCustomTriggerActionIndex = null;
+    }
+
+    private void LoadCustomTriggerDraft(List<CustomTriggerDefinition> triggers, ListDetailItem? item)
+    {
+        if (item?.Key == NewCustomTriggerKey)
+            return;
+        creatingCustomTrigger = false;
+        ResetCustomTriggerDraft();
+        if (item is null || !int.TryParse(item.Key["ct:".Length..], out var index) || index >= triggers.Count)
+            return;
+        editingCustomTriggerIndex = index;
+        ctNewAlias = triggers[index].Alias;
+        ctDraftActions.AddRange(triggers[index].Actions.Select(CloneAction));
+    }
+
+    private bool CustomTriggerDirty(List<CustomTriggerDefinition> triggers)
+    {
+        if (customTriggerListDetail.Selected == NewCustomTriggerKey)
+            return ctNewAlias.Trim().Length > 0 || ctDraftActions.Count > 0;
+        return editingCustomTriggerIndex is { } index && index < triggers.Count
+            && CustomTriggerCommand.BuildCastCommand(ctNewAlias.Trim(), ctDraftActions) != CustomTriggerCommand.BuildCastCommand(triggers[index].Alias, triggers[index].Actions);
+    }
+
+    private void DrawCustomTriggerDetail(PluginConfig config, List<CustomTriggerDefinition> triggers, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a custom trigger, or use + New to build one.");
+            return;
+        }
+        if (item.Key != NewCustomTriggerKey && editingCustomTriggerIndex is { } index && index < triggers.Count)
+        {
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextColored(Theme.AccentHover, triggers[index].Alias);
+            ImGui.SameLine();
+            if (ImGui.Button("Delete##customTrigger"))
             {
-                IconGlyph.WrappedDisabled("No custom triggers yet - build one below.");
-            }
-            else
-            {
-                var labels = triggers.Select(t => t.Alias).ToArray();
-                var i = DrawItemSelector("##customTriggerSelect", labels, ref selectedCustomTriggerIndex);
-                var t = triggers[i];
-                ImGui.PushID($"customTrigger_{i}");
-                ImGui.Indent();
-                foreach (var action in t.Actions)
-                    DrawActionSummary(action);
-                ImGui.Unindent();
-                if (ImGui.SmallButton("Edit"))
-                {
-                    editingCustomTriggerIndex = i;
-                    ctNewAlias = t.Alias;
-                    ctDraftActions.Clear();
-                    ctDraftActions.AddRange(t.Actions.Select(CloneAction));
-                }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Remove"))
-                {
-                    triggers.RemoveAt(i);
-                    config.Save();
-                    selectedCustomTriggerIndex = null;
-                }
-                ImGui.PopID();
+                triggers.RemoveAt(index);
+                config.Save();
+                ResetCustomTriggerDraft();
+                customTriggerListDetail.Select(null);
+                return;
             }
         }
+        DrawCustomTriggerEditor(config, triggers);
+    }
 
+    private void DrawCustomTriggerEditor(PluginConfig config, List<CustomTriggerDefinition> triggers)
+    {
         using var editorBox = Section.Begin("customTriggerEditor", editingCustomTriggerIndex is null ? "New trigger" : "Edit trigger");
         ImGui.InputText("Alias##newCustomTrigger", ref ctNewAlias, 32);
         IconGlyph.HelpMarker("Short word your Owner sends. Runs every allowed action below in order.");
@@ -1712,23 +2099,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var editable = ctDraftActions[i].Kind != CustomTriggerActionKind.Restraint;
                 DrawActionSummary(ctDraftActions[i], DraftActionButtonsWidth(editable));
                 using (ImRaii.Disabled(i == 0))
-                    if (ImGui.SmallButton("↑"))
+                    if (ImGui.Button("↑"))
                         MoveDraftAction(ctDraftActions, i, i - 1, ref editingCustomTriggerActionIndex);
                 ContinueRowOrWrap(ButtonWidth("↓"));
                 using (ImRaii.Disabled(i == ctDraftActions.Count - 1))
-                    if (ImGui.SmallButton("↓"))
+                    if (ImGui.Button("↓"))
                         MoveDraftAction(ctDraftActions, i, i + 1, ref editingCustomTriggerActionIndex);
                 if (editable)
                 {
                     ContinueRowOrWrap(ButtonWidth("Edit"));
-                    if (ImGui.SmallButton("Edit"))
+                    if (ImGui.Button("Edit"))
                     {
                         LoadSubActionDraft(ctDraftActions[i]);
                         editingCustomTriggerActionIndex = i;
                     }
                 }
                 ContinueRowOrWrap(ButtonWidth("Remove"));
-                if (ImGui.SmallButton("Remove"))
+                if (ImGui.Button("Remove"))
                 {
                     RemoveDraftAction(ctDraftActions, i, ref editingCustomTriggerActionIndex);
                     ImGui.PopID();
@@ -1865,26 +2252,33 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGui.Button(editingCustomTriggerIndex is null ? "Save trigger" : "Save changes"))
             {
                 var replacement = new CustomTriggerDefinition { Alias = ctNewAlias.Trim(), Actions = ctDraftActions.Select(CloneAction).ToList() };
+                int savedIndex;
                 if (editingCustomTriggerIndex is { } editIndex && editIndex >= 0 && editIndex < triggers.Count)
+                {
                     triggers[editIndex] = replacement;
+                    savedIndex = editIndex;
+                }
                 else
+                {
                     triggers.Add(replacement);
+                    savedIndex = triggers.Count - 1;
+                }
                 config.Save();
-                ctNewAlias = "";
-                ctDraftActions.Clear();
-                editingCustomTriggerIndex = null;
-                editingCustomTriggerActionIndex = null;
+                creatingCustomTrigger = false;
+                customTriggerListDetail.Select($"ct:{savedIndex}");
+                LoadCustomTriggerDraft(triggers, new ListDetailItem($"ct:{savedIndex}", replacement.Alias));
             }
         }
-        if (editingCustomTriggerIndex is not null)
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel##editCustomTrigger"))
         {
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel##editCustomTrigger"))
+            if (editingCustomTriggerIndex is { } cancelIndex)
+                LoadCustomTriggerDraft(triggers, new ListDetailItem($"ct:{cancelIndex}", ""));
+            else
             {
-                ctNewAlias = "";
-                ctDraftActions.Clear();
-                editingCustomTriggerIndex = null;
-                editingCustomTriggerActionIndex = null;
+                creatingCustomTrigger = false;
+                ResetCustomTriggerDraft();
+                customTriggerListDetail.Select(null);
             }
         }
     }
@@ -2021,6 +2415,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void ResetDeviceDraft()
     {
+        newDeviceRedraw = false;
         editingDeviceId = null;
         newDeviceName = "";
         newDeviceMoodle = null;
@@ -2067,6 +2462,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using var disabled = ImRaii.Disabled(locked);
 
+        TwoColumns("collarColumns", () => DrawCollarGearSections(config), () => DrawCollarMoodleSection(config));
+    }
+
+    private void DrawCollarGearSections(PluginConfig config)
+    {
         using (Section.Begin("collarItem", "Collar item"))
         {
             var collarChosenLabel = config.Collar.ItemId is { } collarItemId ? GetItemName(collarItemId) : "(none chosen)";
@@ -2102,7 +2502,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     plugin.CollarCommand.ClearConfiguredRing();
             }
         }
+    }
 
+    private void DrawCollarMoodleSection(PluginConfig config)
+    {
         using (Section.Begin("collarMoodle", "Collar moodle"))
         {
             var collarMoodleLabel = config.Collar.MoodleStatusName is { } assignedMoodleName ? MoodlesTextFormat.StripMarkup(assignedMoodleName) : "(none assigned)";
@@ -2126,7 +2529,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 ItemWidth(220);
                 ImGui.Combo("##newCollarMoodle", ref newCollarMoodleStatusIndex, collarMoodleStatusNames, collarMoodleStatusNames.Length);
                 ContinueRowOrWrap(ButtonWidth("Assign"));
-                if (ImGui.SmallButton("Assign##collarMoodle"))
+                if (ImGui.Button("Assign##collarMoodle"))
                 {
                     var chosen = collarMoodleStatuses[newCollarMoodleStatusIndex];
                     config.Collar.MoodleStatusId = chosen.StatusId;
@@ -2138,7 +2541,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (config.Collar.HasMoodleAssigned)
             {
                 ContinueRowOrWrap(ButtonWidth("Clear"));
-                if (ImGui.SmallButton("Clear##collarMoodle"))
+                if (ImGui.Button("Clear##collarMoodle"))
                 {
                     config.Collar.MoodleStatusId = null;
                     config.Collar.MoodleStatusName = null;
@@ -2151,17 +2554,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawFollowLeashModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
-        ImGui.Separator();
-
-        using (Section.Begin("leashFixed", "Fixed words"))
-        {
-            IconGlyph.WrappedDisabled("The words your Owner sends to put the leash on or take it off.");
-            DrawFixedWord("Leash", ControlWords.Leash);
-            IconGlyph.HelpMarker("Puts on a leash of your Owner's chosen length. You move freely inside it and get pulled along.");
-            DrawFixedWord("Unleash", ControlWords.Unleash);
-            IconGlyph.HelpMarker("Takes the leash off and gives you full control back.");
-        }
+        DrawFixedWordRow("leashFixed",
+            new FixedWordInfo("Leash", ControlWords.Leash, "Puts on a leash of your Owner's chosen length. You move freely inside it and get pulled along."),
+            new FixedWordInfo("Unleash", ControlWords.Unleash, "Takes the leash off and gives you full control back."));
 
         using (Section.Begin("leashLimit", "Leash length"))
         {
@@ -2191,45 +2586,57 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static void DrawLeashLineSection(PluginConfig config)
     {
         using var box = Section.Begin("leashAppearance", "Leash line");
-        var showLeash = config.ShowLeashLine;
-        if (ImGui.Checkbox("Show leash line", ref showLeash))
-        {
-            config.ShowLeashLine = showLeash;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Only changes what you see. Hiding it doesn't release the leash.");
-
-        using var disabled = ImRaii.Disabled(!config.ShowLeashLine);
-        var color = config.LeashColor;
-        if (ImGui.ColorEdit3("Color##leash", ref color, ImGuiColorEditFlags.NoInputs))
-        {
-            config.LeashColor = color;
-            config.Save();
-        }
-        ContinueRowOrWrap(ButtonWidth("Reset"));
-        if (ImGui.SmallButton("Reset##leashAppearance"))
-        {
-            config.LeashColor = PluginConfig.DefaultLeashColor;
-            config.LeashBrightness = 1f;
-            config.LeashOpacity = 1f;
-            config.Save();
-        }
-
-        var brightness = (int)MathF.Round(config.LeashBrightness * 100f);
-        ItemWidth(200);
-        if (ImGui.SliderInt("Brightness##leash", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
-        {
-            config.LeashBrightness = brightness / 100f;
-            config.Save();
-        }
-
-        var opacity = (int)MathF.Round(config.LeashOpacity * 100f);
-        ItemWidth(200);
-        if (ImGui.SliderInt("Opacity##leash", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
-        {
-            config.LeashOpacity = opacity / 100f;
-            config.Save();
-        }
+        var shown = config.ShowLeashLine;
+        DrawOptionRows("leashLineOptions",
+            new OptionRow("Show", "Only changes what you see. Hiding it doesn't release the leash.", _ =>
+            {
+                var showLeash = config.ShowLeashLine;
+                if (ImGui.Checkbox("Show leash line", ref showLeash))
+                {
+                    config.ShowLeashLine = showLeash;
+                    config.Save();
+                }
+            }),
+            new OptionRow("Color", "The leash line's colour. Reset also puts brightness and opacity back.", _ =>
+            {
+                using var disabled = ImRaii.Disabled(!shown);
+                var color = config.LeashColor;
+                if (ImGui.ColorEdit3("##leashColor", ref color, ImGuiColorEditFlags.NoInputs))
+                {
+                    config.LeashColor = color;
+                    config.Save();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Reset##leashAppearance"))
+                {
+                    config.LeashColor = PluginConfig.DefaultLeashColor;
+                    config.LeashBrightness = 1f;
+                    config.LeashOpacity = 1f;
+                    config.Save();
+                }
+            }),
+            new OptionRow("Brightness", "How bright the line is drawn.", width =>
+            {
+                using var disabled = ImRaii.Disabled(!shown);
+                var brightness = (int)MathF.Round(config.LeashBrightness * 100f);
+                ImGui.SetNextItemWidth(Math.Min(width, Scaled(280)));
+                if (ImGui.SliderInt("##leashBrightness", ref brightness, (int)(PluginConfig.MinLeashBrightness * 100f), 100, "%d%%"))
+                {
+                    config.LeashBrightness = brightness / 100f;
+                    config.Save();
+                }
+            }),
+            new OptionRow("Opacity", "How see-through the line is.", width =>
+            {
+                using var disabled = ImRaii.Disabled(!shown);
+                var opacity = (int)MathF.Round(config.LeashOpacity * 100f);
+                ImGui.SetNextItemWidth(Math.Min(width, Scaled(280)));
+                if (ImGui.SliderInt("##leashOpacity", ref opacity, (int)(PluginConfig.MinLeashOpacity * 100f), 100, "%d%%"))
+                {
+                    config.LeashOpacity = opacity / 100f;
+                    config.Save();
+                }
+            }));
     }
 
     /// Only changes what this client draws; the restraint's rules keep applying with its cuffs hidden.
@@ -2252,7 +2659,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             config.Save();
         }
         ContinueRowOrWrap(ButtonWidth("Reset"));
-        if (ImGui.SmallButton("Reset##restraintAppearance"))
+        if (ImGui.Button("Reset##restraintAppearance"))
         {
             config.RestraintColor = PluginConfig.DefaultRestraintColor;
             config.RestraintBrightness = 1f;
@@ -2342,7 +2749,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
             plugin.Configuration.RestraintMapping.ImportedPeerCatalog.Clear();
             plugin.CatalogStore.Save(plugin.Configuration);
             plugin.Configuration.Save();
-            expandedRestraintRuleEditors.Clear();
             restraintRuleEdits.Clear();
             resetImportsResult = "All imports reset to a blank slate.";
             importResult = null;
@@ -2442,7 +2848,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 ImGui.NewLine();
             else if (avail > buttonWidth)
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + avail - buttonWidth);
-            if (ImGui.SmallButton($"{label}##{idSuffix}"))
+            if (ImGui.Button($"{label}##{idSuffix}"))
                 onClearAll();
         }
         ImGui.Separator();
@@ -2453,38 +2859,126 @@ public sealed partial class ModuleWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
         ImGui.Separator();
-        using var commands = Section.Begin("collarQuick", "Commands");
-        DrawFixedQuickRow("Collar lock", "collar lock", canSend, FixedActionIds.CollarLock);
-        IconGlyph.HelpMarker("Puts your Sub's collar on and locks it.");
-
-        DrawFixedQuickRow("Collar unlock", "collar unlock", canSend, FixedActionIds.CollarUnlock);
-        IconGlyph.HelpMarker("Unlocks your Sub's collar. It stays on, just unlocked.");
+        DrawCommandRow("collarQuick", canSend,
+            new RowCommand("Collar lock", "collar lock", FixedActionIds.CollarLock, "Puts your Sub's collar on and locks it."),
+            new RowCommand("Collar unlock", "collar unlock", FixedActionIds.CollarUnlock, "Unlocks your Sub's collar. It stays on, just unlocked."));
     }
+
+    private readonly ListDetail ownerMoodleList = new();
+    private const string NewOwnMoodleKey = "own:new";
 
     private void DrawMoodlesQuickSection(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Moodles;
+        var own = plugin.Configuration.QuickCommands.CustomMoodles;
         DrawSectionTitleRow(FontAwesomeIcon.Smile, "Moodles", quick.Count > 0, "moodlesQuick", () =>
         {
             quick.Clear();
             plugin.Configuration.Save();
         });
-
-        using (Section.Begin("moodlesQuickFixed", "Commands"))
-            DrawFixedQuickRow("Clear moodle", "moodle clear", canSend, FixedActionIds.ClearMoodle);
-
-        DrawCustomMoodlesSection(canSend);
-
+        DrawCommandRow("moodlesQuickFixed", canSend, new RowCommand("Clear moodle", "moodle clear", FixedActionIds.ClearMoodle,
+            "Clears your Sub's moodles, except ones attached to something active."));
         if (quick.Count == 0)
-        {
             DrawGoToSyncTabPrompt("No Moodles statuses imported yet.");
+
+        var items = quick.Select((c, i) => new ListDetailItem($"sub:{i}", MoodlesTextFormat.StripMarkup(c.Label), Group: "From your Sub")).ToList();
+        items.AddRange(own.Select((c, i) => new ListDetailItem($"own:{i}", c.Label, Group: "Written by you",
+            Tooltip: c.CustomMoodle?.Description is { Length: > 0 } description ? description : null)));
+        if (ownerMoodleList.Selected == NewOwnMoodleKey)
+            items.Add(new ListDetailItem(NewOwnMoodleKey, "New moodle", Group: "Written by you"));
+
+        QuickCommand? FindSub(string? key) => key is not null && key.StartsWith("sub:") && int.TryParse(key[4..], out var i) && i < quick.Count ? quick[i] : null;
+        QuickCommand? FindOwn(string? key) => key is not null && key != NewOwnMoodleKey && key.StartsWith("own:") && int.TryParse(key[4..], out var i) && i < own.Count ? own[i] : null;
+
+        using var section = Section.Begin("customMoodles", "Moodles");
+        IconGlyph.WrappedDisabled("Your Sub's moodles, and moodles you write yourself. Your Sub has to allow \"moodles my Owner writes\" for yours.");
+        ownerMoodleList.Draw("ownerMoodles", items,
+            () =>
+            {
+                if (!ImGui.Button("+ New moodle"))
+                    return;
+                CancelQuickCommandEdit();
+                ResetCustomMoodleBuilder();
+                ownerMoodleList.Select(NewOwnMoodleKey);
+            },
+            item =>
+            {
+                if (item is null)
+                {
+                    IconGlyph.WrappedDisabled("Choose a moodle, or use + New moodle to write one.");
+                    return;
+                }
+                if (item.Key == NewOwnMoodleKey)
+                {
+                    var before = own.Count;
+                    using (Section.Begin("customMoodleBuilder", "Write a moodle"))
+                        DrawCustomMoodleBuilder(own);
+                    if (own.Count > before)
+                        ownerMoodleList.Select($"own:{own.Count - 1}");
+                    return;
+                }
+                if (FindSub(item.Key) is { } subMoodle)
+                    DrawSavedQuickDetail(subMoodle, quick, canSend, ownerMoodleList, null);
+                else if (FindOwn(item.Key) is { } ownMoodle)
+                    DrawOwnMoodleDetail(ownMoodle, own, canSend);
+            },
+            () => ownerMoodleList.Selected == NewOwnMoodleKey ? cmDraft.Title.Length > 0
+                : FindSub(ownerMoodleList.Selected) is { } s ? QuickEditDirty(s)
+                : FindOwn(ownerMoodleList.Selected) is { } o && ReferenceEquals(cmEditing, o) && cmDraft.ApplyCommand() != o.Command,
+            item =>
+            {
+                CancelQuickCommandEdit();
+                ResetCustomMoodleBuilder();
+                if (FindSub(item?.Key) is { } subMoodle)
+                    BeginQuickCommandEdit(subMoodle, quick);
+            },
+            "No moodles yet. Your Sub's arrive when their catalog syncs; use + New moodle to write your own.");
+    }
+
+    private void DrawOwnMoodleDetail(QuickCommand cmd, List<QuickCommand> own, bool canSend)
+    {
+        if (cmd.CustomMoodle is not { } moodle)
+            return;
+        var id = moodle.Id.ToString("N");
+        ImGui.PushID(id);
+        DrawMoodleIcon((uint)moodle.IconId);
+        ImGui.SameLine();
+        ImGui.BeginGroup();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextColored(Theme.AccentHover, cmd.Label);
+        ContinueRowOrWrap(StarWidth);
+        DrawFavoriteToggle(cmd, id);
+        ContinueRowOrWrap(ButtonWidth("Delete"));
+        if (ImGui.Button("Delete"))
+        {
+            own.Remove(cmd);
+            ResetCustomMoodleBuilder();
+            plugin.Configuration.Save();
+            ownerMoodleList.Select(null);
+            ImGui.EndGroup();
+            ImGui.PopID();
             return;
         }
+        if (moodle.Description.Length > 0)
+            IconGlyph.WrappedDisabled(moodle.Description);
+        ImGui.EndGroup();
 
-        // Sized to its rows, up to the room left in the tab.
-        using var _ = Section.List("moodlesQuickList");
-        foreach (var cmd in quick.ToArray())
-            DrawSavedQuickRow(cmd, quick, canSend, MoodlesTextFormat.StripMarkup);
+        Section.SubHeading("Send");
+        DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, id);
+        OwnerLockOption.DrawInline(id, cmd, plugin.Configuration);
+        ContinueRowOrWrap(ButtonWidth("Take off"));
+        DrawSendCopyButtons(moodle.RemoveCommand(), canSend, id + "_remove", "Take off");
+
+        Section.SubHeading("Edit");
+        // The builder's Save and Cancel end the edit; reopen it so the detail pane always shows it.
+        if (!ReferenceEquals(cmEditing, cmd))
+        {
+            cmEditing = cmd;
+            cmDraft = moodle.Clone();
+        }
+        using (Section.Begin("customMoodleBuilder"))
+            DrawCustomMoodleBuilder(own);
+        ImGui.PopID();
     }
 
     private void DrawRestraintQuickSection(bool canSend)
@@ -2492,16 +2986,21 @@ public sealed partial class ModuleWindow : Window, IDisposable
         DrawRestraintQuickSectionBody(canSend);
     }
 
+    private readonly ListDetail ownerRestraintList = new();
+    private bool creatingOwnerAdHoc;
+    private const string NewAdHocKey = "new:adhoc";
+
     private void DrawRestraintQuickSectionBody(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Restraints;
         DrawSectionTitleRow(FontAwesomeIcon.Handcuffs, "Restraints", quick.Count > 0, "restraintsQuick", () =>
         {
+            foreach (var cmd in quick)
+                ImageTile.Delete(cmd.ImageFile);
             quick.Clear();
+            ImageTile.DeleteUnusedShared([]);
             plugin.Configuration.Save();
         });
-
-        var catalog = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.Values.ToList();
 
         using (Section.Begin("restraintQuickCommands", "Commands"))
         {
@@ -2509,66 +3008,255 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.HelpMarker("Releases every restraint on your Sub.");
         }
 
-        var browserBox = Section.Begin("restraintQuickBrowser", "Available restraint mods");
-        ImGui.InputTextWithHint("##ownerRestraintSearch", "Search available restraint mods...", ref ownerRestraintSearch, 128);
-        IconGlyph.WrappedDisabled("Choose a mod to create a restraint command.");
-        using (ImRaii.Child("restraintModBrowser", new Vector2(0, Scaled(150)), true))
+        using (Section.Begin("restraintQuickConfigured", "Your restraints"))
         {
-            foreach (var entry in catalog.Where(x => string.IsNullOrWhiteSpace(ownerRestraintSearch) || x.ModName.Contains(ownerRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.ModName))
-            {
-                var alreadyChosenCount = quick.Count(x => x.RestraintCatalogId == entry.Id);
-                var chooseLabel = alreadyChosenCount > 0 ? "Choose again" : "Choose";
-                TextWithActions(entry.ModName, ButtonWidth(chooseLabel));
-                if (ImGui.SmallButton($"{chooseLabel}##restraintMod_{entry.Id}"))
-                {
-                    // The row is keyed by Label, so a repeated mod gets a distinct one.
-                    var label = alreadyChosenCount == 0 ? entry.ModName : $"{entry.ModName} ({alreadyChosenCount + 1})";
-                    quick.Add(new QuickCommand
-                    {
-                        Label = label,
-                        Command = "",
-                        Source = ImportSource.Manual,
-                        Target = entry.Id,
-                        RestraintCatalogId = entry.Id,
-                    });
-                    plugin.Configuration.Save();
-                    expandedRestraintRuleEditors.Add(label);
-                    restraintRuleEdits[label] = new RestraintRuleEditState();
-                }
-            }
+            ownerRestraintList.Draw("ownerRestraints", BuildOwnerRestraintItems(quick), () => DrawOwnerRestraintToolbar(quick),
+                item => DrawOwnerRestraintDetail(item, quick, canSend), () => OwnerRestraintDirty(quick), item => OnOwnerRestraintSelected(item, quick),
+                "Nothing yet. Use + New to add one of your Sub's restraint mods or a rules-only restraint.");
         }
-
-        browserBox.Dispose();
-
-        using (Section.Begin("restraintQuickConfigured", "Configured mod restraints"))
-        {
-            var configuredMods = quick.Where(x => x.RestraintCatalogId is not null).ToArray();
-            if (configuredMods.Length == 0)
-            {
-                IconGlyph.WrappedDisabled("No restraint mod has been chosen yet.");
-            }
-            else
-            {
-                using var _ = Section.List("restraintsQuickList", Scaled(260));
-                foreach (var cmd in configuredMods) DrawRestraintQuickRow(cmd, quick, canSend);
-            }
-        }
-
-        // The Sub's rules-only restraints arrive as self-contained `restraint wear` commands.
-        var sharedRulesOnly = quick.Where(x => x.RestraintCatalogId is null).ToArray();
-        if (sharedRulesOnly.Length > 0)
-        {
-            using (Section.Begin("restraintQuickShared", "Shared rules-only restraints"))
-            {
-                foreach (var cmd in sharedRulesOnly)
-                    DrawSavedQuickRow(cmd, quick, canSend);
-            }
-        }
-
-        using (Section.Begin("restraintQuickAdHoc", "Rules-only restraint"))
-            DrawAdHocRestraintSection(canSend);
 
         DrawDrawnRestraintsSection(plugin.Configuration);
+    }
+
+    private List<ListDetailItem> BuildOwnerRestraintItems(List<QuickCommand> quick)
+    {
+        var sent = plugin.OwnerStatusEstimates.ForActivePairing?.Restraints;
+        string? Marker(string label) => sent?.FirstOrDefault(r => string.Equals(r.Reference, label, StringComparison.OrdinalIgnoreCase)) is { } r
+            ? r.ExpiresAtUtc is { } until ? $"sent, {RestraintLock.Format(until - DateTime.UtcNow)} left" : "sent"
+            : null;
+
+        var items = new List<ListDetailItem>();
+        foreach (var cmd in quick.Where(x => x.RestraintCatalogId is not null))
+        {
+            var picture = cmd.ImageFile ?? cmd.SharedImageFile;
+            items.Add(new ListDetailItem($"mod:{cmd.Label}", cmd.Label, "mod", Marker(cmd.Label), picture, picture is null ? FontAwesomeIcon.Image : null));
+        }
+        // The Sub's rules-only restraints arrive as self-contained `restraint wear` commands.
+        foreach (var cmd in quick.Where(x => x.RestraintCatalogId is null))
+            items.Add(new ListDetailItem($"shared:{cmd.Label}", cmd.Label, "rules-only", Marker(cmd.Label), null, FontAwesomeIcon.Handcuffs));
+        if (creatingOwnerAdHoc)
+            items.Add(new ListDetailItem(NewAdHocKey, "One-off rules-only restraint", "rules-only", null, null, FontAwesomeIcon.Handcuffs));
+        return items;
+    }
+
+    private void DrawOwnerRestraintToolbar(List<QuickCommand> quick)
+    {
+        if (ImGui.Button("+ New##ownerRestraint"))
+        {
+            ownerRestraintSearch = "";
+            ImGui.OpenPopup("newOwnerRestraint");
+        }
+        if (!ImGui.BeginPopup("newOwnerRestraint"))
+            return;
+
+        if (ImGui.Selectable("One-off rules-only restraint (no gear)"))
+        {
+            creatingOwnerAdHoc = true;
+            ownerRestraintList.Select(NewAdHocKey);
+        }
+        ImGui.Separator();
+        ImGui.TextDisabled("Or one of your Sub's restraint mods:");
+        ImGui.SetNextItemWidth(Scaled(260));
+        ImGui.InputTextWithHint("##ownerRestraintSearch", "Search restraint mods...", ref ownerRestraintSearch, 128);
+        var catalog = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.Values;
+        using (ImRaii.Child("restraintModBrowser", new Vector2(Scaled(260), Scaled(200)), true))
+        {
+            var mods = catalog.Where(x => string.IsNullOrWhiteSpace(ownerRestraintSearch) || x.ModName.Contains(ownerRestraintSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+                .OrderBy(x => x.ModName).ToList();
+            if (mods.Count == 0)
+                IconGlyph.WrappedDisabled(catalog.Count == 0 ? "Your Sub hasn't shared any restraint mods yet." : "Nothing matches.");
+            foreach (var entry in mods)
+            {
+                if (!ImGui.Selectable($"{entry.ModName}##restraintMod_{entry.Id}"))
+                    continue;
+                // Rows are keyed by Label, so a repeated mod gets a distinct one.
+                var count = quick.Count(x => x.RestraintCatalogId == entry.Id);
+                var label = count == 0 ? entry.ModName : $"{entry.ModName} ({count + 1})";
+                quick.Add(new QuickCommand
+                {
+                    Label = label,
+                    Command = "",
+                    Source = ImportSource.Manual,
+                    Target = entry.Id,
+                    RestraintCatalogId = entry.Id,
+                });
+                plugin.Configuration.Save();
+                restraintRuleEdits[label] = new RestraintRuleEditState();
+                creatingOwnerAdHoc = false;
+                ownerRestraintList.Select($"mod:{label}");
+                ImGui.CloseCurrentPopup();
+            }
+        }
+        ImGui.EndPopup();
+    }
+
+    private static QuickCommand? FindOwnerRestraint(List<QuickCommand> quick, string? key) =>
+        key is null ? null
+        : key.StartsWith("mod:") ? quick.FirstOrDefault(x => x.RestraintCatalogId is not null && $"mod:{x.Label}" == key)
+        : key.StartsWith("shared:") ? quick.FirstOrDefault(x => x.RestraintCatalogId is null && $"shared:{x.Label}" == key)
+        : null;
+
+    private void OnOwnerRestraintSelected(ListDetailItem? item, List<QuickCommand> quick)
+    {
+        if (item?.Key != NewAdHocKey)
+            creatingOwnerAdHoc = false;
+        if (FindOwnerRestraint(quick, item?.Key) is { RestraintCatalogId: not null } cmd)
+            restraintRuleEdits[cmd.Label] = FromRules(cmd.RestraintRules);
+    }
+
+    private bool OwnerRestraintDirty(List<QuickCommand> quick)
+    {
+        var key = ownerRestraintList.Selected;
+        if (key == NewAdHocKey)
+            return newAdHocLabel.Trim().Length > 0 || HasAnyRule(newAdHocRuleEdit);
+        return FindOwnerRestraint(quick, key) is { RestraintCatalogId: not null } cmd
+            && restraintRuleEdits.TryGetValue(cmd.Label, out var edit)
+            && RestraintCommand.EncodeRuleTokens(ToRules(edit)) != RestraintCommand.EncodeRuleTokens(cmd.RestraintRules ?? []);
+    }
+
+    private void DrawOwnerRestraintDetail(ListDetailItem? item, List<QuickCommand> quick, bool canSend)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a restraint, or use + New to add one.");
+            return;
+        }
+        if (item.Key == NewAdHocKey)
+        {
+            DrawDetailHeader("One-off rules-only restraint", "Sent with its rules, not saved", null, FontAwesomeIcon.Handcuffs, null, () =>
+            {
+                if (ImGui.Button("Cancel##adHocRestraint"))
+                {
+                    creatingOwnerAdHoc = false;
+                    ownerRestraintList.Select(null);
+                }
+            });
+            DrawAdHocRestraintSection(canSend);
+            return;
+        }
+        if (FindOwnerRestraint(quick, item.Key) is not { } cmd)
+            return;
+        if (cmd.RestraintCatalogId is null)
+        {
+            DrawDetailHeader(cmd.Label, "Rules-only restraint from your Sub", null, FontAwesomeIcon.Handcuffs, null, () => { });
+            DrawSavedQuickRow(cmd, quick, canSend);
+            return;
+        }
+        DrawOwnerModRestraintDetail(cmd, quick, canSend);
+    }
+
+    private void DrawOwnerModRestraintDetail(QuickCommand cmd, List<QuickCommand> list, bool canSend)
+    {
+        ImGui.PushID($"restraintQuick_{cmd.Label}");
+        var hasRules = cmd.RestraintRules is { Count: > 0 };
+        var hasEquipment = cmd.RestraintItemId > 0 && GlamourerIpc.GetItemSlot((uint)cmd.RestraintItemId.Value) is not null;
+        var catalogAvailable = cmd.RestraintCatalogId is not { } availableCatalogId ||
+            plugin.Configuration.RestraintMapping.ImportedPeerCatalog.ContainsKey(availableCatalogId) ||
+            (plugin.Configuration.Role == PluginRole.Sub && plugin.Configuration.RestraintMapping.LocalCatalog.ContainsKey(availableCatalogId));
+        if (!restraintRuleEdits.TryGetValue(cmd.Label, out var edit))
+            restraintRuleEdits[cmd.Label] = edit = FromRules(cmd.RestraintRules);
+
+        var deleted = false;
+        DrawDetailHeader(cmd.Label, cmd.ImageFile is null && cmd.SharedImageFile is not null ? "Mod restraint · your Sub's picture" : "Mod restraint",
+            cmd.ImageFile ?? cmd.SharedImageFile, FontAwesomeIcon.Image,
+            () => ImageTile.DrawPicker("restraintQuickPicture", cmd.ImageFile, plugin.FileDialogManager, plugin.Snapshot, file =>
+            {
+                cmd.ImageFile = file;
+                plugin.Configuration.Save();
+            }),
+            () =>
+            {
+                DrawFavoriteToggle(cmd, cmd.Label);
+                ImGui.SameLine();
+                // "Delete", not "Remove": on the Owner's side "Remove" reads as "take this restraint off my Sub".
+                if (ImGui.Button("Delete"))
+                {
+                    ImageTile.Delete(cmd.ImageFile);
+                    list.Remove(cmd);
+                    ImageTile.DeleteUnusedShared(list.Select(c => c.SharedImageFile));
+                    restraintRuleEdits.Remove(cmd.Label);
+                    plugin.Configuration.Save();
+                    deleted = true;
+                }
+            });
+        if (deleted)
+        {
+            ImGui.PopID();
+            return;
+        }
+
+        Section.SubHeading("Send");
+        using (ImRaii.Disabled(!hasRules || !hasEquipment || !catalogAvailable))
+            DrawSendOnly(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"enable_{cmd.Label}", "Enable & lock");
+        OwnerLockOption.DrawInline($"restraintQuick_{cmd.Label}", cmd, plugin.Configuration);
+        if (!hasRules)
+            IconGlyph.WrappedColored(Theme.Warning, "No rules assigned yet - set them below and save before enabling it.");
+        if (!hasEquipment)
+            IconGlyph.WrappedColored(Theme.Warning, "Choose the Glamourer item this mod should equip and lock.");
+        if (!catalogAvailable)
+            IconGlyph.WrappedColored(Theme.Warning, "This restraint mod is no longer present in the latest shared catalog. Choose it again after the Sub shares it.");
+
+        Section.SubHeading("Name & item");
+        // Committed only when editing ends: the row's ImGui ID is keyed by the label.
+        if (DrawDeferredTextInput("Name##restraintQuickLabel", cmd, cmd.Label, 80, out var labelBuffer))
+        {
+            var trimmedLabel = labelBuffer.Trim();
+            var oldLabel = cmd.Label;
+            if (trimmedLabel.Length > 0 && !list.Any(x => x != cmd && string.Equals(x.Label, trimmedLabel, StringComparison.OrdinalIgnoreCase)))
+            {
+                cmd.Label = trimmedLabel;
+                if (restraintRuleEdits.Remove(oldLabel, out var editState))
+                    restraintRuleEdits[trimmedLabel] = editState;
+                plugin.Configuration.Save();
+                ownerRestraintList.Select($"mod:{trimmedLabel}");
+            }
+        }
+        IconGlyph.HelpMarker("Your own label for this restraint - rename it so you can tell entries for the same mod apart.");
+        TextWithActions($"Glamourer item: {(cmd.RestraintItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
+        if (ImGui.Button("Choose item...##restraintQuick"))
+        {
+            var catalogEntry = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.GetValueOrDefault(cmd.RestraintCatalogId ?? "");
+            plugin.ItemPickerWindow.OpenForItemIds(cmd.Label, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) =>
+            {
+                cmd.RestraintItemId = chosenId;
+                plugin.Configuration.Save();
+            });
+        }
+
+        Section.SubHeading("Restrictions");
+        DrawRestraintRuleCheckboxes(edit, $"restraintQuickRule_{cmd.Label}");
+
+        Section.SubHeading("Attached moodle");
+        var restraintMoodle = cmd.MoodleOverride;
+        OwnerMoodleOverride.Draw($"restraintQuick_{cmd.Label}", plugin.Configuration, ref restraintMoodle);
+        if (restraintMoodle != cmd.MoodleOverride)
+        {
+            cmd.MoodleOverride = restraintMoodle;
+            plugin.Configuration.Save();
+        }
+
+        var hasAnyRule = HasAnyRule(edit);
+        var boundAnimationsConfigured = BoundAnimationsConfigured(edit);
+        if (hasAnyRule && !boundAnimationsConfigured)
+            IconGlyph.WrappedColored(Theme.Warning, "Choose an animation for every checked Arms/Legs/Full Body Cuffed rule before saving.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        using (ImRaii.Disabled(!hasAnyRule || !boundAnimationsConfigured || !hasEquipment))
+        {
+            if (ImGui.Button("Save rules##restraintQuickRule"))
+            {
+                var rules = ToRules(edit);
+                cmd.RestraintRules = rules;
+                cmd.Command = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
+                    ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules)
+                    : RestraintCommand.BuildLockCommand(cmd.Label, rules);
+                plugin.Configuration.Save();
+                restraintRuleEdits[cmd.Label] = FromRules(rules);
+            }
+        }
+
+        ImGui.PopID();
     }
 
     /// Rules-only and sent with its full definition in the command, so it isn't added to the quick list.
@@ -2581,6 +3269,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Your own reference name for this restraint - never matched against anything on your Sub's side.");
         OwnerMoodleOverride.Draw("adHocRestraint", plugin.Configuration, ref adHocMoodleOverride);
         OwnerLockOption.Draw("adHocRestraint", ref adHocLockSeconds);
+        OwnerLockOption.DrawKey("adHocRestraint", ref adHocLockKey);
         OwnerLockOption.DrawStruggle("adHocRestraint", ref adHocStruggle, ref adHocStrugglePenalty, adHocLockSeconds is not null);
 
         Section.SubHeading("Restrictions");
@@ -2596,10 +3285,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (newAdHocLabel.Trim().Length > 0 && hasAnyRule && boundAnimationsConfigured)
         {
             var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit, rulesOnly: true));
+            ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted("Send this restraint:");
             ContinueRowOrWrap(ButtonWidth("Send"));
             var withStruggle = RestraintStruggle.Insert(command, new StruggleSetting(adHocStruggle, adHocLockSeconds is null ? 0 : adHocStrugglePenalty));
-            DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(withStruggle, adHocMoodleOverride), adHocLockSeconds), canSend, "adHocRestraint");
+            DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(withStruggle, adHocMoodleOverride), adHocLockSeconds, adHocLockKey), canSend, "adHocRestraint");
         }
         else
         {
@@ -2626,23 +3316,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var editable = ctqDraftActions[i].Kind != CustomTriggerActionKind.Restraint;
                 DrawActionSummary(ctqDraftActions[i], DraftActionButtonsWidth(editable));
                 using (ImRaii.Disabled(i == 0))
-                    if (ImGui.SmallButton("↑"))
+                    if (ImGui.Button("↑"))
                         MoveDraftAction(ctqDraftActions, i, i - 1, ref editingOwnerActionIndex);
                 ContinueRowOrWrap(ButtonWidth("↓"));
                 using (ImRaii.Disabled(i == ctqDraftActions.Count - 1))
-                    if (ImGui.SmallButton("↓"))
+                    if (ImGui.Button("↓"))
                         MoveDraftAction(ctqDraftActions, i, i + 1, ref editingOwnerActionIndex);
                 if (editable)
                 {
                     ContinueRowOrWrap(ButtonWidth("Edit"));
-                    if (ImGui.SmallButton("Edit"))
+                    if (ImGui.Button("Edit"))
                     {
                         LoadOwnerActionDraft(ctqDraftActions[i]);
                         editingOwnerActionIndex = i;
                     }
                 }
                 ContinueRowOrWrap(ButtonWidth("Remove"));
-                if (ImGui.SmallButton("Remove"))
+                if (ImGui.Button("Remove"))
                 {
                     RemoveDraftAction(ctqDraftActions, i, ref editingOwnerActionIndex);
                     ImGui.PopID();
@@ -2671,7 +3361,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 DrawGlowPicker("ctqTitle", ref ctqTitleHasGlow, ref ctqTitleGlow);
                 using (ImRaii.Disabled(ctqTitleText.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqTitleBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqTitleBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Title, TitleText = ctqTitleText.Trim(), TitleIsPrefix = ctqTitleIsPrefix, TitleColor = ctqTitleColor, TitleGlow = ctqTitleHasGlow ? ctqTitleGlow : null });
                         ctqTitleText = "";
@@ -2689,7 +3379,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.HelpMarker("Type the exact wardrobe design name your Sub told you.");
                 using (ImRaii.Disabled(ctqOutfitName.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqOutfitBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqOutfitBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Outfit, OutfitDesignName = ctqOutfitName.Trim() });
                         ctqOutfitName = "";
@@ -2703,7 +3393,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.HelpMarker("Type the exact animation name your Sub told you.");
                 using (ImRaii.Disabled(ctqGestureName.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqGestureBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqGestureBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Gesture, GestureAnimationName = ctqGestureName.Trim() });
                         ctqGestureName = "";
@@ -2726,7 +3416,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     if (ctqCustomMoodleIndex >= 0)
                     {
                         IconGlyph.HelpMarker("Your Sub has to allow moodles you write.");
-                        if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqCustomMoodleBtn"))
+                        if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqCustomMoodleBtn"))
                         {
                             var custom = customs[ctqCustomMoodleIndex].CustomMoodle!.Clone();
                             CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Moodle, MoodleStatusName = custom.Title, CustomMoodle = custom });
@@ -2740,7 +3430,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.HelpMarker("Type the exact Moodles status name your Sub told you.");
                 using (ImRaii.Disabled(ctqMoodleName.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqMoodleBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqMoodleBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Moodle, MoodleStatusName = ctqMoodleName.Trim() });
                         ctqMoodleName = "";
@@ -2755,7 +3445,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.HelpMarker("The restraint name your Sub gave you. Always applies; release it from Restraints.");
                 using (ImRaii.Disabled(ctqRestraintName.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqRestraintBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqRestraintBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Restraint, RestraintDeviceName = ctqRestraintName.Trim() });
                         ctqRestraintName = "";
@@ -2769,7 +3459,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.HelpMarker("Sent exactly as typed, unmodified - start it with a slash command (e.g. /sit) or a channel prefix (e.g. /p) to use those instead of the default chat channel. Needs your Sub's Custom chat messages permission and its own acknowledgement (see the README's Automation risk section).");
                 using (ImRaii.Disabled(ctqChatText.Trim().Length == 0))
                 {
-                    if (ImGui.SmallButton($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqChatBtn"))
+                    if (ImGui.Button($"{(editingOwnerActionIndex is null ? "Add" : "Save")}##ctqChatBtn"))
                     {
                         CommitOwnerAction(new CustomTriggerAction { Kind = CustomTriggerActionKind.Chat, ChatText = ctqChatText });
                         ctqChatText = "";
@@ -2784,6 +3474,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             Section.SubHeading("Restraint lock");
             OwnerLockOption.Draw("ctqCustomTrigger", ref ctqLockSeconds);
+            OwnerLockOption.DrawKey("ctqCustomTrigger", ref ctqLockKey);
             // Only a restraint whose rules travel in the bundle has somewhere to carry the setting.
             if (ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint && a.RestraintRules is not null))
                 OwnerLockOption.DrawStruggle("ctqCustomTrigger", ref ctqStruggle, ref ctqStrugglePenalty, ctqLockSeconds is not null);
@@ -2793,15 +3484,17 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var bundleLockSeconds = bundleHasRestraint ? ctqLockSeconds : null;
         var bundleStruggle = bundleHasRestraint ? ctqStruggle : StruggleLevel.None;
         var bundlePenalty = bundleLockSeconds is null ? 0 : ctqStrugglePenalty;
+        var bundleKey = bundleHasRestraint && ctqLockKey.Trim().Length > 0 ? ctqLockKey : null;
 
         ImGui.Spacing();
         ImGui.Separator();
         if (ctqLabel.Trim().Length > 0 && ctqDraftActions.Count > 0)
         {
             var command = CustomTriggerCommand.BuildCastCommand(ctqLabel.Trim(), ctqDraftActions);
+            ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted(editingOwnerBundle is null ? "Send or save this bundle:" : "Update this saved bundle:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(OwnerLockOption.Apply(RestraintStruggle.Insert(command, new StruggleSetting(bundleStruggle, bundlePenalty)), bundleLockSeconds), canSend, "ctqCustomTrigger");
+            DrawSendCopyButtons(OwnerLockOption.Apply(RestraintStruggle.Insert(command, new StruggleSetting(bundleStruggle, bundlePenalty)), bundleLockSeconds, bundleKey), canSend, "ctqCustomTrigger");
             ContinueRowOrWrap(ButtonWidth("Save bundle"));
             var aliases = plugin.Configuration.QuickCommands.Aliases;
             var stale = editingOwnerBundle is not null && !aliases.Contains(editingOwnerBundle);
@@ -2811,15 +3504,16 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var safe = ChatComposer.AllFit(plugin.ChatComposer.ComposeAll(command));
             using (ImRaii.Disabled(stale || duplicate || !safe))
             {
-                if (ImGui.SmallButton($"{(editingOwnerBundle is null ? "Save bundle" : "Save changes")}##ctqSave"))
+                if (ImGui.Button($"{(editingOwnerBundle is null ? "Save bundle" : "Save changes")}##ctqSave"))
                 {
                     if (editingOwnerBundle is null)
-                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command, LockSeconds = bundleLockSeconds, Struggle = bundleStruggle, StrugglePenaltyMinutes = bundlePenalty });
+                        aliases.Add(new QuickCommand { Label = ctqLabel.Trim(), Command = command, LockSeconds = bundleLockSeconds, LockKey = bundleKey, Struggle = bundleStruggle, StrugglePenaltyMinutes = bundlePenalty });
                     else
                     {
                         editingOwnerBundle.Label = ctqLabel.Trim();
                         editingOwnerBundle.Command = command;
                         editingOwnerBundle.LockSeconds = bundleLockSeconds;
+                        editingOwnerBundle.LockKey = bundleKey;
                         editingOwnerBundle.Struggle = bundleStruggle;
                         editingOwnerBundle.StrugglePenaltyMinutes = bundlePenalty;
                     }
@@ -2831,7 +3525,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             else if (duplicate) IconGlyph.WrappedColored(Theme.Warning, "Another saved bundle already uses this label or command.");
             else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This bundle is too long for a safe chat payload.");
             ContinueRowOrWrap(ButtonWidth("Cancel"));
-            if (ImGui.SmallButton($"{(editingOwnerBundle is null ? "Clear bundle" : "Cancel")}##ctq"))
+            if (ImGui.Button($"{(editingOwnerBundle is null ? "Clear bundle" : "Cancel")}##ctq"))
                 ClearOwnerBundleDraft();
         }
         else
@@ -2845,6 +3539,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ctqDraftActions.Clear();
         ctqLabel = "";
         ctqLockSeconds = null;
+        ctqLockKey = "";
         ctqStruggle = StruggleLevel.None;
         ctqStrugglePenalty = 0;
         editingOwnerActionIndex = null;
@@ -2861,6 +3556,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         editingOwnerBundle = command;
         ctqLabel = label;
         ctqLockSeconds = command.LockSeconds;
+        ctqLockKey = command.LockKey ?? "";
         ctqStruggle = command.Struggle;
         ctqStrugglePenalty = command.StrugglePenaltyMinutes;
         ctqDraftActions.Clear();
@@ -2886,127 +3582,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (!ImGui.IsItemActive())
             textInputDrafts.Remove(draftKey);
         return false;
-    }
-
-    private void DrawRestraintQuickRow(QuickCommand cmd, List<QuickCommand> list, bool canSend)
-    {
-        ImGui.PushID($"restraintQuick_{cmd.Label}");
-        var hasRules = cmd.RestraintRules is { Count: > 0 };
-        var hasEquipment = cmd.RestraintItemId > 0 && GlamourerIpc.GetItemSlot((uint)cmd.RestraintItemId.Value) is not null;
-        var catalogAvailable = cmd.RestraintCatalogId is not { } availableCatalogId ||
-            plugin.Configuration.RestraintMapping.ImportedPeerCatalog.ContainsKey(availableCatalogId) ||
-            (plugin.Configuration.Role == PluginRole.Sub && plugin.Configuration.RestraintMapping.LocalCatalog.ContainsKey(availableCatalogId));
-
-        ImGui.TextUnformatted(cmd.Label);
-        ContinueRowOrWrap(ButtonWidth("Favorited"));
-        DrawFavoriteToggle(cmd, cmd.Label);
-
-        ImGui.Indent();
-        using (ImRaii.Disabled(!hasRules || !hasEquipment || !catalogAvailable))
-            DrawSendOnly(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"enable_{cmd.Label}", "Enable & lock");
-        OwnerLockOption.DrawInline($"restraintQuick_{cmd.Label}", cmd, plugin.Configuration);
-        var configureLabel = hasRules && hasEquipment ? "Edit setup" : "Configure setup";
-        ContinueRowOrWrap(ButtonWidth(configureLabel));
-        var expanded = expandedRestraintRuleEditors.Contains(cmd.Label);
-        if (ImGui.SmallButton(configureLabel))
-        {
-            if (expanded)
-            {
-                expandedRestraintRuleEditors.Remove(cmd.Label);
-            }
-            else
-            {
-                expandedRestraintRuleEditors.Add(cmd.Label);
-                restraintRuleEdits[cmd.Label] = FromRules(cmd.RestraintRules);
-            }
-            expanded = !expanded;
-        }
-        // "Delete", not "Remove": on the Owner's side "Remove" reads as "take this restraint off my Sub".
-        ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.SmallButton("Delete"))
-        {
-            list.Remove(cmd);
-            expandedRestraintRuleEditors.Remove(cmd.Label);
-            restraintRuleEdits.Remove(cmd.Label);
-            plugin.Configuration.Save();
-            ImGui.Unindent();
-            ImGui.PopID();
-            return;
-        }
-        ImGui.Unindent();
-
-        if (!hasRules)
-        {
-            IconGlyph.WrappedColored(Theme.Warning, "No rules assigned yet—configure this restraint before enabling it.");
-        }
-        if (!hasEquipment)
-            IconGlyph.WrappedColored(Theme.Warning, "Choose the Glamourer slot and item this mod should equip and lock.");
-        if (!catalogAvailable)
-            IconGlyph.WrappedColored(Theme.Warning, "This restraint mod is no longer present in the latest shared catalog. Choose it again after the Sub shares it.");
-
-        if (expanded && restraintRuleEdits.TryGetValue(cmd.Label, out var edit))
-        {
-            using var editorBox = Section.Begin("restraintQuickEditor", "Name & item");
-            // Committed only when editing ends: the row's ImGui ID is keyed by the label.
-            if (DrawDeferredTextInput("Name##restraintQuickLabel", cmd, cmd.Label, 80, out var labelBuffer))
-            {
-                var trimmedLabel = labelBuffer.Trim();
-                var oldLabel = cmd.Label;
-                if (trimmedLabel.Length > 0 && !list.Any(x => x != cmd && string.Equals(x.Label, trimmedLabel, StringComparison.OrdinalIgnoreCase)))
-                {
-                    cmd.Label = trimmedLabel;
-                    if (expandedRestraintRuleEditors.Remove(oldLabel))
-                        expandedRestraintRuleEditors.Add(trimmedLabel);
-                    if (restraintRuleEdits.Remove(oldLabel, out var editState))
-                        restraintRuleEdits[trimmedLabel] = editState;
-                    plugin.Configuration.Save();
-                }
-            }
-            IconGlyph.HelpMarker("Your own label for this configured restraint - rename it so you can tell entries for the same mod apart.");
-            TextWithActions($"Glamourer item: {(cmd.RestraintItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
-            if (ImGui.SmallButton("Choose item...##restraintQuick"))
-            {
-                var catalogEntry = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.GetValueOrDefault(cmd.RestraintCatalogId ?? "");
-                plugin.ItemPickerWindow.OpenForItemIds(cmd.Label, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) =>
-                {
-                    cmd.RestraintItemId = chosenId;
-                    plugin.Configuration.Save();
-                });
-            }
-            Section.SubHeading("Restrictions");
-            DrawRestraintRuleCheckboxes(edit, $"restraintQuickRule_{cmd.Label}");
-
-            Section.SubHeading("Attached moodle");
-            var restraintMoodle = cmd.MoodleOverride;
-            OwnerMoodleOverride.Draw($"restraintQuick_{cmd.Label}", plugin.Configuration, ref restraintMoodle);
-            if (restraintMoodle != cmd.MoodleOverride)
-            {
-                cmd.MoodleOverride = restraintMoodle;
-                plugin.Configuration.Save();
-            }
-
-            var hasAnyRule = HasAnyRule(edit);
-            var boundAnimationsConfigured = BoundAnimationsConfigured(edit);
-            if (hasAnyRule && !boundAnimationsConfigured)
-                IconGlyph.WrappedColored(Theme.Warning, "Choose an animation for every checked Arms/Legs/Full Body Cuffed rule before saving.");
-
-            using (ImRaii.Disabled(!hasAnyRule || !boundAnimationsConfigured || !hasEquipment))
-            {
-                if (ImGui.SmallButton("Save rules##restraintQuickRule"))
-                {
-                    var rules = ToRules(edit);
-                    cmd.RestraintRules = rules;
-                    cmd.Command = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
-                        ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules)
-                        : RestraintCommand.BuildLockCommand(cmd.Label, rules);
-                    plugin.Configuration.Save();
-                    expandedRestraintRuleEditors.Remove(cmd.Label);
-                    restraintRuleEdits.Remove(cmd.Label);
-                }
-            }
-        }
-
-        ImGui.PopID();
     }
 
     private static RestraintRuleEditState FromRules(List<RestraintRuleAssignment>? rules)
@@ -3088,16 +3663,163 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return rules;
     }
 
+    private readonly ListDetail titleList = new();
+    private const string NewTitleKey = "new:title";
+
+    private void DrawTitleModule()
+    {
+        var config = plugin.Configuration;
+        IconGlyph.Text(FontAwesomeIcon.Heading, "Title Aliases");
+        ImGui.Separator();
+        DrawFixedWordRow("titleFixed", new FixedWordInfo("Clear title", ControlWords.ClearTitle,
+            "Removes your current title. It can't be renamed, so your Owner always knows it."));
+
+        var titles = config.Aliases.Titles;
+        var items = titles.Select((t, i) => new ListDetailItem($"title:{i}", t.Alias, t.IsPrefix ? "prefix" : null, Tooltip: t.Text)).ToList();
+        if (titleList.Selected == NewTitleKey)
+            items.Add(new ListDetailItem(NewTitleKey, "New title alias"));
+
+        using (Section.Begin("titleAliases", "Your title aliases"))
+        {
+            titleList.Draw("titles", items, () =>
+                {
+                    if (!ImGui.Button("+ New##titleAlias"))
+                        return;
+                    newTitleAlias = "";
+                    newTitleText = "";
+                    titleList.Select(NewTitleKey);
+                },
+                item => DrawTitleAliasDetail(config, titles, item),
+                () => titleList.Selected == NewTitleKey && (newTitleAlias.Trim().Length > 0 || newTitleText.Trim().Length > 0),
+                null, "No title aliases yet. Use + New to add one.");
+        }
+    }
+
+    /// How a title reads next to a name, in its own colour.
+    private static void DrawTitlePreview(string text, bool isPrefix, Vector3 color)
+    {
+        ImGui.TextDisabled("Preview:");
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(color, 1f), isPrefix ? $"«{text}»" : "Your Name");
+        ImGui.SameLine();
+        ImGui.TextColored(isPrefix ? Theme.TextMuted : new Vector4(color, 1f), isPrefix ? "Your Name" : $"«{text}»");
+    }
+
+    private void DrawTitleAliasDetail(PluginConfig config, List<TitleAliasDefinition> titles, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a title alias, or use + New to add one.");
+            return;
+        }
+        if (item.Key == NewTitleKey)
+        {
+            DrawTitleAddForm(config, titles);
+            return;
+        }
+        if (!int.TryParse(item.Key["title:".Length..], out var index) || index >= titles.Count)
+            return;
+
+        var t = titles[index];
+        ImGui.PushID($"titleAlias_{index}");
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextColored(Theme.AccentHover, t.Alias);
+        ImGui.SameLine();
+        if (ImGui.Button("Delete"))
+        {
+            titles.RemoveAt(index);
+            config.Save();
+            titleList.Select(null);
+            ImGui.PopID();
+            return;
+        }
+        DrawTitlePreview(t.Text, t.IsPrefix, t.Color);
+
+        if (DrawDeferredTextInput("Alias##titleEdit", (t, "alias"), t.Alias, 32, out var alias) && alias.Trim().Length > 0 && !IsReserved(alias))
+        {
+            t.Alias = alias.Trim();
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this title.");
+        if (DrawDeferredTextInput("Title text##titleEdit", (t, "text"), t.Text, 64, out var text) && text.Trim().Length > 0)
+        {
+            t.Text = text.Trim();
+            config.Save();
+        }
+        var isPrefix = t.IsPrefix;
+        if (ImGui.Checkbox("Prefix (not suffix)##titleEdit", ref isPrefix))
+        {
+            t.IsPrefix = isPrefix;
+            config.Save();
+        }
+        var color = t.Color;
+        if (ImGui.ColorEdit3("Color##titleEdit", ref color))
+        {
+            t.Color = color;
+            config.Save();
+        }
+        var hasGlow = t.Glow is not null;
+        var glow = t.Glow ?? new Vector3(1, 1, 1);
+        var glowBefore = (hasGlow, glow);
+        DrawGlowPicker("titleEdit", ref hasGlow, ref glow);
+        if ((hasGlow, glow) != glowBefore)
+        {
+            t.Glow = hasGlow ? glow : null;
+            config.Save();
+        }
+        ImGui.PopID();
+    }
+
+    private void DrawTitleAddForm(PluginConfig config, List<TitleAliasDefinition> titles)
+    {
+        using var box = Section.Begin("titleAdd", "Add a title alias");
+        ImGui.InputText("Alias##newTitle", ref newTitleAlias, 32);
+        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this title, e.g. \"command goodgirl\".");
+        ImGui.InputText("Title text##newTitle", ref newTitleText, 64);
+        IconGlyph.HelpMarker("The exact title text applied via Honorific.");
+        ImGui.Checkbox("Prefix (not suffix)##newTitle", ref newTitleIsPrefix);
+        IconGlyph.HelpMarker("Show the title before your name instead of after it.");
+        ImGui.ColorEdit3("Color##newTitle", ref newTitleColor);
+        IconGlyph.HelpMarker("Honorific title color.");
+        DrawGlowPicker("newTitle", ref newTitleHasGlow, ref newTitleGlow);
+        if (newTitleText.Trim().Length > 0)
+            DrawTitlePreview(newTitleText.Trim(), newTitleIsPrefix, newTitleColor);
+        DrawReservedWordWarning(newTitleAlias);
+        if (ImGui.Button("Add title alias") && newTitleAlias.Trim().Length > 0 && newTitleText.Trim().Length > 0 && !IsReserved(newTitleAlias))
+        {
+            titles.Add(new TitleAliasDefinition { Alias = newTitleAlias.Trim(), Text = newTitleText.Trim(), IsPrefix = newTitleIsPrefix, Color = newTitleColor, Glow = newTitleHasGlow ? newTitleGlow : null });
+            config.Save();
+            newTitleAlias = "";
+            newTitleText = "";
+            titleList.Select($"title:{titles.Count - 1}");
+        }
+    }
+
     private void DrawTitleQuickSection(bool canSend)
     {
         IconGlyph.Text(FontAwesomeIcon.Heading, "Title");
         ImGui.Separator();
         var quick = plugin.Configuration.QuickCommands.Titles;
+        DrawCommandRow("titleQuickFixed", canSend, new RowCommand("Clear title", "title clear", FixedActionIds.ClearTitle, "Removes your Sub's title."));
 
-        using (Section.Begin("titleQuickFixed", "Commands"))
-            DrawFixedQuickRow("Clear title", "title clear", canSend, FixedActionIds.ClearTitle);
+        using (Section.Begin("titleQuickSaved", "Saved titles"))
+        {
+            DrawSavedQuickListDetail("titleQuick", quick, canSend, cmd => new ListDetailItem("", cmd.Label, cmd.TitleIsPrefix ? "prefix" : null),
+                "No saved titles yet. Use + New to make one.", "New title", () => DrawTitleQuickAddForm(quick), () => newTitleQuickText.Trim().Length > 0,
+                cmd =>
+                {
+                    if (cmd.Command.StartsWith("title style ", StringComparison.OrdinalIgnoreCase)
+                        && TitleCommand.TryParseStyleCommand(cmd.Command["title style ".Length..], out var text, out var prefix, out var color, out _))
+                        DrawTitlePreview(text, prefix, color);
+                });
+        }
+    }
 
-        var addBox = Section.Begin("titleQuickAdd", "Add a title command");
+    private int? newTitleQuickLock;
+
+    private void DrawTitleQuickAddForm(List<QuickCommand> quick)
+    {
+        using var addBox = Section.Begin("titleQuickAdd", "Add a title command");
         ItemWidth(220);
         ImGui.InputText("##newQuickTitle", ref newTitleQuickText, 64);
         IconGlyph.HelpMarker("The exact title text applied via Honorific.");
@@ -3106,7 +3828,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.ColorEdit3("Color##newQuickTitle", ref newTitleQuickColor);
         IconGlyph.HelpMarker("Honorific title color - matches the Sub's own Title alias color picker.");
         DrawGlowPicker("newQuickTitle", ref newTitleQuickHasGlow, ref newTitleQuickGlow);
-        if (ImGui.SmallButton("Add Command##quickTitle") && newTitleQuickText.Trim().Length > 0)
+        OwnerLockOption.Draw("newQuickTitle", ref newTitleQuickLock, gesture: false, ownerLock: true);
+        if (newTitleQuickText.Trim().Length > 0)
+            DrawTitlePreview(newTitleQuickText.Trim(), newTitleQuickIsPrefix, newTitleQuickColor);
+        if (ImGui.Button("Save title##quickTitle") && newTitleQuickText.Trim().Length > 0)
         {
             var text = newTitleQuickText.Trim();
             var glow = newTitleQuickHasGlow ? newTitleQuickGlow : (Vector3?)null;
@@ -3117,23 +3842,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 TitleIsPrefix = newTitleQuickIsPrefix,
                 TitleColor = newTitleQuickColor,
                 TitleGlow = glow,
+                LockSeconds = newTitleQuickLock,
             });
             plugin.Configuration.Save();
             newTitleQuickText = "";
+            newTitleQuickLock = null;
             newTitleQuickIsPrefix = false;
             newTitleQuickColor = new Vector3(1, 1, 1);
             newTitleQuickHasGlow = false;
             newTitleQuickGlow = new Vector3(1, 1, 1);
+            QuickList("titleQuick").Select($"titleQuick:{quick.Count - 1}");
         }
-        IconGlyph.HelpMarker("Saves a button that applies and locks this title. Only Clear title or their panic removes it.");
-        addBox.Dispose();
-
-        if (quick.Count == 0)
-            return;
-
-        using var savedBox = Section.Begin("titleQuickSaved", "Saved titles");
-        foreach (var cmd in quick.ToArray())
-            DrawSavedQuickRow(cmd, quick, canSend);
+        IconGlyph.HelpMarker("Saves a title that applies and locks on your Sub, until you clear it or for the time you set. Your Sub's own titles can't replace it meanwhile.");
     }
 
     private void DrawOutfitQuickSection(bool canSend)
@@ -3150,10 +3870,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             plugin.Configuration.Save();
         });
 
-        using (Section.Begin("outfitQuickFixed", "Commands"))
-        {
-            DrawFixedQuickRow("Unlock outfit", "outfit unlock", canSend, FixedActionIds.UnlockOutfit);
-        }
+        DrawCommandRow("outfitQuickFixed", canSend, new RowCommand("Unlock outfit", "outfit unlock", FixedActionIds.UnlockOutfit, "Lets your Sub change outfits again."));
 
         if (quick.Count == 0)
         {
@@ -3161,21 +3878,22 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        using var _ = Section.List("outfitQuickList");
-        foreach (var cmd in quick.ToArray())
-            DrawSavedQuickRow(cmd, quick, canSend);
+        using var _ = Section.Begin("outfitQuickList", "Your Sub's outfits");
+        DrawSavedQuickListDetail("outfitQuick", quick, canSend,
+            cmd => new ListDetailItem("", cmd.Label, cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase) ? "not locked" : null),
+            "No outfits imported yet.");
     }
 
-    /// Grouped by mod/group with a search box; a flat list was unusable with 1000+ gestures.
     private void DrawGestureQuickSection(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Gestures;
         // No clear-all here: wiping the imported list was too easy to hit while trying to stop an animation.
-        DrawSectionTitleRow(FontAwesomeIcon.TheaterMasks, "Animation", false, "gestureQuick", () => { });
+        IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation");
+        ImGui.Separator();
 
         // Drawn even with nothing imported - the Sub may be held by an alias or a Custom Trigger.
-        DrawFixedQuickRow("Stop animation", $"gesture {ChatComposer.StopGestureWord}", canSend, FixedActionIds.StopAnimation);
-        IconGlyph.HelpMarker("An animation you send holds your Sub in place. This stops it and gives them their movement back.");
+        DrawCommandRow("gestureQuickFixed", canSend, new RowCommand("Stop animation", $"gesture {ChatComposer.StopGestureWord}", FixedActionIds.StopAnimation,
+            "An animation you send holds your Sub in place. This stops it and gives them their movement back."));
 
         if (quick.Count == 0)
         {
@@ -3183,75 +3901,68 @@ public sealed partial class ModuleWindow : Window, IDisposable
             return;
         }
 
-        var searchBox = Section.Begin("gestureQuickSearchBox", "Search");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##gestureQuickSearch", "Search mod, group, or animation...", ref gestureQuickSearch, 128);
-
-        var filter = gestureQuickSearch.Trim();
-        var visible = quick.Where(c => filter.Length == 0
-            || c.Label.Contains(filter, StringComparison.OrdinalIgnoreCase)
-            || (c.GestureModName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false)
-            || (c.GestureGroupName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
-            .ToList();
-
-        IconGlyph.WrappedDisabled($"{visible.Count} shown / {quick.Count} imported");
-        searchBox.Dispose();
-
-        using var _ = Section.List("gestureQuickList");
-        if (visible.Count == 0)
+        // Manifest order within a mod, not alphabetical - "10" would sort before "2". Sorting the saved list itself
+        // keeps the list keys (positions) matching what's shown.
+        var ordered = quick.OrderBy(c => c.GestureModName ?? "￿", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.GestureGroupOrder).ThenBy(c => c.GestureOptionOrder).ToList();
+        if (!ordered.SequenceEqual(quick))
         {
-            IconGlyph.WrappedDisabled("No animations match this search.");
-            return;
+            quick.Clear();
+            quick.AddRange(ordered);
         }
 
-        foreach (var modGroup in visible.GroupBy(c => c.GestureModName ?? "Ungrouped").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
-        {
-            var modFlags = filter.Length > 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-            if (!ImGui.CollapsingHeader($"{modGroup.Key} ({modGroup.Count()})##gestureQuickMod_{modGroup.Key}", modFlags))
-                continue;
-
-            ImGui.Indent();
-            // Manifest order, not alphabetical - "10" would sort before "2".
-            foreach (var subGroup in modGroup.GroupBy(c => c.GestureGroupName ?? "").OrderBy(g => g.Min(c => c.GestureGroupOrder)))
+        using var _ = Section.Begin("gestureQuickList", "Your Sub's animations");
+        static string ModOf(QuickCommand c) => c.GestureModName ?? "Other";
+        var items = quick.GroupBy(ModOf).Select(mod => new ListDetailItem($"mod:{mod.Key}", mod.Key, $"{mod.Count()}",
+            Tooltip: $"{mod.Count()} animation{(mod.Count() == 1 ? "" : "s")}")).ToList();
+        var listDetail = QuickList("gestureQuick");
+        listDetail.Draw("gestureQuick", items, null, item =>
             {
-                var hasGroupLabel = subGroup.Key.Length > 0;
-                var groupOpen = true;
-                if (hasGroupLabel)
+                if (item is null)
                 {
-                    var groupFlags = subGroup.Count() <= 4 || filter.Length > 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-                    groupOpen = ImGui.TreeNodeEx($"{subGroup.Key}##gestureQuickGroup_{modGroup.Key}_{subGroup.Key}", groupFlags);
+                    IconGlyph.WrappedDisabled("Choose an animation mod.");
+                    return;
                 }
+                var anims = quick.Where(c => $"mod:{ModOf(c)}" == item.Key).ToList();
+                if (anims.Count == 0)
+                    return;
+                var selected = ownerGestureAnim is { } current && anims.Contains(current) ? current : anims[0];
+                ownerGestureAnim = selected;
+                ImGui.TextColored(Theme.AccentHover, item.Label);
+                ImGui.TextDisabled($"{anims.Count} animation{(anims.Count == 1 ? "" : "s")}");
 
-                if (groupOpen)
-                {
-                    // One heading per animation with a row per pose variant. Renamed entries stay standalone rows.
-                    var variantsByAnimation = subGroup.OrderBy(c => c.GestureOptionOrder)
-                        .Select(c => (Cmd: c, Entry: AutoLabeledGesture(plugin.Configuration, c)))
-                        .GroupBy(v => v.Entry?.AnimationName ?? $"\u0001{v.Cmd.Label}\u0001{v.Cmd.Command}");
-                    foreach (var variants in variantsByAnimation)
+                Section.SubHeading("Animations");
+                // Switching would drop an unsaved edit, so the others wait until it's saved or cancelled.
+                var dirty = QuickEditDirty(selected);
+                DrawAnimationPicker(anims, quick.IndexOf(selected).ToString(), _ => [], c => c.GestureGroupName,
+                    c => AutoLabeledGesture(plugin.Configuration, c) is { } entry ? $"{entry.AnimationName} - {entry.Trigger!.Label}" : c.Label,
+                    c => quick.IndexOf(c).ToString(),
+                    id =>
                     {
-                        var rows = variants.ToList();
-                        if (rows.Count == 1)
-                        {
-                            var (cmd, entry) = rows[0];
-                            DrawSavedQuickRow(cmd, quick, canSend, entry is null ? null : _ => $"{entry.AnimationName} — {entry.Trigger!.Label}");
-                            continue;
-                        }
+                        CancelQuickCommandEdit();
+                        ownerGestureAnim = quick[int.Parse(id)];
+                    },
+                    c => dirty && !ReferenceEquals(c, selected));
 
-                        ImGui.TextUnformatted(variants.Key);
-                        ImGui.Indent();
-                        foreach (var (cmd, entry) in rows)
-                            DrawSavedQuickRow(cmd, quick, canSend, _ => entry!.Trigger!.Label);
-                        ImGui.Unindent();
-                    }
-                }
-
-                if (hasGroupLabel && groupOpen)
-                    ImGui.TreePop();
-            }
-            ImGui.Unindent();
-        }
+                ImGui.Spacing();
+                DrawSavedQuickDetail(selected, quick, canSend, listDetail, cmd =>
+                {
+                    if (cmd.GestureGroupName is { Length: > 0 } group)
+                        ImGui.TextDisabled(group);
+                    if (AutoLabeledGesture(plugin.Configuration, cmd) is { Trigger: { } trigger })
+                        ImGui.TextUnformatted($"Plays: {trigger.Label}");
+                });
+            },
+            () => ownerGestureAnim is { } c && QuickEditDirty(c),
+            _ =>
+            {
+                CancelQuickCommandEdit();
+                ownerGestureAnim = null;
+            },
+            "No animations imported yet.");
     }
+
+    private QuickCommand? ownerGestureAnim;
 
     /// Null for manual or renamed entries. Also used by SubControlWindow.
     internal static GestureExportEntry? AutoLabeledGesture(PluginConfig config, QuickCommand cmd) =>
@@ -3261,50 +3972,51 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ? entry
             : null;
 
-    private void DrawFollowQuickSection(bool canSend)
-    {
-        IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
-        ImGui.Separator();
-        DrawFollowQuickSectionBody(canSend);
-    }
-
     private void DrawFollowQuickSectionBody(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Follow;
-        OwnerStatusView.Draw(plugin);
 
         // Custom follow words saved by an older version are listed so they can be removed.
         using (Section.Begin("followQuickCommands", "Commands"))
         {
-            DrawFixedQuickRow("Leash", ControlWords.Leash, canSend, FixedActionIds.LeashDefault);
+            var quickConfig = plugin.Configuration.QuickCommands;
+            DrawCommandButtons(canSend,
+                new RowCommand("Leash", ControlWords.Leash, FixedActionIds.LeashDefault, "Sent with the options below."),
+                new RowCommand("Unleash", ControlWords.Unleash, FixedActionIds.UnleashDefault));
+
+            Section.SubHeading("Leash options");
             // Used wherever the Leash command is sent.
-            var leashMoodle = plugin.Configuration.QuickCommands.LeashMoodleOverride;
-            ImGui.Indent();
-            var leashLength = plugin.Configuration.QuickCommands.LeashLengthYalms;
-            ItemWidth(200);
-            if (ImGui.SliderInt("Length (yalms)##ownerLeashLength", ref leashLength, LengthOption.MinYalms, LengthOption.MaxYalms))
-            {
-                plugin.Configuration.QuickCommands.LeashLengthYalms = Math.Clamp(leashLength, LengthOption.MinYalms, LengthOption.MaxYalms);
-                plugin.Configuration.Save();
-            }
-            IconGlyph.HelpMarker("How far your Sub can move from you. They may have set a shorter limit.");
-            OwnerMoodleOverride.Draw("leash", plugin.Configuration, ref leashMoodle);
-            ImGui.Unindent();
-            if (leashMoodle != plugin.Configuration.QuickCommands.LeashMoodleOverride)
-            {
-                plugin.Configuration.QuickCommands.LeashMoodleOverride = leashMoodle;
-                plugin.Configuration.Save();
-            }
-            DrawFixedQuickRow("Unleash", ControlWords.Unleash, canSend, FixedActionIds.UnleashDefault);
-            ImGui.Indent();
-            var unleashInDuties = plugin.Configuration.QuickCommands.UnleashInDuties;
-            if (ImGui.Checkbox("Unleash when I enter a duty##ownerUnleashInDuties", ref unleashInDuties))
-            {
-                plugin.Configuration.QuickCommands.UnleashInDuties = unleashInDuties;
-                plugin.Configuration.Save();
-            }
-            IconGlyph.HelpMarker("When you load into a duty, your plugin sends each leashed Sub one unleash tell on its own. The leash stays off afterwards until you leash them again.");
-            ImGui.Unindent();
+            DrawOptionRows("ownerLeashOptions",
+                new OptionRow("Length", "How far your Sub can move from you, in yalms. They may have set a shorter limit.", width =>
+                {
+                    var leashLength = quickConfig.LeashLengthYalms;
+                    ImGui.SetNextItemWidth(Math.Min(width, Scaled(280)));
+                    if (ImGui.SliderInt("##ownerLeashLength", ref leashLength, LengthOption.MinYalms, LengthOption.MaxYalms, "%d yalms"))
+                    {
+                        quickConfig.LeashLengthYalms = Math.Clamp(leashLength, LengthOption.MinYalms, LengthOption.MaxYalms);
+                        plugin.Configuration.Save();
+                    }
+                }),
+                new OptionRow("Moodle", "Which moodle goes on your Sub with the leash. \"Sub's default\" uses their own pick.", width =>
+                {
+                    var leashMoodle = quickConfig.LeashMoodleOverride;
+                    ImGui.SetNextItemWidth(Math.Min(width, Scaled(280)));
+                    OwnerMoodleOverride.Draw("leash", plugin.Configuration, ref leashMoodle, bare: true);
+                    if (leashMoodle != quickConfig.LeashMoodleOverride)
+                    {
+                        quickConfig.LeashMoodleOverride = leashMoodle;
+                        plugin.Configuration.Save();
+                    }
+                }),
+                new OptionRow("In duties", "While your Sub is in a duty, their leash pauses as if you were apart, and picks back up once they leave. Applies from the next time you send Leash.", _ =>
+                {
+                    var pauseInDuties = quickConfig.PauseLeashInDuties;
+                    if (ImGui.Checkbox("Pause the leash##ownerPauseLeashInDuties", ref pauseInDuties))
+                    {
+                        quickConfig.PauseLeashInDuties = pauseInDuties;
+                        plugin.Configuration.Save();
+                    }
+                }));
         }
 
         if (quick.Count == 0)
@@ -3337,7 +4049,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (intiface.IsConnected)
         {
             ContinueRowOrWrap(ButtonWidth("Disconnect"));
-            if (ImGui.SmallButton("Disconnect##toyControl"))
+            if (ImGui.Button("Disconnect##toyControl"))
                 intiface.Disconnect();
         }
         else
@@ -3345,7 +4057,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             var connectLabel = intiface.IsConnecting ? "Connecting..." : "Connect";
             ContinueRowOrWrap(ButtonWidth(connectLabel));
             using (ImRaii.Disabled(intiface.IsConnecting || toyIntifaceAddress.Trim().Length == 0))
-            if (ImGui.SmallButton($"{connectLabel}##toyControl"))
+            if (ImGui.Button($"{connectLabel}##toyControl"))
             {
                 config.IntifaceAddress = toyIntifaceAddress.Trim();
                 config.Save();
@@ -3360,7 +4072,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         ImGui.Spacing();
         using (ImRaii.Disabled(!intiface.IsConnected))
-        if (ImGui.SmallButton("Stop now##toyControlLocal"))
+        if (ImGui.Button("Stop now##toyControlLocal"))
             plugin.ToyControlCommand.ForceStop();
         IconGlyph.HelpMarker("Stops every device right away.");
         connectionBox.Dispose();
@@ -3395,52 +4107,86 @@ public sealed partial class ModuleWindow : Window, IDisposable
             DrawToyTriggerEditor();
     }
 
+    private readonly ListDetail toyPatternList = new();
+    private const string NewPatternKey = "new:pattern";
+
     /// The Owner's saved patterns are sent by value, since the Sub may not have them; `ownerCanSend` enables that.
     private void DrawToyPatternEditor(bool? ownerCanSend = null)
     {
-        if (!ImGui.CollapsingHeader("Custom Patterns##toyPatternHeader"))
-            return;
-
         var config = plugin.Configuration;
+        Section.SubHeading("Custom patterns");
+        var items = config.ToyPatterns.Select(p => new ListDetailItem($"pattern:{p.Id}", p.Name,
+            $"{p.Steps.Count} step{(p.Steps.Count == 1 ? "" : "s")}{(p.Loop ? ", loops" : "")}")).ToList();
+        if (toyPatternList.Selected == NewPatternKey)
+            items.Add(new ListDetailItem(NewPatternKey, "New pattern"));
 
-        if (config.ToyPatterns.Count > 0)
-        {
-            ImGui.Indent();
-            var patterns = config.ToyPatterns;
-            var labels = patterns.Select(p => p.Name).ToArray();
-            var i = DrawItemSelector("##toyPatternSelect", labels, ref selectedToyPatternIndex);
-            var pattern = patterns[i];
+        toyPatternList.Draw("toyPatterns", items,
+            () =>
+            {
+                if (!ImGui.Button("+ New##toyPattern"))
+                    return;
+                ResetToyPatternInput();
+                toyPatternList.Select(NewPatternKey);
+            },
+            item =>
+            {
+                if (item is null)
+                {
+                    IconGlyph.WrappedDisabled("Choose a pattern, or use + New to make one.");
+                    return;
+                }
+                var pattern = config.ToyPatterns.FirstOrDefault(p => $"pattern:{p.Id}" == item.Key);
+                if (pattern is not null)
+                {
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextColored(Theme.AccentHover, pattern.Name);
+                    ImGui.SameLine();
+                    if (ImGui.Button($"Delete##toyPattern{pattern.Id}"))
+                    {
+                        config.ToyPatterns.Remove(pattern);
+                        // Disable, rather than orphan, triggers that named this pattern.
+                        foreach (var rule in config.ToyTriggerRules.Where(r => string.Equals(r.PatternName, pattern.Name, StringComparison.OrdinalIgnoreCase)))
+                            rule.Enabled = false;
+                        config.Save();
+                        ResetToyPatternInput();
+                        toyPatternList.Select(null);
+                        return;
+                    }
+                    if (ownerCanSend is { } canSend)
+                    {
+                        ImGui.SameLine();
+                        DrawSendOnly(ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop), canSend, $"toyPatternSend{pattern.Id}", "Send");
+                        IconGlyph.HelpMarker("Sends this pattern to your Sub. They don't need it saved.");
+                    }
+                }
+                DrawToyPatternForm();
+            },
+            () => toyPatternList.Selected == NewPatternKey
+                ? toyPatternNameInput.Trim().Length > 0 || toyPatternStepsInput.Count > 0
+                : config.ToyPatterns.FirstOrDefault(p => p.Id == toyPatternEditingId) is { } edited
+                  && (edited.Name != toyPatternNameInput.Trim() || edited.Loop != toyPatternLoopInput
+                      || !edited.Steps.Select(x => (x.IntensityPercent, x.DurationMs)).SequenceEqual(toyPatternStepsInput.Select(x => (x.IntensityPercent, x.DurationMs)))),
+            item =>
+            {
+                ResetToyPatternInput();
+                if (config.ToyPatterns.FirstOrDefault(p => $"pattern:{p.Id}" == item?.Key) is { } pattern)
+                    LoadToyPatternDraft(pattern);
+            },
+            "No custom patterns yet. Use + New to make one.");
+    }
 
-            ImGui.TextUnformatted($"{pattern.Steps.Count} step(s), {(pattern.Loop ? "loops" : "no loop")}");
-            if (ImGui.SmallButton($"Edit##toyPattern{pattern.Id}"))
-            {
-                toyPatternEditingId = pattern.Id;
-                toyPatternNameInput = pattern.Name;
-                toyPatternLoopInput = pattern.Loop;
-                toyPatternStepsInput.Clear();
-                toyPatternStepsInput.AddRange(pattern.Steps.Select(s => new PatternStep { IntensityPercent = s.IntensityPercent, DurationMs = s.DurationMs }));
-            }
-            ContinueRowOrWrap(ButtonWidth("Delete"));
-            if (ImGui.SmallButton($"Delete##toyPattern{pattern.Id}"))
-            {
-                config.ToyPatterns.Remove(pattern);
-                // Disable, rather than orphan, triggers that named this pattern.
-                foreach (var rule in config.ToyTriggerRules.Where(r => string.Equals(r.PatternName, pattern.Name, StringComparison.OrdinalIgnoreCase)))
-                    rule.Enabled = false;
-                config.Save();
-                if (toyPatternEditingId == pattern.Id)
-                    ResetToyPatternInput();
-                selectedToyPatternIndex = null;
-            }
-            if (ownerCanSend is { } canSend)
-            {
-                ContinueRowOrWrap(ButtonWidth("Send"));
-                DrawSendOnly(ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop), canSend, $"toyPatternSend{pattern.Id}", "Send");
-                IconGlyph.HelpMarker("Sends this pattern to your Sub. They don't need it saved.");
-            }
-            ImGui.Unindent();
-        }
+    private void LoadToyPatternDraft(ToyPattern pattern)
+    {
+        toyPatternEditingId = pattern.Id;
+        toyPatternNameInput = pattern.Name;
+        toyPatternLoopInput = pattern.Loop;
+        toyPatternStepsInput.Clear();
+        toyPatternStepsInput.AddRange(pattern.Steps.Select(s => new PatternStep { IntensityPercent = s.IntensityPercent, DurationMs = s.DurationMs }));
+    }
 
+    private void DrawToyPatternForm()
+    {
+        var config = plugin.Configuration;
         ImGui.Spacing();
         IconGlyph.WrappedDisabled(toyPatternEditingId is null ? "New pattern" : "Editing pattern");
         ItemWidth(200);
@@ -3470,7 +4216,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
             ContinueRowOrWrap(ButtonWidth("Up"));
             using (ImRaii.Disabled(i == 0))
-            if (ImGui.SmallButton($"Up##toyPatternStep{i}"))
+            if (ImGui.Button($"Up##toyPatternStep{i}"))
             {
                 (toyPatternStepsInput[i - 1], toyPatternStepsInput[i]) = (toyPatternStepsInput[i], toyPatternStepsInput[i - 1]);
                 break;
@@ -3478,14 +4224,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
             ContinueRowOrWrap(ButtonWidth("Down"));
             using (ImRaii.Disabled(i == toyPatternStepsInput.Count - 1))
-            if (ImGui.SmallButton($"Down##toyPatternStep{i}"))
+            if (ImGui.Button($"Down##toyPatternStep{i}"))
             {
                 (toyPatternStepsInput[i + 1], toyPatternStepsInput[i]) = (toyPatternStepsInput[i], toyPatternStepsInput[i + 1]);
                 break;
             }
 
             ContinueRowOrWrap(ButtonWidth("Remove"));
-            if (ImGui.SmallButton($"Remove##toyPatternStep{i}"))
+            if (ImGui.Button($"Remove##toyPatternStep{i}"))
             {
                 toyPatternStepsInput.RemoveAt(i);
                 break;
@@ -3497,13 +4243,13 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Unindent();
 
         ImGui.Spacing();
-        if (ImGui.SmallButton("Add step##toyPattern"))
+        if (ImGui.Button("Add step##toyPattern"))
             toyPatternStepsInput.Add(new PatternStep { IntensityPercent = 50, DurationMs = 500 });
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-        if (ImGui.SmallButton("Save pattern##toyPattern"))
+        if (ImGui.Button("Save pattern##toyPattern"))
         {
             var name = toyPatternNameInput.Trim();
             if (name.Length == 0)
@@ -3531,14 +4277,20 @@ public sealed partial class ModuleWindow : Window, IDisposable
                         rule.PatternName = name;
                 }
                 config.Save();
-                ResetToyPatternInput();
+                LoadToyPatternDraft(target);
+                toyPatternList.Select($"pattern:{target.Id}");
             }
         }
-        if (toyPatternEditingId is not null)
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel##toyPattern"))
         {
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Cancel##toyPattern"))
+            if (config.ToyPatterns.FirstOrDefault(p => p.Id == toyPatternEditingId) is { } original)
+                LoadToyPatternDraft(original);
+            else
+            {
                 ResetToyPatternInput();
+                toyPatternList.Select(null);
+            }
         }
         if (toyPatternError is { Length: > 0 } error)
             IconGlyph.WrappedColored(Theme.Warning, error);
@@ -3556,8 +4308,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     /// Gated on ToyTriggersAcknowledged only; ToyControl and its acknowledgement cover Owner commands.
     private void DrawToyTriggerEditor()
     {
-        if (!ImGui.CollapsingHeader("Automatic Triggers##toyTriggerHeader"))
-            return;
+        Section.SubHeading("Automatic triggers");
 
         var config = plugin.Configuration;
 
@@ -3571,55 +4322,80 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (runtimeState.ToyTriggersSuspended)
         {
             IconGlyph.WrappedColored(Theme.Warning, "Triggers are suspended (panic was triggered). They will not fire again until you resume them.");
-            if (ImGui.SmallButton("Resume triggers##toyTriggers"))
+            if (ImGui.Button("Resume triggers##toyTriggers"))
                 runtimeState.ToyTriggersSuspended = false;
             IconGlyph.HelpMarker("Turns triggers back on after a panic.");
             ImGui.Spacing();
         }
 
-        if (config.ToyTriggerRules.Count > 0)
-        {
-            ImGui.Indent();
-            foreach (var rule in config.ToyTriggerRules.ToList())
+        var items = config.ToyTriggerRules.Select(r => new ListDetailItem($"trigger:{r.Id}", DescribeTrigger(r), r.Enabled ? null : "off",
+            Tooltip: DescribeTrigger(r, full: true))).ToList();
+        if (toyTriggerList.Selected == NewTriggerKey)
+            items.Add(new ListDetailItem(NewTriggerKey, "New trigger"));
+
+        toyTriggerList.Draw("toyTriggers", items,
+            () =>
             {
-                var enabled = rule.Enabled;
-                if (ImGui.Checkbox($"##toyTriggerEnabled{rule.Id}", ref enabled))
+                if (!ImGui.Button("+ New##toyTrigger"))
+                    return;
+                ResetToyTriggerDraft();
+                toyTriggerList.Select(NewTriggerKey);
+            },
+            item =>
+            {
+                if (item is null)
                 {
-                    rule.Enabled = enabled;
-                    config.Save();
+                    IconGlyph.WrappedDisabled("Choose a trigger, or use + New to make one.");
+                    return;
                 }
-                ImGui.SameLine();
-                ImGui.PushTextWrapPos(0);
-                ImGui.TextUnformatted(DescribeTrigger(rule));
-                ImGui.PopTextWrapPos();
-                var fullDescription = DescribeTrigger(rule, full: true);
-                if (ImGui.IsItemHovered() && fullDescription != DescribeTrigger(rule))
+                if (config.ToyTriggerRules.FirstOrDefault(r => $"trigger:{r.Id}" == item.Key) is { } rule)
                 {
-                    ImGui.BeginTooltip();
-                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30);
-                    ImGui.TextUnformatted(fullDescription);
-                    ImGui.PopTextWrapPos();
-                    ImGui.EndTooltip();
-                }
-                if (ImGui.SmallButton(editingToyTriggerId == rule.Id ? $"Editing##toyTrigger{rule.Id}" : $"Edit##toyTrigger{rule.Id}"))
-                    LoadToyTriggerDraft(rule);
-                ContinueRowOrWrap(ButtonWidth("Delete"));
-                if (ImGui.SmallButton($"Delete##toyTrigger{rule.Id}"))
-                {
-                    config.ToyTriggerRules.Remove(rule);
-                    config.Save();
-                    if (editingToyTriggerId == rule.Id)
+                    var enabled = rule.Enabled;
+                    if (ImGui.Checkbox($"On##toyTriggerEnabled{rule.Id}", ref enabled))
+                    {
+                        rule.Enabled = enabled;
+                        config.Save();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button($"Delete##toyTrigger{rule.Id}"))
+                    {
+                        config.ToyTriggerRules.Remove(rule);
+                        config.Save();
                         ResetToyTriggerDraft();
+                        toyTriggerList.Select(null);
+                        return;
+                    }
+                    if (rule.PatternName is { Length: > 0 } targetPattern && !IsKnownPatternName(config, targetPattern))
+                        IconGlyph.WrappedColored(Theme.Warning, $"\"{targetPattern}\" no longer exists - this trigger needs reconfiguration.");
                 }
+                DrawToyTriggerForm();
+            },
+            () => toyTriggerList.Selected != NewTriggerKey && ToyTriggerDraftDiffers(),
+            item =>
+            {
+                ResetToyTriggerDraft();
+                if (config.ToyTriggerRules.FirstOrDefault(r => $"trigger:{r.Id}" == item?.Key) is { } rule)
+                    LoadToyTriggerDraft(rule);
+            },
+            "No triggers yet. Use + New to make one.");
+    }
 
-                if (rule.PatternName is { Length: > 0 } targetPattern && !IsKnownPatternName(config, targetPattern))
-                    IconGlyph.WrappedColored(Theme.Warning, $"\"{targetPattern}\" no longer exists - this trigger needs reconfiguration.");
+    private readonly ListDetail toyTriggerList = new();
+    private const string NewTriggerKey = "new:trigger";
 
-                ImGui.Separator();
-            }
-            ImGui.Unindent();
-        }
+    /// Compares through a scratch rule built from the draft, so every field counts.
+    private bool ToyTriggerDraftDiffers()
+    {
+        if (editingToyTriggerId is not { } id || plugin.Configuration.ToyTriggerRules.FirstOrDefault(r => r.Id == id) is not { } rule)
+            return false;
+        var draft = new ToyTriggerRule();
+        ApplyToyTriggerDraft(draft);
+        return DescribeTrigger(draft, full: true) != DescribeTrigger(rule, full: true) || draft.CooldownSeconds != rule.CooldownSeconds;
+    }
 
+    private void DrawToyTriggerForm()
+    {
+        var config = plugin.Configuration;
         ImGui.Spacing();
         var editingRule = editingToyTriggerId is { } editingId ? config.ToyTriggerRules.FirstOrDefault(r => r.Id == editingId) : null;
         if (editingToyTriggerId is not null && editingRule is null)
@@ -3698,22 +4474,24 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Spacing();
         if (editingRule is not null)
         {
-            if (ImGui.SmallButton("Save trigger##toyTrigger"))
+            if (ImGui.Button("Save trigger##toyTrigger"))
             {
                 ApplyToyTriggerDraft(editingRule);
                 config.Save();
-                ResetToyTriggerDraft();
+                LoadToyTriggerDraft(editingRule);
             }
             ContinueRowOrWrap(ButtonWidth("Cancel"));
-            if (ImGui.SmallButton("Cancel##toyTrigger"))
-                ResetToyTriggerDraft();
+            if (ImGui.Button("Cancel##toyTrigger"))
+                LoadToyTriggerDraft(editingRule);
         }
-        else if (ImGui.SmallButton("Add trigger##toyTrigger"))
+        else if (ImGui.Button("Add trigger##toyTrigger"))
         {
             var rule = new ToyTriggerRule { Enabled = true };
             ApplyToyTriggerDraft(rule);
             config.ToyTriggerRules.Add(rule);
             config.Save();
+            LoadToyTriggerDraft(rule);
+            toyTriggerList.Select($"trigger:{rule.Id}");
         }
     }
 
@@ -3790,7 +4568,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (toyTriggerEmoteIdsInput.Count > 0)
         {
             ContinueRowOrWrap(ButtonWidth("Clear"));
-            if (ImGui.SmallButton("Clear##toyTriggerEmotes"))
+            if (ImGui.Button("Clear##toyTriggerEmotes"))
                 toyTriggerEmoteIdsInput.Clear();
         }
 
@@ -3820,9 +4598,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         foreach (var entry in toyTriggerSourcePlayersInput.ToList())
         {
+            ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted(entry);
             ContinueRowOrWrap(ButtonWidth("Remove"));
-            if (ImGui.SmallButton($"Remove##toyTriggerSource{entry}"))
+            if (ImGui.Button($"Remove##toyTriggerSource{entry}"))
                 toyTriggerSourcePlayersInput.Remove(entry);
         }
 
@@ -3836,7 +4615,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ItemWidth(220);
         var submitted = ImGui.InputTextWithHint("##toyTriggerSourceInput", "Name Surname[@World]", ref toyTriggerSourcePlayerInput, 64, ImGuiInputTextFlags.EnterReturnsTrue);
         ContinueRowOrWrap(ButtonWidth("Add"));
-        if ((ImGui.SmallButton("Add##toyTriggerSource") || submitted) && toyTriggerSourcePlayerInput.Trim().Length > 0)
+        if ((ImGui.Button("Add##toyTriggerSource") || submitted) && toyTriggerSourcePlayerInput.Trim().Length > 0)
         {
             AddPlayer(toyTriggerSourcePlayerInput);
             toyTriggerSourcePlayerInput = "";
@@ -3845,7 +4624,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var target = Plugin.TargetManager.Target as Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter;
         using (ImRaii.Disabled(target is null))
         {
-            if (ImGui.SmallButton("Add my target##toyTriggerSource") && target is not null)
+            if (ImGui.Button("Add my target##toyTriggerSource") && target is not null)
                 AddPlayer($"{target.Name.TextValue}@{target.HomeWorld.ValueNullable?.Name.ExtractText()}");
         }
         if (target is null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
@@ -3857,7 +4636,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (toyTriggerSourcePlayersInput.Contains(peer, StringComparer.OrdinalIgnoreCase)) continue;
             var label = $"Add {pairing.PeerName}";
             ContinueRowOrWrap(ButtonWidth(label));
-            if (ImGui.SmallButton($"{label}##toyTriggerSourcePeer{pairing.Id}"))
+            if (ImGui.Button($"{label}##toyTriggerSourcePeer{pairing.Id}"))
                 AddPlayer(peer);
         }
     }
@@ -3899,7 +4678,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             {
                 var selectedName = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Action>().GetRowOrDefault(actionId)?.Name.ExtractText() ?? actionId.ToString();
                 TextWithActions($"Selected: {selectedName}", ButtonWidth("Remove"));
-                if (ImGui.SmallButton($"Remove##toyTriggerSpellAction{actionId}"))
+                if (ImGui.Button($"Remove##toyTriggerSpellAction{actionId}"))
                     toyTriggerSpellActionIdsInput.Remove(actionId);
             }
             return;
@@ -4053,27 +4832,103 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.HelpMarker("Send sends it as one /tell now. Copy only copies it. Add Command saves it as a button.");
     }
 
-    private void DrawSavedAliasCommands(bool canSend)
-    {
-        var aliasQuick = plugin.Configuration.QuickCommands.Aliases;
-        if (aliasQuick.Count == 0)
-        {
-            IconGlyph.WrappedDisabled("Nothing saved yet - bundles your Sub shares, and ones you save below, show up here.");
-            return;
-        }
+    private readonly ListDetail ownerBundleList = new();
+    private const string NewBundleKey = "new:bundle";
 
-        using var _ = Section.List("aliasQuickList", Scaled(300));
-        foreach (var cmd in aliasQuick.ToArray())
-            DrawSavedQuickRow(cmd, aliasQuick, canSend);
+    private static bool IsBundle(QuickCommand cmd) => cmd.Command.StartsWith("customtrigger cast ", StringComparison.OrdinalIgnoreCase);
+
+    /// Saved bundles open in the bundle builder; your Sub's own trigger words use the plain command editor.
+    private void DrawOwnerBundles(bool canSend)
+    {
+        var aliases = plugin.Configuration.QuickCommands.Aliases;
+        var items = aliases.Select((cmd, i) => new ListDetailItem($"alias:{i}", cmd.Label, IsBundle(cmd) ? null : "your Sub's word")).ToList();
+        if (ownerBundleList.Selected == NewBundleKey)
+            items.Add(new ListDetailItem(NewBundleKey, "New bundle"));
+        QuickCommand? Find(string? key) => key is not null && key.StartsWith("alias:") && int.TryParse(key[6..], out var i) && i < aliases.Count ? aliases[i] : null;
+
+        ownerBundleList.Draw("ownerBundles", items,
+            () =>
+            {
+                if (!ImGui.Button("+ New##ownerBundle"))
+                    return;
+                CancelQuickCommandEdit();
+                ClearOwnerBundleDraft();
+                ownerBundleList.Select(NewBundleKey);
+            },
+            item =>
+            {
+                if (item is null)
+                {
+                    IconGlyph.WrappedDisabled("Choose a bundle, or use + New to build one.");
+                    return;
+                }
+                if (item.Key == NewBundleKey)
+                {
+                    var before = aliases.Count;
+                    using (Section.Begin("ctqBuilder", "Build a bundle"))
+                        DrawCustomTriggerQuickSection(canSend);
+                    if (aliases.Count > before)
+                        ownerBundleList.Select($"alias:{aliases.Count - 1}");
+                    return;
+                }
+                if (Find(item.Key) is not { } cmd)
+                    return;
+                if (!IsBundle(cmd))
+                {
+                    DrawSavedQuickDetail(cmd, aliases, canSend, ownerBundleList, null);
+                    return;
+                }
+                ImGui.PushID($"bundle_{cmd.Label}");
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextColored(Theme.AccentHover, cmd.Label);
+                ContinueRowOrWrap(StarWidth);
+                DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
+                ContinueRowOrWrap(ButtonWidth("Delete"));
+                if (ImGui.Button("Delete"))
+                {
+                    aliases.Remove(cmd);
+                    ClearOwnerBundleDraft();
+                    plugin.Configuration.Save();
+                    ownerBundleList.Select(null);
+                    ImGui.PopID();
+                    return;
+                }
+                // The builder's Save ends the edit; reopen it so the detail pane always shows it.
+                if (!ReferenceEquals(editingOwnerBundle, cmd))
+                    BeginOwnerBundleEdit(cmd);
+                using (Section.Begin("ctqBuilder"))
+                    DrawCustomTriggerQuickSection(canSend);
+                ImGui.PopID();
+            },
+            () => ownerBundleList.Selected == NewBundleKey ? ctqLabel.Trim().Length > 0 || ctqDraftActions.Count > 0
+                : Find(ownerBundleList.Selected) is { } cmd && (IsBundle(cmd)
+                    ? ReferenceEquals(editingOwnerBundle, cmd)
+                      && (CustomTriggerCommand.BuildCastCommand(ctqLabel.Trim(), ctqDraftActions) != cmd.Command
+                          || ctqLockSeconds != cmd.LockSeconds || ctqStruggle != cmd.Struggle || (ctqLockKey.Trim().Length > 0 ? ctqLockKey : null) != cmd.LockKey)
+                    : QuickEditDirty(cmd)),
+            item =>
+            {
+                CancelQuickCommandEdit();
+                ClearOwnerBundleDraft();
+                if (Find(item?.Key) is { } cmd)
+                {
+                    if (IsBundle(cmd))
+                        BeginOwnerBundleEdit(cmd);
+                    else
+                        BeginQuickCommandEdit(cmd, aliases);
+                }
+            },
+            "Nothing saved yet - bundles your Sub shares, and ones you build with + New, show up here.");
     }
 
     /// A built-in action that can't be removed.
     private void DrawFixedQuickRow(string label, string command, bool canSend, string favoriteId)
     {
         ImGui.BeginGroup();
+        ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted(label);
-        ContinueRowOrWrap(ButtonWidth("Favorited"));
-        DrawFavoriteFixedActionToggle(favoriteId);
+        ContinueRowOrWrap(StarWidth);
+        DrawFavoriteStar(favoriteId);
         ContinueRowOrWrap(ButtonWidth("Send"));
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, command, null), canSend, $"fixed_{label}");
         ImGui.EndGroup();
@@ -4091,7 +4946,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.BeginGroup();
         ImGui.TextUnformatted(shownLabel);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(shownLabel);
-        ContinueRowOrWrap(ButtonWidth("Favorited"));
+        ContinueRowOrWrap(StarWidth);
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
         ContinueRowOrWrap(ButtonWidth("Send"));
         DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
@@ -4103,7 +4958,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var expanded = ReferenceEquals(editingQuickCommand, cmd);
         var editLabel = expanded ? "Close" : "Edit";
         ContinueRowOrWrap(ButtonWidth(editLabel));
-        if (ImGui.SmallButton($"{editLabel}##{cmd.Label}_{cmd.Command}"))
+        if (ImGui.Button($"{editLabel}##{cmd.Label}_{cmd.Command}"))
         {
             if (expanded)
                 CancelQuickCommandEdit();
@@ -4114,7 +4969,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 BeginQuickCommandEdit(cmd, list);
         }
         ContinueRowOrWrap(ButtonWidth("Remove"));
-        if (ImGui.SmallButton($"Remove##{cmd.Label}_{cmd.Command}"))
+        if (ImGui.Button($"Remove##{cmd.Label}_{cmd.Command}"))
         {
             list.Remove(cmd);
             if (ReferenceEquals(editingQuickCommand, cmd))
@@ -4340,41 +5195,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void DrawFavoriteToggle(QuickCommand cmd, string idSuffix)
     {
-        using (ImRaii.PushColor(ImGuiCol.Text, Theme.Warning, cmd.IsFavorite))
+        var tooltip = cmd.IsFavorite
+            ? "Remove from favorites"
+            : OwnerLockOption.Accepts(cmd.Command)
+                ? "Add to favorites - the favorite keeps the lock timer set right now"
+                : "Add to favorites";
+        if (IconGlyph.Star($"##fav_{idSuffix}", cmd.IsFavorite, tooltip))
         {
-            if (ImGui.SmallButton($"{(cmd.IsFavorite ? "Favorited" : "Favorite")}##fav_{idSuffix}"))
-            {
-                cmd.IsFavorite = !cmd.IsFavorite;
-                // A favorite keeps the timer this command had when it was starred.
-                cmd.FavoriteLockSeconds = cmd.IsFavorite ? cmd.LockSeconds : null;
-                plugin.Configuration.Save();
-            }
+            cmd.IsFavorite = !cmd.IsFavorite;
+            // A favorite keeps the timer and key this command had when it was starred.
+            cmd.FavoriteLockSeconds = cmd.IsFavorite ? cmd.LockSeconds : null;
+            cmd.FavoriteLockKey = cmd.IsFavorite ? cmd.LockKey : null;
+            plugin.Configuration.Save();
         }
         TutorialService.Anchor(TutorialAnchors.QuickStar);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(cmd.IsFavorite
-                ? "Remove from favorites"
-                : OwnerLockOption.Accepts(cmd.Command)
-                    ? "Add to favorites - the favorite keeps the lock timer set right now"
-                    : "Add to favorites");
     }
 
-    private void DrawFavoriteFixedActionToggle(string favoriteId)
-    {
-        var favorites = plugin.Configuration.QuickCommands.FavoriteFixedActions;
-        var isFavorite = favorites.Contains(favoriteId);
-        using (ImRaii.PushColor(ImGuiCol.Text, Theme.Warning, isFavorite))
-        {
-            if (ImGui.SmallButton($"{(isFavorite ? "Favorited" : "Favorite")}##fav_{favoriteId}"))
-            {
-                if (isFavorite) favorites.Remove(favoriteId);
-                else favorites.Add(favoriteId);
-                plugin.Configuration.Save();
-            }
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(isFavorite ? "Remove from favorites" : "Add to favorites");
-    }
+    private static float StarWidth => ImGui.GetFrameHeight();
 
     private static void DrawGlowPicker(string idSuffix, ref bool hasGlow, ref Vector3 glow)
     {
@@ -4395,7 +5232,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         using (ImRaii.Disabled(!canSend || !fits))
         {
-            if (ImGui.SmallButton($"{sendLabel}##{idSuffix}"))
+            if (ImGui.Button($"{sendLabel}##{idSuffix}"))
                 plugin.ChatSender.SendAll(messages);
         }
         TutorialService.Anchor(TutorialAnchors.QuickSend);
@@ -4405,7 +5242,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ContinueRowOrWrap(ButtonWidth("Copy"));
         // A command that goes out as several messages can't be pasted as one.
         using (ImRaii.Disabled(!fits || messages.Count > 1))
-        if (ImGui.SmallButton($"Copy##{idSuffix}"))
+        if (ImGui.Button($"Copy##{idSuffix}"))
             ImGui.SetClipboardText(messages[0]);
         if (messages.Count > 1 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip($"Too long for one message - Send delivers it as {messages.Count} messages, one per action.");
@@ -4417,7 +5254,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var fits = ChatComposer.AllFit(messages);
         using (ImRaii.Disabled(!canSend || !fits))
         {
-            if (ImGui.SmallButton($"{label}##{idSuffix}"))
+            if (ImGui.Button($"{label}##{idSuffix}"))
                 plugin.ChatSender.SendAll(messages);
         }
         if (ImGui.IsItemHovered())

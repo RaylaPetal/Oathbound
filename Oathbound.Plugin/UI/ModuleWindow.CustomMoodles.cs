@@ -49,64 +49,6 @@ public sealed partial class ModuleWindow
             ImGui.Dummy(MoodleIconSize);
     }
 
-    private void DrawCustomMoodlesSection(bool canSend)
-    {
-        var config = plugin.Configuration;
-        var list = config.QuickCommands.CustomMoodles;
-        using (Section.Begin("customMoodles", "Your custom moodles"))
-        {
-            IconGlyph.WrappedDisabled("Moodles you write yourself. Your Sub doesn't need them in their Moodles library, but they have to allow \"moodles my Owner writes\" in their permissions.");
-            if (list.Count == 0)
-                IconGlyph.WrappedDisabled("None yet - build one below.");
-            foreach (var cmd in list.ToArray())
-                DrawCustomMoodleRow(cmd, list, canSend);
-        }
-
-        using (Section.Begin("customMoodleBuilder", cmEditing is null ? "Build a moodle" : "Edit moodle"))
-            DrawCustomMoodleBuilder(list);
-    }
-
-    private void DrawCustomMoodleRow(QuickCommand cmd, List<QuickCommand> list, bool canSend)
-    {
-        if (cmd.CustomMoodle is not { } moodle)
-            return;
-        var id = moodle.Id.ToString("N");
-        ImGui.PushID(id);
-        DrawMoodleIcon((uint)moodle.IconId);
-        ImGui.SameLine();
-        ImGui.BeginGroup();
-        ImGui.TextUnformatted(cmd.Label);
-        if (moodle.Description.Length > 0 && ImGui.IsItemHovered())
-            ImGui.SetTooltip(moodle.Description);
-        DrawFavoriteToggle(cmd, id);
-        ContinueRowOrWrap(ButtonWidth("Send"));
-        DrawSendCopyButtons(cmd.Command, canSend, id);
-        ContinueRowOrWrap(ButtonWidth("Take off"));
-        DrawSendCopyButtons(moodle.RemoveCommand(), canSend, id + "_remove", "Take off");
-        ContinueRowOrWrap(ButtonWidth("Edit"));
-        if (ImGui.SmallButton(ReferenceEquals(cmEditing, cmd) ? "Close" : "Edit"))
-        {
-            if (ReferenceEquals(cmEditing, cmd))
-                ResetCustomMoodleBuilder();
-            else
-            {
-                cmEditing = cmd;
-                cmDraft = moodle.Clone();
-            }
-        }
-        ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.SmallButton("Delete"))
-        {
-            list.Remove(cmd);
-            if (ReferenceEquals(cmEditing, cmd))
-                ResetCustomMoodleBuilder();
-            plugin.Configuration.Save();
-        }
-        ImGui.EndGroup();
-        ImGui.Separator();
-        ImGui.PopID();
-    }
-
     private void ResetCustomMoodleBuilder()
     {
         cmEditing = null;

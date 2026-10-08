@@ -54,7 +54,7 @@ public sealed partial class ModuleWindow
             using (Section.Begin("reactionsSuspended"))
             {
                 IconGlyph.WrappedColored(Theme.Warning, "Reactions are paused because panic was triggered. Nothing below will fire until you resume them.");
-                if (ImGui.SmallButton("Resume reactions"))
+                if (ImGui.Button("Resume reactions"))
                     plugin.RuntimeState.ReactionsSuspended = false;
             }
         }
@@ -65,61 +65,94 @@ public sealed partial class ModuleWindow
             {
                 foreach (var mod in reactions.ActiveMods.ToList())
                 {
+                    ImGui.AlignTextToFramePadding();
                     ImGui.TextUnformatted(mod.Name.Length > 0 ? mod.Name : mod.Directory);
                     ContinueRowOrWrap(ButtonWidth("Turn off"));
-                    if (ImGui.SmallButton($"Turn off##reactionMod{mod.ReactionId}"))
+                    if (ImGui.Button($"Turn off##reactionMod{mod.ReactionId}"))
                         reactions.TurnOff(mod);
                 }
             }
         }
 
+        var items = config.Reactions.Select(r => new ListDetailItem($"reaction:{r.Id}", ReactionLabel(r), null, r.Enabled ? null : "paused",
+            Tooltip: ReactionSummary(r))).ToList();
+        if (reactionList.Selected == NewReactionKey)
+            items.Add(new ListDetailItem(NewReactionKey, "New reaction"));
+
         using (Section.Begin("reactionList", "Your reactions"))
         {
-            if (config.Reactions.Count == 0)
-                IconGlyph.WrappedDisabled("No reactions yet.");
-
-            foreach (var rule in config.Reactions.ToList())
-            {
-                ImGui.PushID(rule.Id);
-                var enabled = rule.Enabled;
-                if (ImGui.Checkbox("##enabled", ref enabled))
+            reactionList.Draw("reactions", items,
+                () =>
                 {
-                    rule.Enabled = enabled;
-                    config.Save();
-                }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip(enabled ? "Enabled - click to pause this reaction" : "Paused - click to enable");
-                ImGui.SameLine();
-                ImGui.PushTextWrapPos(0);
-                ImGui.TextUnformatted(ReactionLabel(rule));
-                ImGui.PopTextWrapPos();
-                IconGlyph.WrappedDisabled(ReactionSummary(rule) + LastFiredText(rule));
-
-                if (ImGui.SmallButton(reactionDraft?.Id == rule.Id ? "Editing" : "Edit"))
-                    StartReactionEdit(rule);
-                ContinueRowOrWrap(ButtonWidth("Delete"));
-                if (ImGui.SmallButton("Delete"))
+                    var newReaction = ImGui.Button("+ New##reaction");
+                    TutorialService.Anchor(TutorialAnchors.ReactionNew);
+                    if (!newReaction)
+                        return;
+                    reactionDraft = new ReactionRule();
+                    reactionError = null;
+                    reactionList.Select(NewReactionKey);
+                },
+                item => DrawReactionDetail(config, item),
+                () => reactionDraft is { } d && (reactionList.Selected == NewReactionKey
+                    ? d.HasAnyAction || d.Name.Trim().Length > 0
+                    : config.Reactions.FirstOrDefault(r => r.Id == d.Id) is { } saved && JsonSerializer.Serialize(saved) != JsonSerializer.Serialize(d)),
+                item =>
                 {
-                    config.Reactions.Remove(rule);
-                    config.Save();
-                    if (reactionDraft?.Id == rule.Id)
-                        reactionDraft = null;
-                }
-                ImGui.Separator();
-                ImGui.PopID();
-            }
-
-            var newReaction = reactionDraft is null && ImGui.SmallButton("New reaction");
-            TutorialService.Anchor(TutorialAnchors.ReactionNew);
-            if (newReaction)
-            {
-                reactionDraft = new ReactionRule();
-                reactionError = null;
-            }
+                    reactionDraft = null;
+                    reactionError = null;
+                    if (config.Reactions.FirstOrDefault(r => $"reaction:{r.Id}" == item?.Key) is { } rule)
+                        StartReactionEdit(rule);
+                },
+                "No reactions yet. Use + New to make one.");
         }
+    }
 
+    private readonly ListDetail reactionList = new();
+    private const string NewReactionKey = "new:reaction";
+
+    private void DrawReactionDetail(PluginConfig config, ListDetailItem? item)
+    {
+        if (item is null)
+        {
+            IconGlyph.WrappedDisabled("Choose a reaction, or use + New to make one.");
+            return;
+        }
+        if (item.Key == NewReactionKey)
+        {
+            reactionDraft ??= new ReactionRule();
+            DrawReactionEditor(reactionDraft);
+            return;
+        }
+        if (config.Reactions.FirstOrDefault(r => $"reaction:{r.Id}" == item.Key) is not { } rule)
+            return;
+
+        ImGui.PushID(rule.Id);
+        ImGui.TextColored(Theme.AccentHover, ReactionLabel(rule));
+        var enabled = rule.Enabled;
+        if (ImGui.Checkbox("On##reactionEnabled", ref enabled))
+        {
+            rule.Enabled = enabled;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(enabled ? "Enabled - click to pause this reaction" : "Paused - click to enable");
+        ImGui.SameLine();
+        if (ImGui.Button("Delete"))
+        {
+            config.Reactions.Remove(rule);
+            config.Save();
+            reactionDraft = null;
+            reactionList.Select(null);
+            ImGui.PopID();
+            return;
+        }
+        IconGlyph.WrappedDisabled(ReactionSummary(rule) + LastFiredText(rule));
+        // Save and Cancel end the edit; reopen it so the detail pane always shows the editor.
+        if (reactionDraft?.Id != rule.Id)
+            StartReactionEdit(rule);
         if (reactionDraft is { } draft)
             DrawReactionEditor(draft);
+        ImGui.PopID();
     }
 
     private void StartReactionEdit(ReactionRule rule)
@@ -230,7 +263,7 @@ public sealed partial class ModuleWindow
         if (reactionError is { } error)
             IconGlyph.WrappedColored(Theme.Warning, error);
 
-        if (ImGui.SmallButton(isNew ? "Add reaction" : "Save reaction"))
+        if (ImGui.Button(isNew ? "Add reaction" : "Save reaction"))
         {
             reactionError = ValidateReaction(draft);
             if (reactionError is null)
@@ -240,18 +273,21 @@ public sealed partial class ModuleWindow
                 else config.Reactions.Add(draft);
                 config.Save();
                 reactionDraft = null;
+                reactionList.Select($"reaction:{draft.Id}");
             }
         }
         ContinueRowOrWrap(ButtonWidth("Cancel"));
-        if (ImGui.SmallButton("Cancel##reaction"))
+        if (ImGui.Button("Cancel##reaction"))
         {
             reactionDraft = null;
             reactionError = null;
+            if (isNew)
+                reactionList.Select(null);
         }
         ContinueRowOrWrap(ButtonWidth("Test actions"));
         using (ImRaii.Disabled(!draft.HasAnyAction))
         {
-            if (ImGui.SmallButton("Test actions##reaction"))
+            if (ImGui.Button("Test actions##reaction"))
                 plugin.ReactionService.Fire(draft);
         }
         IconGlyph.HelpMarker("Runs this reaction on yourself now. A chat message is really sent.");
@@ -334,7 +370,7 @@ public sealed partial class ModuleWindow
         if (catalog.Count > 0 && DependencyGates.FeatureBlockedReason(plugin, DependencyId.Penumbra) is null)
         {
             ContinueRowOrWrap(ButtonWidth("From my animations..."));
-            if (ImGui.SmallButton("From my animations..."))
+            if (ImGui.Button("From my animations..."))
             {
                 plugin.AnimationPickerWindow.Open(entry =>
                 {
@@ -361,10 +397,11 @@ public sealed partial class ModuleWindow
     private void DrawReactionItem(ReactionRule draft)
     {
         using var _ = ImRaii.PushId("reactionItem");
+        ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("Put on an item");
         ImGui.SameLine();
         IconGlyph.WrappedDisabled(draft.ItemId is > 0 ? $"{draft.ItemLabel} ({draft.ItemSlot})" : "None");
-        if (ImGui.SmallButton("Choose item..."))
+        if (ImGui.Button("Choose item..."))
         {
             plugin.ItemPickerWindow.Open((itemId, itemName) =>
             {
@@ -377,7 +414,7 @@ public sealed partial class ModuleWindow
         if (draft.ItemId is > 0)
         {
             ContinueRowOrWrap(ButtonWidth("Clear"));
-            if (ImGui.SmallButton("Clear"))
+            if (ImGui.Button("Clear"))
             {
                 draft.ItemId = null;
                 draft.ItemSlot = null;
@@ -426,7 +463,7 @@ public sealed partial class ModuleWindow
         if (!string.IsNullOrWhiteSpace(draft.ModDirectory))
         {
             ContinueRowOrWrap(ButtonWidth("Capture current options"));
-            if (ImGui.SmallButton("Capture current options"))
+            if (ImGui.Button("Capture current options"))
                 draft.ModSelections = CurrentModOptions(draft.ModDirectory!);
             var chosen = draft.ModSelections.Where(g => g.Value.Count > 0).Select(g => $"{g.Key}: {string.Join(", ", g.Value)}").ToList();
             IconGlyph.WrappedDisabled(chosen.Count == 0 ? "Options: the mod's defaults." : $"Options: {string.Join("; ", chosen)}");

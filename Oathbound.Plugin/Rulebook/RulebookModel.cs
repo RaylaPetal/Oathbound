@@ -12,13 +12,16 @@ namespace Oathbound.Plugin.Rulebook;
 [Serializable]
 public sealed class RulebookDocument
 {
-    /// 2 adds time rules, the shop and the newer oath options. A document using none of them is published as 1,
-    /// so a Sub from before still accepts it; one that uses them is refused by that Sub instead of half-read.
-    public const int CurrentSchemaVersion = 2;
+    /// 2 adds time rules, the shop and the newer oath options; 3 adds timed titles, outfits and moodles. A document
+    /// is published as the lowest version that can hold it, so a Sub from before still accepts it; one that needs more
+    /// is refused by that Sub instead of half-read.
+    public const int CurrentSchemaVersion = 3;
     public const int MinSchemaVersion = 1;
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
-    public int RequiredSchemaVersion => Times.Count > 0 || Shop.Count > 0 || Oaths.Any(o => o.NeedsNewSub) ? 2 : 1;
+    public int RequiredSchemaVersion =>
+        ConsequenceValidator.AllConsequences(this).Any(c => c.Any(ConsequenceValidator.IsTimedOwnerLock)) ? 3
+        : Times.Count > 0 || Shop.Count > 0 || Oaths.Any(o => o.NeedsNewSub) ? 2 : 1;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public int Version { get; set; }
@@ -240,6 +243,8 @@ public sealed class PresenceRule
     /// The one rule type allowed to leash or send chat, each still behind the Sub's own permission for it.
     public bool LeashOnArrive { get; set; }
     public int LeashLengthYalms { get; set; } = Commands.LengthOption.DefaultYalms;
+    /// Like the Owner's own leash option: the leash pauses while the Sub is in a duty. An older Sub ignores it.
+    public bool LeashPauseInDuties { get; set; }
     public bool UnleashOnDepart { get; set; }
     /// Sent as a /tell to the Owner, never anywhere else.
     public string ArriveTell { get; set; } = "";

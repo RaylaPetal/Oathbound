@@ -22,6 +22,31 @@ public static class IconGlyph
         ImGui.TextUnformatted(label);
     }
 
+    /// A favorite star the size of a square button. The icon font is taller than the text font, so the glyph is drawn
+    /// shrunk inside the box instead of as a button label.
+    public static bool Star(string id, bool on, string tooltip)
+    {
+        var height = ImGui.GetFrameHeight();
+        var size = new Vector2(height, height);
+        var pos = ImGui.GetCursorScreenPos();
+        var clicked = ImGui.InvisibleButton(id, size);
+        var hovered = ImGui.IsItemHovered();
+        var draw = ImGui.GetWindowDrawList();
+        draw.AddRectFilled(pos, pos + size, ImGui.GetColorU32(hovered ? ImGuiCol.ButtonHovered : ImGuiCol.Button), ImGui.GetStyle().FrameRounding);
+
+        var font = Plugin.PluginInterface.UiBuilder.FontIcon;
+        var glyph = FontAwesomeIcon.Star.ToIconString();
+        var fontSize = ImGui.GetTextLineHeight() * 0.8f;
+        Vector2 glyphSize;
+        using (ImRaii.PushFont(font))
+            glyphSize = ImGui.CalcTextSize(glyph) * (fontSize / ImGui.GetFontSize());
+        var color = on ? Theme.Warning : hovered ? Theme.TextMuted : Theme.TextMuted * new Vector4(1, 1, 1, 0.6f);
+        draw.AddText(font, fontSize, pos + (size - glyphSize) / 2f, ImGui.GetColorU32(color), glyph);
+        if (hovered)
+            ImGui.SetTooltip(tooltip);
+        return clicked;
+    }
+
     public static void HelpMarker(string tooltip)
     {
         Layout.ContinueRowOrWrap(ImGui.CalcTextSize("(?)").X);

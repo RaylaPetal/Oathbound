@@ -39,13 +39,6 @@ public sealed class ChatComposer
         return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Leash} {LeashTravelWord} {target.ToPayload()}";
     }
 
-    /// Addressed to that pairing like ComposeLeashTravel, so it reaches a Sub that isn't the active one.
-    public string ComposeUnleash(PairingState pairing)
-    {
-        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
-        return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Unleash}";
-    }
-
     public const string LeashTravelWord = "travel";
 
     /// `gesture stop` ends a held animation on the Sub.
@@ -112,11 +105,13 @@ public sealed class ChatComposer
     public string ComposeLeashOnNotice(string name, string world) =>
         $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOnWord}";
 
-    /// The Sub struggled free of a lock this Owner set.
-    public string ComposeStruggleNotice(string name, string world) => $"/tell {name}@{world} {StruggleNoticeKeyword} {StruggleFreeWord}";
+    /// The Sub struggled free of (`free`) or used the key on (`key`) a restraint this Owner locked, named as their command named it.
+    public string ComposeStruggleNotice(string name, string world, string word, string restraint) =>
+        $"/tell {name}@{world} {StruggleNoticeKeyword} {word} {restraint}".TrimEnd();
 
     public const string StruggleNoticeKeyword = "collarstruggle";
     public const string StruggleFreeWord = "free";
+    public const string StruggleKeyWord = "key";
 
     /// A presence rule's message, only ever as a /tell to that Owner.
     public string ComposePresenceTell(string name, string world, string text) =>

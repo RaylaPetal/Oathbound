@@ -25,6 +25,7 @@ namespace Oathbound.Plugin;
 public sealed class Plugin : IDalamudPlugin
 {
     private int pendingRestraintCleanup;
+    private readonly OwnerLockService ownerLocks;
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
@@ -44,6 +45,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
     [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] internal static ITextureReadbackProvider TextureReadback { get; private set; } = null!;
 
     private const string CommandName = "/ob";
     private const string PanicCommandName = "/obpanic";
@@ -70,6 +72,7 @@ public sealed class Plugin : IDalamudPlugin
     public CustomizePresetPickerWindow CustomizePresetPickerWindow { get; }
     public ItemPickerWindow ItemPickerWindow { get; }
     public FavoritesWindow FavoritesWindow { get; }
+    public SnapshotOverlay Snapshot { get; }
     private QuickAccessMenuHost QuickAccessMenuHost { get; }
     private RecoveryCodeWindow RecoveryCodeWindow { get; }
 
@@ -190,10 +193,11 @@ public sealed class Plugin : IDalamudPlugin
         RelayClient = new RelayClient(Configuration, DeviceIdentityService);
         RevocationService = new RevocationService(Configuration, RelayClient, DeviceIdentityService);
 
-        TitleCommand = new TitleCommand(HonorificIpc, RuntimeState);
+        TitleCommand = new TitleCommand(Configuration, HonorificIpc, RuntimeState);
         // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.
         MoodlesCommand = new MoodlesCommand(Configuration, MoodlesIpc, CatalogStore, new AttachedMoodleLedger(Configuration, MoodlesIpc));
         OutfitCommand = new OutfitCommand(Configuration, GlamourerIpc, SlotLockManager, RuntimeState, MoodlesCommand);
+        ownerLocks = new OwnerLockService(Configuration, TitleCommand, OutfitCommand, MoodlesCommand);
         temporaryModSettings = new TemporaryModSettingsCoordinator(PenumbraIpc);
         GestureCommand = new GestureCommand(Configuration, PenumbraIpc, temporaryModSettings, CatalogStore, MovementLockService);
         ReactionService = new ReactionService(Configuration, RuntimeState, EmoteWatcher, GlamourerIpc, SlotLockManager, PenumbraIpc, temporaryModSettings, MoodlesIpc, RestrictionRuleManager);
@@ -217,12 +221,9 @@ public sealed class Plugin : IDalamudPlugin
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
-        // One tell to the Owner who set the lock; failed tries send nothing.
-        RestraintCommand.StruggledFree += pairingId =>
-        {
-            if (pairingId is { } id && Configuration.FindPairingById(id) is { IsPaired: true, Direction: PairingDirection.SubSide, PeerName: { } name, PeerWorld: { } world })
-                ChatSender.Send(ChatComposer.ComposeStruggleNotice(name, world));
-        };
+        // One tell to the Owner who set the lock; failed tries and wrong keys send nothing.
+        RestraintCommand.StruggledFree += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleFreeWord, restraint);
+        RestraintCommand.KeyUnlocked += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleKeyWord, restraint);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         worldStrokes = new WorldStrokeRenderer();
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
@@ -266,6 +267,7 @@ public sealed class Plugin : IDalamudPlugin
         FavoritesWindow = new FavoritesWindow(this);
         QuickAccessMenuHost = new QuickAccessMenuHost(this);
         RecoveryCodeWindow = new RecoveryCodeWindow(this);
+        Snapshot = new SnapshotOverlay(this);
 
         favoritesDtrEntry = DtrBar.Get("Oathbound Quick Access");
         favoritesDtrEntry.Text = ((char)SeIconChar.BoxedStar).ToString();
@@ -311,12 +313,11 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.AddHandler(LongPanicCommandName, new CommandInfo(OnPanicCommand) { ShowInHelp = false });
         CommandManager.AddHandler(LongSettingsCommandName, new CommandInfo(OnSettingsCommand) { ShowInHelp = false });
 
-        PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw += DrawWindows;
         PluginInterface.UiBuilder.Draw += FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw += restraintRenderer.Draw;
         // After every window, so anchors reported this frame are current.
-        PluginInterface.UiBuilder.Draw += Tutorial.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
@@ -332,8 +333,16 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// A real login, not just a plugin reload mid-session.
+    private void SendRestraintNotice(Guid? pairingId, string word, string restraint)
+    {
+        if (pairingId is { } id && Configuration.FindPairingById(id) is { IsPaired: true, Direction: PairingDirection.SubSide, PeerName: { } name, PeerWorld: { } world })
+            ChatSender.Send(ChatComposer.ComposeStruggleNotice(name, world, word, restraint));
+    }
+
     private void OnLogin()
     {
+        RestraintCommand.OnLogin();
+        TitleCommand.RequestReassert();
         // Check every pairing against the relay right away, and pick up code invitations.
         nextPairStatusCheckUtc = DateTime.MinValue;
         CodePairingService.PollSoon();
@@ -365,6 +374,8 @@ public sealed class Plugin : IDalamudPlugin
         TeleportCommand.Stop("plugin unloading");
         GestureCommand.Stop();
         DependencyStatus.Dispose();
+        TitleCommand.Dispose();
+        HonorificIpc.Dispose();
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
         Framework.Update -= OnFrameworkUpdate;
         ClientState.Login -= OnLogin;
@@ -375,11 +386,11 @@ public sealed class Plugin : IDalamudPlugin
 
         RelayClient.Dispose();
 
-        PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= DrawWindows;
+        Snapshot.Close();
         PluginInterface.UiBuilder.Draw -= FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw -= restraintRenderer.Draw;
-        PluginInterface.UiBuilder.Draw -= Tutorial.Draw;
         Tutorial.Dispose();
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
@@ -472,6 +483,18 @@ public sealed class Plugin : IDalamudPlugin
 
     public void OpenMainWindow() => CollarWindow.OpenMainWindow();
 
+    /// While a snapshot is being framed, only its frame is drawn, so no window covers what's being framed.
+    private void DrawWindows()
+    {
+        if (Snapshot.IsOpen)
+        {
+            Snapshot.Draw();
+            return;
+        }
+        WindowSystem.Draw();
+        Tutorial.Draw();
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
         if (Interlocked.Exchange(ref pendingRestraintCleanup, 0) != 0)
@@ -502,6 +525,7 @@ public sealed class Plugin : IDalamudPlugin
         TeleportCommand.OnFrameworkUpdate();
         leashTravelWatcher.OnFrameworkUpdate();
         TitleCommand.OnFrameworkUpdate();
+        ownerLocks.OnFrameworkUpdate();
 
         var utcNow = DateTime.UtcNow;
         if (utcNow >= nextRevocationOutboxRetryUtc)

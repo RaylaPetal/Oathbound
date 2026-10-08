@@ -159,46 +159,99 @@ public sealed class RestraintCommand
 
     private static string CatalogRuntimeId(string catalogId) => $"catalog:{catalogId}";
 
-    /// Refused while an Owner force-lock is in effect.
+    public IReadOnlyList<WornRestraint> Worn => config.WornRestraints;
+
+    private WornRestraint? FindWorn(string runtimeId) => config.WornRestraints.FirstOrDefault(w => w.RuntimeId == runtimeId);
+
+    /// A locked restraint can't be taken off by its word; applying a different one is still allowed.
     public bool ToggleByWord(string word)
     {
         LastFailureReason = null;
-        if (runtimeState.RestraintsForceLocked)
-        {
-            LastFailureReason = "restraints are currently force-locked by your Owner";
-            return false;
-        }
-
         if (FindDeviceByWord(word) is { } device)
-            return activeDeviceIds.Contains(device.Id) ? Release(device.Id) : ApplyDevice(device.Id, device);
+        {
+            if (activeDeviceIds.Contains(device.Id))
+                return ReleaseUnlocked(device.Id);
+            if (!ApplyDevice(device.Id, device))
+                return false;
+            Track(DeviceRecord(device, WornRestraintKind.Device, device.Name, null));
+            return true;
+        }
 
         if (FindConfiguredModByWord(word) is { } mod)
         {
             var runtimeId = CatalogRuntimeId(mod.CatalogId);
             if (activeDeviceIds.Contains(runtimeId))
-                return Release(runtimeId);
+                return ReleaseUnlocked(runtimeId);
             if (mod.ItemId is not { } itemId || mod.Rules.Count == 0)
             {
                 LastFailureReason = "that configured restraint has no item or rules yet";
                 return false;
             }
-            return ApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride: null);
+            if (!ApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride: null))
+                return false;
+            Track(CatalogRecord(mod.CatalogId, itemId, mod.Alias, mod.Rules, null));
+            return true;
         }
 
         LastFailureReason = $"no restraint named \"{word}\"";
         return false;
     }
 
-    private bool Release(string deviceId)
+    /// The Sub's own way to take off a restraint that isn't locked.
+    public bool ReleaseUnlocked(string runtimeId)
     {
-        if (!activeDeviceIds.Contains(deviceId))
+        if (FindWorn(runtimeId)?.Lock is not null)
+        {
+            LastFailureReason = "that restraint is locked by your Owner";
             return false;
-
-        ReleaseDevice(deviceId);
+        }
+        if (!activeDeviceIds.Contains(runtimeId))
+            return false;
+        ReleaseDevice(runtimeId);
         return true;
     }
 
-    /// Always force-locks. `moodleOverride` (here and below) replaces the device's default moodle.
+    /// Re-applying an already worn restraint keeps its lock until SetLock replaces it.
+    private void Track(WornRestraint entry)
+    {
+        var index = config.WornRestraints.FindIndex(w => w.RuntimeId == entry.RuntimeId);
+        if (index >= 0)
+        {
+            entry.Lock = config.WornRestraints[index].Lock;
+            config.WornRestraints[index] = entry;
+        }
+        else
+            config.WornRestraints.Add(entry);
+        config.Save();
+    }
+
+    private static WornRestraint DeviceRecord(RestraintDeviceDefinition device, WornRestraintKind kind, string reference, string? moodleOverride) => new()
+    {
+        RuntimeId = device.Id,
+        Kind = kind,
+        Reference = reference.Trim(),
+        DeviceId = kind == WornRestraintKind.Device ? device.Id : null,
+        Slot = device.Slot,
+        ItemId = device.ItemId,
+        Stain = device.Stain,
+        Stain2 = device.Stain2,
+        Rules = device.Rules.ToList(),
+        MoodleOverride = moodleOverride,
+    };
+
+    private static WornRestraint CatalogRecord(string catalogId, ulong itemId, string reference, List<RestraintRuleAssignment> rules, string? moodleOverride) => new()
+    {
+        RuntimeId = CatalogRuntimeId(catalogId),
+        Kind = WornRestraintKind.Catalog,
+        Reference = reference.Trim(),
+        CatalogId = catalogId,
+        Slot = GlamourerIpc.GetItemSlot((uint)itemId),
+        ItemId = itemId,
+        Rules = rules.ToList(),
+        MoodleOverride = moodleOverride,
+    };
+
+    /// Always locks. `moodleOverride` (here and below) replaces the device's default moodle.
     public bool ForceApply(string deviceName, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
@@ -206,19 +259,15 @@ public sealed class RestraintCommand
         if (entry is null)
         {
             if (FindConfiguredModByWord(deviceName) is { ItemId: { } itemId } mod && mod.Rules.Count > 0)
-                return ForceApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride, restraintLock);
+                return ForceApplyCatalog(mod.CatalogId, itemId, mod.Rules, moodleOverride, restraintLock, deviceName);
             LastFailureReason = $"device \"{deviceName}\" was not found";
             return false;
         }
 
-        if (!ApplyDevice(entry.Id, entry, moodleOverride))
-            return false;
-
-        EngageLock(restraintLock);
-        return true;
+        return ApplyAndLock(entry, WornRestraintKind.Device, deviceName, moodleOverride, restraintLock);
     }
 
-    /// A Custom Trigger is an Owner command, so this doesn't use the Sub's Toggle (refused while force-locked).
+    /// A Custom Trigger is an Owner command, so this doesn't use the Sub's Toggle (refused while locked).
     public bool ForceApplyById(string deviceId, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
@@ -227,20 +276,7 @@ public sealed class RestraintCommand
             LastFailureReason = $"saved device id {deviceId} is stale";
             return false;
         }
-
-        // Idempotent: don't toggle an active device back off.
-        if (activeDeviceIds.Contains(deviceId))
-        {
-            Replay(deviceId, device.Rules);
-            EngageLock(restraintLock);
-            return true;
-        }
-
-        if (!ApplyDevice(device.Id, device))
-            return false;
-
-        EngageLock(restraintLock);
-        return true;
+        return ApplyAndLock(device, WornRestraintKind.Device, device.Name, null, restraintLock);
     }
 
     /// Activates exactly the Owner's rules, ignoring the Sub's own rules for that device.
@@ -262,12 +298,7 @@ public sealed class RestraintCommand
             Rules = rules,
             AttachedMoodle = captured.AttachedMoodle,
         };
-
-        if (!ApplyDevice(device.Id, device, moodleOverride))
-            return false;
-
-        EngageLock(restraintLock);
-        return true;
+        return ApplyAndLock(device, WornRestraintKind.Device, deviceName, moodleOverride, restraintLock);
     }
 
     /// The device id is derived from slot+item, so release/conflict tracking works without a Sub-side device.
@@ -283,27 +314,34 @@ public sealed class RestraintCommand
             Name = label,
             Rules = rules,
         };
-
         // No Sub-side device behind an ad-hoc apply, so only an Owner moodle override applies.
-        if (!ApplyDevice(device.Id, device, moodleOverride))
-            return false;
+        return ApplyAndLock(device, WornRestraintKind.AdHoc, label, moodleOverride, restraintLock);
+    }
 
-        EngageLock(restraintLock);
+    /// Re-sending a worn restraint replays its pose and still (re)sets its lock.
+    private bool ApplyAndLock(RestraintDeviceDefinition device, WornRestraintKind kind, string reference, string? moodleOverride, RestraintLock restraintLock)
+    {
+        if (activeDeviceIds.Contains(device.Id))
+            Replay(device.Id, device.Rules);
+        else if (!ApplyDevice(device.Id, device, moodleOverride))
+            return false;
+        Track(DeviceRecord(device, kind, reference, moodleOverride));
+        SetLock(device.Id, restraintLock);
         return true;
     }
 
-    public bool ForceApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
+    /// `reference` defaults to the Sub's name for that mod restraint.
+    public bool ForceApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default, string? reference = null)
     {
-        if (activeCatalogOverrides.ContainsKey(CatalogRuntimeId(catalogId)))
-        {
-            Replay(CatalogRuntimeId(catalogId), rules);
-            // Re-sending an already-worn restraint still (re)sets the lock.
-            EngageLock(restraintLock);
-            return true;
-        }
-        if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride))
+        var runtimeId = CatalogRuntimeId(catalogId);
+        if (activeCatalogOverrides.ContainsKey(runtimeId))
+            Replay(runtimeId, rules);
+        else if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride))
             return false;
-        EngageLock(restraintLock);
+        reference ??= config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId)?.Name
+            ?? config.RestraintMapping.LocalCatalog.GetValueOrDefault(catalogId)?.ModName ?? catalogId;
+        Track(CatalogRecord(catalogId, itemId, reference, rules, moodleOverride));
+        SetLock(runtimeId, restraintLock);
         return true;
     }
 
@@ -353,7 +391,8 @@ public sealed class RestraintCommand
         var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
         if (!temporarySettings.Acquire(runtimeId, collection.Value, entry.ModDirectory, selections))
         { LastFailureReason = "Penumbra could not apply the restraint option"; return false; }
-        if (!penumbra.TryRedrawLocalPlayer())
+        var forceRedraw = config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId)?.RedrawOnApply == true;
+        if (!penumbra.TryRedrawLocalPlayer(forceRedraw))
         {
             temporarySettings.Release(runtimeId, collection.Value, entry.ModDirectory);
             LastFailureReason = "Penumbra could not redraw after applying the restraint";
@@ -404,52 +443,83 @@ public sealed class RestraintCommand
     public StruggleSetting PendingStruggle { get; set; }
     public Guid? PendingLockPairingId { get; set; }
 
-    /// (pairing that set the lock) after the Sub struggled free.
-    public event Action<Guid?>? StruggledFree;
+    /// (pairing that set the lock, restraint name) after the Sub struggled free of it.
+    public event Action<Guid?, string>? StruggledFree;
+    /// (pairing that set the lock, restraint name) after the Sub unlocked it with its key.
+    public event Action<Guid?, string>? KeyUnlocked;
 
-    /// Only called after an Owner command actually applied, so a refused command leaves the lock untouched.
-    private void EngageLock(RestraintLock restraintLock)
+    /// Only called after an Owner command actually applied, so a refused command leaves the lock untouched. The latest
+    /// lock command for a restraint decides, so one without a struggle setting or key takes them away.
+    private void SetLock(string runtimeId, RestraintLock restraintLock)
     {
-        runtimeState.RestraintsForceLocked = true;
-        runtimeState.RestraintsLockExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null;
-        // The latest lock command decides, so one without a struggle setting takes struggling away.
-        runtimeState.RestraintsStruggle = PendingStruggle;
-        runtimeState.RestraintsStruggleNextTryUtc = null;
-        runtimeState.RestraintsLockedByPairingId = PendingLockPairingId;
+        if (FindWorn(runtimeId) is not { } worn)
+            return;
+        worn.Lock = new WornRestraintLock
+        {
+            ByPairingId = PendingLockPairingId,
+            ExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null,
+            StruggleLevel = PendingStruggle.Level,
+            StrugglePenaltyMinutes = PendingStruggle.PenaltyMinutes,
+            Key = restraintLock.Key,
+        };
+        config.Save();
     }
 
-    public StruggleSetting? StruggleAvailable =>
-        runtimeState.RestraintsForceLocked && runtimeState.RestraintsStruggle is { Allowed: true } s ? s : null;
+    public static StruggleSetting? StruggleAvailable(WornRestraint worn) =>
+        worn.Lock is { } l && l.Struggle.Allowed ? l.Struggle : null;
 
     /// Null while the Sub may try now.
-    public TimeSpan? StruggleWait =>
-        runtimeState.RestraintsStruggleNextTryUtc is { } next && next > DateTime.UtcNow ? next - DateTime.UtcNow : null;
+    public static TimeSpan? StruggleWait(WornRestraint worn) => Remaining(worn.Lock?.StruggleNextTryUtc);
 
-    /// The Sub's own click only. One roll; an escape releases exactly as a timer running out does.
-    public LocalTestResult Struggle()
+    public static TimeSpan? KeyWait(WornRestraint worn) => Remaining(worn.Lock?.KeyNextTryUtc);
+
+    private static TimeSpan? Remaining(DateTime? until) =>
+        until is { } next && next > DateTime.UtcNow ? next - DateTime.UtcNow : null;
+
+    /// The Sub's own click only. One roll; an escape releases that restraint exactly as its timer running out does.
+    public LocalTestResult Struggle(string runtimeId)
     {
-        if (StruggleAvailable is not { } setting)
-            return LocalTestResult.Fail("Your restraints can't be struggled against.");
-        if (StruggleWait is { } wait)
+        if (FindWorn(runtimeId) is not { Lock: { } restraintLock } worn || StruggleAvailable(worn) is not { } setting)
+            return LocalTestResult.Fail("That restraint can't be struggled against.");
+        if (StruggleWait(worn) is { } wait)
             return LocalTestResult.Fail($"You can try again in {RestraintLock.Format(wait)}.");
         if (Random.Shared.NextDouble() < RestraintStruggle.Chance(setting.Level))
         {
-            var lockedBy = runtimeState.RestraintsLockedByPairingId;
-            Plugin.Log.Information("Struggled free of restraints.");
-            ForceUnlock();
-            StruggledFree?.Invoke(lockedBy);
-            return LocalTestResult.Ok("You struggled free!");
+            Plugin.Log.Information("Struggled free of a restraint.");
+            ReleaseDevice(runtimeId);
+            StruggledFree?.Invoke(restraintLock.ByPairingId, worn.Reference);
+            return LocalTestResult.Ok($"You struggled free of {worn.Reference}!");
         }
-        runtimeState.RestraintsStruggleNextTryUtc = DateTime.UtcNow + RestraintStruggle.Wait(setting.Level);
+        restraintLock.StruggleNextTryUtc = DateTime.UtcNow + RestraintStruggle.Wait(setting.Level);
         var penalty = "";
-        if (setting.PenaltyMinutes > 0 && runtimeState.RestraintsLockExpiresAtUtc is { } expiresAt)
+        if (setting.PenaltyMinutes > 0 && restraintLock.ExpiresAtUtc is { } expiresAt)
         {
             var max = DateTime.UtcNow + RestraintLock.MaxDuration;
             var shifted = expiresAt.AddMinutes(setting.PenaltyMinutes);
-            runtimeState.RestraintsLockExpiresAtUtc = shifted > max ? max : shifted;
+            restraintLock.ExpiresAtUtc = shifted > max ? max : shifted;
             penalty = $" The lock tightened: +{setting.PenaltyMinutes}m.";
         }
-        return LocalTestResult.Fail($"The restraints hold.{penalty} Try again in {RestraintLock.Format(RestraintStruggle.Wait(setting.Level))}.");
+        config.Save();
+        return LocalTestResult.Fail($"{worn.Reference} holds.{penalty} Try again in {RestraintLock.Format(RestraintStruggle.Wait(setting.Level))}.");
+    }
+
+    /// The Sub's own click only. A wrong guess starts a wait, so the key can't be found by rapid retries in-game.
+    public LocalTestResult TryKey(string runtimeId, string guess)
+    {
+        if (FindWorn(runtimeId) is not { Lock: { Key: { } key } restraintLock } worn)
+            return LocalTestResult.Fail("That restraint has no key.");
+        if (KeyWait(worn) is { } wait)
+            return LocalTestResult.Fail($"You can try again in {RestraintLock.Format(wait)}.");
+        if (!RestraintKey.Matches(key, guess))
+        {
+            restraintLock.KeyNextTryUtc = DateTime.UtcNow + RestraintKey.WrongGuessWait;
+            config.Save();
+            return LocalTestResult.Fail($"That key doesn't fit. Try again in {RestraintLock.Format(RestraintKey.WrongGuessWait)}.");
+        }
+        Plugin.Log.Information("Unlocked a restraint with its key.");
+        ReleaseDevice(runtimeId);
+        KeyUnlocked?.Invoke(restraintLock.ByPairingId, worn.Reference);
+        return LocalTestResult.Ok($"{worn.Reference} unlocked.");
     }
 
     public const int MinTimerAdjustSeconds = 60;
@@ -469,53 +539,213 @@ public sealed class RestraintCommand
         return true;
     }
 
-    /// Shifts a Timed lock's end time; a Permanent lock or no lock is left alone. Releases at once if the new end has passed.
+    /// Shifts every Timed lock; Permanent and unlocked restraints are left alone. One shifted past now is released.
     public LocalTestResult AdjustTimedLock(int deltaSeconds)
     {
-        if (!runtimeState.RestraintsForceLocked || runtimeState.RestraintsLockExpiresAtUtc is not { } expiresAt)
-            return LocalTestResult.Fail("Restraints aren't under a timed lock - nothing changed.");
+        var timed = config.WornRestraints.Where(w => w.Lock?.ExpiresAtUtc is not null).ToList();
+        if (timed.Count == 0)
+            return LocalTestResult.Fail("No restraint is under a timed lock - nothing changed.");
         var now = DateTime.UtcNow;
-        var shifted = expiresAt.AddSeconds(deltaSeconds);
-        if (shifted > now + RestraintLock.MaxDuration)
-            shifted = now + RestraintLock.MaxDuration;
-        if (shifted <= now)
+        var released = 0;
+        foreach (var worn in timed)
         {
-            Plugin.Log.Information("Timed restraints lock shortened past its end - releasing restraints.");
-            ForceUnlock();
-            return LocalTestResult.Ok("Restraint timer ran out - restraints released.");
+            var shifted = worn.Lock!.ExpiresAtUtc!.Value.AddSeconds(deltaSeconds);
+            if (shifted > now + RestraintLock.MaxDuration)
+                shifted = now + RestraintLock.MaxDuration;
+            if (shifted <= now)
+            {
+                ReleaseDevice(worn.RuntimeId);
+                released++;
+                continue;
+            }
+            worn.Lock.ExpiresAtUtc = shifted;
         }
-        runtimeState.RestraintsLockExpiresAtUtc = shifted;
-        return LocalTestResult.Ok($"Restraint timer now ends in {RestraintLock.Format(shifted - now)}.");
+        config.Save();
+        Plugin.Log.Information($"Restraint timers shifted by {deltaSeconds}s; {released} ran out.");
+        return LocalTestResult.Ok(released > 0
+            ? $"Restraint timers shifted; {released} ran out and came off."
+            : "Restraint timers shifted.");
+    }
+
+    /// `restraint unlock <name>`. A locked restraint only opens for the Owner who locked it.
+    public LocalTestResult UnlockByReference(string reference, Guid? sourcePairingId)
+    {
+        var worn = config.WornRestraints.FirstOrDefault(w => string.Equals(w.Reference, reference.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (worn is null)
+            return LocalTestResult.Fail($"No worn restraint is called \"{reference.Trim()}\".");
+        if (worn.Lock is { ByPairingId: { } lockedBy } && sourcePairingId is { } source && lockedBy != source)
+            return LocalTestResult.Fail($"\"{worn.Reference}\" was locked by a different Owner.");
+        ReleaseDevice(worn.RuntimeId);
+        return LocalTestResult.Ok($"\"{worn.Reference}\" unlocked.");
     }
 
     public bool ForceUnlock()
     {
         // Slot locks survive reloads but device/claim bookkeeping doesn't, so release every layer unconditionally.
-        var hadRestraints = activeDeviceIds.Count > 0 || boundAnimations.Count > 0 || activeCatalogOverrides.Count > 0 || runtimeState.RestraintsForceLocked;
+        var hadRestraints = activeDeviceIds.Count > 0 || boundAnimations.Count > 0 || activeCatalogOverrides.Count > 0
+            || config.WornRestraints.Count > 0 || config.RestraintsForceLocked;
         restrictionRules.ReleaseAllForPanic();
         ReleaseAllBoundAnimationsForPanic();
         ReleaseAllCatalogOverrides();
         var gearReleased = slotLocks.Release(Owner);
-        runtimeState.RestraintsForceLocked = false;
+        ClearSaved();
         moodles.Ledger.ReleaseAllWithPrefix(AttachedMoodleLedger.RestraintPrefix);
         return gearReleased || hadRestraints;
+    }
+
+    /// Panic: everything comes off and nothing is put back after a restart.
+    public void ReleaseAllForPanic()
+    {
+        ReleaseAllBoundAnimationsForPanic();
+        ClearSaved();
+    }
+
+    private void ClearSaved()
+    {
+        config.WornRestraints.Clear();
+        config.RestraintsForceLocked = false;
+        config.Save();
+    }
+
+    private const int MaxRestoreAttempts = 4;
+    private static readonly TimeSpan RestoreSettle = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RestoreRetryDelay = TimeSpan.FromSeconds(5);
+    private bool restorePending = true;
+    private DateTime? canActSince;
+    private DateTime nextRestoreTryUtc;
+    private readonly Dictionary<string, int> restoreAttempts = new();
+
+    /// Logout tears down the live restraint state; it's put back from the saved list once the Sub is in again.
+    public void OnLogin() => restorePending = true;
+
+    internal static bool CanChangeCharacter() =>
+        Plugin.ClientState.IsLoggedIn
+        && Plugin.ObjectTable.LocalPlayer is not null
+        && !Plugin.Condition[ConditionFlag.BetweenAreas]
+        && !Plugin.Condition[ConditionFlag.BetweenAreas51];
+
+    private static bool InCutscene() =>
+        Plugin.Condition[ConditionFlag.OccupiedInCutSceneEvent] || Plugin.Condition[ConditionFlag.WatchingCutscene] || Plugin.Condition[ConditionFlag.WatchingCutscene78];
+
+    private void ReleaseExpiredLocks()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var worn in config.WornRestraints.Where(w => w.Lock?.ExpiresAtUtc is { } end && now >= end).ToList())
+        {
+            Plugin.Log.Information($"Timed lock on \"{worn.Reference}\" expired - releasing it.");
+            ReleaseDevice(worn.RuntimeId);
+        }
+    }
+
+    /// Re-applies what was worn before a reload or relog. Anything gone for good is released at once; anything else
+    /// (Penumbra or Glamourer not ready yet) gets a few more tries before it's released.
+    private void Restore()
+    {
+        var notice = new List<string>();
+        if (config.RestraintsForceLocked && config.WornRestraints.Count == 0)
+        {
+            Plugin.Log.Information("Releasing a restraints lock saved by an older version.");
+            ForceUnlock();
+            notice.Add("Oathbound changed how restraint locks work, so the restraints you had locked were released.");
+        }
+        config.RestraintsForceLocked = false;
+
+        var retry = false;
+        foreach (var worn in config.WornRestraints.ToList())
+        {
+            if (activeDeviceIds.Contains(worn.RuntimeId))
+                continue;
+            string reason;
+            var permanent = false;
+            if (!(config.Permissions.Restraints && config.TosAcknowledged))
+            {
+                reason = "the Restraints permission is off";
+                permanent = true;
+            }
+            else if (TryReapply(worn, out reason, out permanent))
+            {
+                restoreAttempts.Remove(worn.RuntimeId);
+                continue;
+            }
+
+            var attempts = restoreAttempts.GetValueOrDefault(worn.RuntimeId) + 1;
+            if (!permanent && attempts < MaxRestoreAttempts)
+            {
+                restoreAttempts[worn.RuntimeId] = attempts;
+                retry = true;
+                continue;
+            }
+            restoreAttempts.Remove(worn.RuntimeId);
+            Plugin.Log.Warning($"Couldn't put \"{worn.Reference}\" back on ({reason}) - releasing it.");
+            ReleaseDevice(worn.RuntimeId);
+            notice.Add($"{worn.Reference} came off: {reason}.");
+        }
+
+        restorePending = retry;
+        nextRestoreTryUtc = DateTime.UtcNow + RestoreRetryDelay;
+        if (notice.Count > 0)
+            Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+            {
+                Title = "Restraints",
+                Content = string.Join("\n", notice),
+                Type = Dalamud.Interface.ImGuiNotification.NotificationType.Warning,
+            });
+    }
+
+    /// `permanent` = the restraint's source is gone, so retrying won't help.
+    private bool TryReapply(WornRestraint worn, out string reason, out bool permanent)
+    {
+        permanent = false;
+        LastFailureReason = null;
+        bool applied;
+        switch (worn.Kind)
+        {
+            case WornRestraintKind.Device:
+                if (worn.DeviceId is null || !config.RestraintMapping.Devices.TryGetValue(worn.DeviceId, out var saved))
+                {
+                    reason = "it was deleted";
+                    permanent = true;
+                    return false;
+                }
+                applied = ApplyDevice(worn.RuntimeId, new RestraintDeviceDefinition
+                {
+                    Id = saved.Id, Slot = saved.Slot, ItemId = saved.ItemId, Stain = saved.Stain, Stain2 = saved.Stain2,
+                    Name = saved.Name, Rules = worn.Rules, AttachedMoodle = saved.AttachedMoodle,
+                }, worn.MoodleOverride);
+                break;
+            case WornRestraintKind.Catalog:
+                if (worn.CatalogId is null || worn.ItemId is not { } itemId || !config.RestraintMapping.LocalCatalog.ContainsKey(worn.CatalogId))
+                {
+                    reason = "its mod is gone";
+                    permanent = true;
+                    return false;
+                }
+                applied = ApplyCatalog(worn.CatalogId, itemId, worn.Rules, worn.MoodleOverride);
+                break;
+            default:
+                applied = ApplyDevice(worn.RuntimeId, new RestraintDeviceDefinition
+                {
+                    Id = worn.RuntimeId, Slot = worn.Slot, ItemId = worn.ItemId, Name = worn.Reference, Rules = worn.Rules,
+                }, worn.MoodleOverride);
+                break;
+        }
+        reason = LastFailureReason ?? "it couldn't be applied";
+        return applied;
     }
 
     /// Plays bound animations after Penumbra's redraw settles; playing immediately races the rebuild.
     public void OnFrameworkUpdate()
     {
         // Deferred until the character can be changed, including an end time that passed while unloaded.
-        if (runtimeState.RestraintsForceLocked
-            && runtimeState.RestraintsLockExpiresAtUtc is { } expiresAt
-            && DateTime.UtcNow >= expiresAt
-            && Plugin.ClientState.IsLoggedIn
-            && Plugin.ObjectTable.LocalPlayer is not null
-            && !Plugin.Condition[ConditionFlag.BetweenAreas]
-            && !Plugin.Condition[ConditionFlag.BetweenAreas51])
+        if (CanChangeCharacter())
         {
-            Plugin.Log.Information("Timed restraints lock expired - releasing restraints.");
-            ForceUnlock();
+            ReleaseExpiredLocks();
+            canActSince ??= DateTime.UtcNow;
+            if (restorePending && !InCutscene() && DateTime.UtcNow - canActSince >= RestoreSettle && DateTime.UtcNow >= nextRestoreTryUtc)
+                Restore();
         }
+        else
+            canActSince = null;
 
         var now = Environment.TickCount64;
         foreach (var (key, pending) in pendingBoundPlays.Where(x => now >= x.Value.ReadyAtTicks).ToList())
@@ -589,9 +819,11 @@ public sealed class RestraintCommand
         if (pose is not null)
             ApplyPose(pose.PoseModeId);
 
+        // A saved device's setting applies to the Owner's copies of it too, which share its id.
+        var forceRedraw = device.RedrawOnApply || (config.RestraintMapping.Devices.TryGetValue(deviceId, out var saved) && saved.RedrawOnApply);
         foreach (var rule in boundRules)
         {
-            if (EngageBoundAnimation(deviceId, rule)) continue;
+            if (EngageBoundAnimation(deviceId, rule, forceRedraw)) continue;
             ReleaseBoundAnimations(deviceId);
             restrictionRules.Release(deviceId);
             slotLocks.Release(Owner);
@@ -606,6 +838,8 @@ public sealed class RestraintCommand
         activeDeviceIds.Add(deviceId);
         engaged.Add((deviceId, device.Rules.ToList()));
         moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(deviceId), device.AttachedMoodle, moodleOverride);
+        if (forceRedraw && boundRules.Count == 0)
+            penumbra.TryRedrawLocalPlayer(force: true);
         if (hasGear)
             slotLocks.VerifySoon();
         return true;
@@ -660,7 +894,7 @@ public sealed class RestraintCommand
             : null;
     }
 
-    private bool EngageBoundAnimation(string deviceId, RestraintRuleAssignment rule)
+    private bool EngageBoundAnimation(string deviceId, RestraintRuleAssignment rule, bool forceRedraw = false)
     {
         if (ResolveAnimation(rule.AnimationId) is not { } entry
             || string.IsNullOrWhiteSpace(entry.ModDirectory)
@@ -678,7 +912,7 @@ public sealed class RestraintCommand
         var claimOwner = $"bound:{deviceId}:{rule.Kind}";
         if (!temporarySettings.Acquire(claimOwner, collection.Value, entry.ModDirectory, selections))
             return false;
-        if (!penumbra.TryRedrawLocalPlayer())
+        if (!penumbra.TryRedrawLocalPlayer(forceRedraw))
         {
             temporarySettings.Release(claimOwner, collection.Value, entry.ModDirectory);
             return false;
@@ -732,18 +966,23 @@ public sealed class RestraintCommand
         if (removed) penumbra.TryRedrawLocalPlayer();
     }
 
-    /// Once nothing is left active, the Owner's force-lock and timer go too.
     public void ReleaseDevices(IEnumerable<string> deviceIds)
     {
         foreach (var deviceId in deviceIds.ToList())
             if (activeDeviceIds.Contains(deviceId))
                 ReleaseDevice(deviceId);
-        if (activeDeviceIds.Count == 0)
-            runtimeState.RestraintsForceLocked = false;
     }
 
+    /// Also works for a saved restraint that isn't live yet (waiting to be put back), releasing its saved slot lock.
     private void ReleaseDevice(string deviceId)
     {
+        var worn = FindWorn(deviceId);
+        if (worn is not null)
+        {
+            config.WornRestraints.Remove(worn);
+            config.Save();
+        }
+
         restrictionRules.Release(deviceId);
         activeDeviceIds.Remove(deviceId);
         engaged.RemoveAll(e => e.Id == deviceId);
@@ -755,9 +994,22 @@ public sealed class RestraintCommand
             && temporarySettings.Release(deviceId, catalogOverride.Collection, catalogOverride.ModDirectory))
             penumbra.TryRedrawLocalPlayer();
 
-        // SlotLockManager.Release drops every slot the owner holds, so wait for the last device.
-        if (activeDeviceIds.Count == 0)
-            slotLocks.Release(Owner);
+        ReleaseSlotOf(worn);
+    }
+
+    /// Another worn restraint on the same slot keeps it locked, showing its own piece.
+    private void ReleaseSlotOf(WornRestraint? worn)
+    {
+        if (worn?.Slot is not { } slot)
+        {
+            if (activeDeviceIds.Count == 0 && config.WornRestraints.Count == 0)
+                slotLocks.Release(Owner);
+            return;
+        }
+        if (config.WornRestraints.FirstOrDefault(w => w.Slot == slot && w.ItemId is not null) is { } other)
+            slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [slot] = new(other.ItemId!.Value, other.Stain, other.Stain2) }, TakesOverFrom);
+        else
+            slotLocks.ReleaseSlots(Owner, [slot]);
     }
 
     /// Undyed. Refuses a device with neither gear nor a rule.
@@ -783,7 +1035,7 @@ public sealed class RestraintCommand
 
     public void RemoveDevice(string id)
     {
-        if (activeDeviceIds.Contains(id))
+        if (activeDeviceIds.Contains(id) || FindWorn(id) is not null)
             ReleaseDevice(id);
         config.RestraintMapping.Devices.Remove(id);
         config.Save();
@@ -858,15 +1110,19 @@ public sealed class RestraintCommand
         return $"restraint catalog {catalogId} \"{label.Replace('"', '\'')}\" item:{itemId} {RulesToken}{suffix}";
     }
 
-    public static bool TryParseCatalogCommand(string remainder, out string catalogId, out ulong itemId, out List<RestraintRuleAssignment> rules)
+    public static bool TryParseCatalogCommand(string remainder, out string catalogId, out ulong itemId, out List<RestraintRuleAssignment> rules) =>
+        TryParseCatalogCommand(remainder, out catalogId, out _, out itemId, out rules);
+
+    public static bool TryParseCatalogCommand(string remainder, out string catalogId, out string label, out ulong itemId, out List<RestraintRuleAssignment> rules)
     {
-        catalogId = ""; itemId = 0; rules = [];
+        catalogId = ""; label = ""; itemId = 0; rules = [];
         if (remainder.Length > 400) return false;
         var (id, tail) = SplitFirstToken(remainder);
         if (id.Length is < 8 or > 64 || id.Any(c => !char.IsAsciiLetterOrDigit(c))) return false;
         if (!tail.StartsWith('"')) return false;
         var closing = tail.IndexOf('"', 1);
         if (closing < 0) return false;
+        label = tail[1..closing];
         var after = tail[(closing + 1)..].Trim();
         var (itemToken, afterItem) = SplitFirstToken(after);
         if (!itemToken.StartsWith("item:", StringComparison.OrdinalIgnoreCase) ||
@@ -1033,10 +1289,32 @@ public sealed class RestraintCommand
         config.RestraintMapping.Devices.Values.Select(d => d.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 
-    public IEnumerable<string> ExportEntries() =>
-        ExportCatalog().Split('\n', StringSplitOptions.RemoveEmptyEntries).Concat(
-            config.RestraintMapping.ConfiguredMods
-                .Where(x => config.RestraintMapping.LocalCatalog.ContainsKey(x.CatalogId) && x.Rules.Count > 0 && x.ItemId > 0)
-                .OrderBy(x => x.Name)
-                .Select(x => EncodeConfiguredExport(ConfiguredModRestraintExportEntry.From(x))));
+    /// Restraints whose picture didn't fit the last export's picture budget.
+    public IReadOnlyList<string> PicturesLeftOut { get; private set; } = [];
+
+    public IEnumerable<string> ExportEntries()
+    {
+        var left = new List<string>();
+        var budget = UI.ImageTile.MaxSharedTotalBytes;
+        var configured = new List<string>();
+        foreach (var mod in config.RestraintMapping.ConfiguredMods
+                     .Where(x => config.RestraintMapping.LocalCatalog.ContainsKey(x.CatalogId) && x.Rules.Count > 0 && x.ItemId > 0)
+                     .OrderBy(x => x.Name))
+        {
+            var entry = ConfiguredModRestraintExportEntry.From(mod);
+            if (mod.ImageFile is not null)
+            {
+                if (UI.ImageTile.ReadThumbnail(mod.ThumbnailFile) is { } bytes && bytes.Length <= budget)
+                {
+                    entry.Picture = Convert.ToBase64String(bytes);
+                    budget -= bytes.Length;
+                }
+                else
+                    left.Add(mod.Name);
+            }
+            configured.Add(EncodeConfiguredExport(entry));
+        }
+        PicturesLeftOut = left;
+        return ExportCatalog().Split('\n', StringSplitOptions.RemoveEmptyEntries).Concat(configured);
+    }
 }

@@ -91,8 +91,12 @@ public static class TeleportDestinations
     /// Private instances nobody else can be brought into.
     public static bool IsInnRoom(uint territory) => IntendedUse(territory) == (uint)ECommons.ExcelServices.TerritoryIntendedUseEnum.Inn;
 
-    public static bool IsDuty(uint territory) =>
-        Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.ContentFinderCondition.RowId is > 0;
+    /// The bound-by-duty flags can lag a load; the territory's own duty link can't.
+    public static bool InDuty() =>
+        Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BoundByDuty]
+        || Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BoundByDuty56]
+        || Plugin.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BoundByDuty95]
+        || Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(Plugin.ClientState.TerritoryType)?.ContentFinderCondition.RowId is > 0;
 
     private static uint? IntendedUse(uint territory) =>
         Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory)?.TerritoryIntendedUse.RowId;

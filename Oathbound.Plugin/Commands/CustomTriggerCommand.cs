@@ -122,10 +122,10 @@ public sealed class CustomTriggerCommand
                     var restraintOk = action.RestraintRules is { } inlineRules
                         ? action.RestraintRulesOnly
                             ? restraints.ForceApplyAdHoc(action.RestraintSlot, action.RestraintItemId == 0 ? null : action.RestraintItemId, action.RestraintDeviceName, inlineRules, restraintLock: restraintLock)
-                            : restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId, inlineRules, restraintLock: restraintLock)
+                            : restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId, inlineRules, restraintLock: restraintLock, reference: action.RestraintDeviceName)
                         : action.RestraintCatalogId.Length > 0
                         ? restraints.ForceApplyCatalog(action.RestraintCatalogId, action.RestraintItemId,
-                            config.RestraintMapping.ConfiguredMods.FirstOrDefault(x => x.CatalogId == action.RestraintCatalogId)?.Rules ?? [], restraintLock: restraintLock)
+                            config.RestraintMapping.ConfiguredMods.FirstOrDefault(x => x.CatalogId == action.RestraintCatalogId)?.Rules ?? [], restraintLock: restraintLock, reference: action.RestraintDeviceName)
                         : config.RestraintMapping.Devices.ContainsKey(action.RestraintDeviceId)
                             ? restraints.ForceApplyById(action.RestraintDeviceId, restraintLock)
                             : restraints.ForceApply(action.RestraintDeviceName, restraintLock: restraintLock);

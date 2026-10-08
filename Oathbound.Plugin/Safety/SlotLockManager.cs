@@ -106,14 +106,19 @@ public sealed class SlotLockManager : IDisposable
     }
 
     /// Glamourer can only recompute automation for the whole actor, so every other slot is snapshotted and restored.
-    public bool Release(string owner)
+    public bool Release(string owner) => ReleaseSlots(owner, null);
+
+    /// `only` limits the release to those slots; null releases every slot the owner holds.
+    public bool ReleaseSlots(string owner, IReadOnlyCollection<ApiEquipSlot>? only)
     {
+        bool Selected(ApiEquipSlot slot) => only is null || only.Contains(slot);
+
         // Set aside under someone else: just drop it, the slot keeps showing the other owner's piece.
-        var droppedSetAside = suspended.Where(kv => kv.Value.Owner == owner).Select(kv => kv.Key).ToList();
+        var droppedSetAside = suspended.Where(kv => kv.Value.Owner == owner && Selected(kv.Key)).Select(kv => kv.Key).ToList();
         foreach (var slot in droppedSetAside)
             suspended.Remove(slot);
 
-        var releasedSlots = locks.Where(kv => kv.Value.Owner == owner).Select(kv => kv.Key).ToHashSet();
+        var releasedSlots = locks.Where(kv => kv.Value.Owner == owner && Selected(kv.Key)).Select(kv => kv.Key).ToHashSet();
         if (releasedSlots.Count == 0)
         {
             if (droppedSetAside.Count > 0)

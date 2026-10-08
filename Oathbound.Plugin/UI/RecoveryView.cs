@@ -42,12 +42,13 @@ public sealed class RecoveryView
             }
             else
             {
+                ImGui.AlignTextToFramePadding();
                 ImGui.TextUnformatted(revealed ? code : "****-****-****-****-****-****-**");
                 ImGui.SameLine();
-                if (ImGui.SmallButton(revealed ? "Hide##recoveryReveal" : "Reveal##recoveryReveal"))
+                if (ImGui.Button(revealed ? "Hide##recoveryReveal" : "Reveal##recoveryReveal"))
                     revealed = !revealed;
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Copy##recoveryCopy"))
+                if (ImGui.Button("Copy##recoveryCopy"))
                     ImGui.SetClipboardText(code);
             }
 
@@ -60,7 +61,7 @@ public sealed class RecoveryView
 
             using (ImRaii.Disabled(confirmingRegenerate))
             {
-                if (ImGui.SmallButton("Regenerate code"))
+                if (ImGui.Button("Regenerate code"))
                     confirmingRegenerate = true;
             }
             if (confirmingRegenerate)
@@ -178,7 +179,7 @@ public sealed class RecoveryCodeWindow : Window
         using (ImRaii.PushColor(ImGuiCol.Text, Theme.Accent))
             ImGui.TextUnformatted(code ?? "(unavailable)");
         ImGui.SameLine();
-        if (code is not null && ImGui.SmallButton("Copy##recoveryDialogCopy"))
+        if (code is not null && ImGui.Button("Copy##recoveryDialogCopy"))
             ImGui.SetClipboardText(code);
         ImGui.Spacing();
         IconGlyph.WrappedDisabled("You can see it again any time in Settings > Identity & Pairing > Recovery code.");

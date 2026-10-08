@@ -73,6 +73,8 @@ public sealed class FollowCommand
     private bool wasInCombat;
     private bool pauseNotified;
     private int requestedLength = LengthOption.DefaultYalms;
+    /// From the Owner's `duty:pause`: while the Sub is in a duty the leash waits, even with the Owner right there.
+    private bool pauseInDuties;
 
     // Written by OnFrameworkUpdate, read by Steer (both on the main thread).
     private Vector2 outward;
@@ -116,6 +118,11 @@ public sealed class FollowCommand
 
     public Guid? LeashedPairingId => state == LeashState.Released ? null : ownerPairingId;
 
+    /// Waiting for, or traveling to, the Owner.
+    public bool IsPaused => state is LeashState.Waiting or LeashState.Traveling;
+
+    public bool IsSlack => state == LeashState.Slack;
+
     /// Raised once whenever an engaged leash ends, with its pairing and why.
     public event Action<Guid, LeashEnd>? LeashEnded;
 
@@ -137,7 +144,7 @@ public sealed class FollowCommand
     }
 
     /// Re-leashing the same Owner keeps the leash and its state, taking only the new length and moodle.
-    public bool Engage(PairingState? source, int lengthYalms, string? moodleOverride = null)
+    public bool Engage(PairingState? source, int lengthYalms, string? moodleOverride = null, bool pauseInDuties = false)
     {
         var peerName = source?.PeerName;
         if (!movementLock.IsSteerAvailable || source is null || string.IsNullOrEmpty(peerName))
@@ -154,6 +161,7 @@ public sealed class FollowCommand
             Release(LeashEnd.Other);
 
         requestedLength = lengthYalms;
+        this.pauseInDuties = pauseInDuties;
         if (state == LeashState.Released)
         {
             followedObjectId = owner.GameObjectId;
@@ -288,8 +296,11 @@ public sealed class FollowCommand
     private IGameObject? FindOwner() =>
         Plugin.ObjectTable.FirstOrDefault(o => o is IPlayerCharacter && string.Equals(o.Name.TextValue, ownerName, StringComparison.OrdinalIgnoreCase));
 
+    private bool DutyPaused => pauseInDuties && TeleportDestinations.InDuty();
+
     private bool TryReattach()
     {
+        if (DutyPaused) return false;
         var owner = FindOwner();
         if (owner is null) return false;
         followedObjectId = owner.GameObjectId;
@@ -387,6 +398,23 @@ public sealed class FollowCommand
         {
             if (!teleport.IsLeashJourneyInProgress)
                 OnLeashJourneyEnded(LeashJourneyOutcome.Arrived);
+            return;
+        }
+
+        if (DutyPaused)
+        {
+            if (state != LeashState.Waiting)
+            {
+                Plugin.Log.Info("Leash paused: the Sub is in a duty.");
+                EnterWaiting(notify: false);
+                pauseNotified = true;
+                Plugin.NotificationManager.AddNotification(new Notification
+                {
+                    Title = "Leash paused",
+                    Content = $"{ownerName} pauses your leash in duties. You can move freely, and it picks back up when you leave.",
+                    Type = NotificationType.Info,
+                });
+            }
             return;
         }
 

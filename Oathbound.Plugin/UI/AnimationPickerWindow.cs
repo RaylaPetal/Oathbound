@@ -128,7 +128,7 @@ public sealed class AnimationPickerWindow : Window, IDisposable
                             if (includeTriggerless)
                             {
                                 Layout.TextWithActions(triggerlessLabel, Layout.ActionsWidth("Choose"), t => ImGui.TextDisabled(t));
-                                if (ImGui.SmallButton($"Choose##pickerChoose_{entry.Id}"))
+                                if (ImGui.Button($"Choose##pickerChoose_{entry.Id}"))
                                 {
                                     onSelected?.Invoke(entry);
                                     IsOpen = false;
@@ -142,7 +142,7 @@ public sealed class AnimationPickerWindow : Window, IDisposable
                         else
                         {
                             Layout.TextWithActions(entry.Trigger.Label, Layout.ActionsWidth("Choose"), t => ImGui.TextColored(Theme.Accent, t));
-                            if (ImGui.SmallButton($"Choose##pickerChoose_{entry.Id}"))
+                            if (ImGui.Button($"Choose##pickerChoose_{entry.Id}"))
                             {
                                 onSelected?.Invoke(entry);
                                 IsOpen = false;
@@ -177,7 +177,7 @@ public sealed class AnimationPickerWindow : Window, IDisposable
             if (!ImGui.CollapsingHeader($"{mod.Key}##imported_{mod.Key}", filter.Length > 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None)) continue;
             foreach (var entry in mod.OrderBy(e => e.GroupOrder).ThenBy(e => e.OptionOrder))
             {
-                if (ImGui.SmallButton($"Choose##importedChoose_{entry.Id}"))
+                if (ImGui.Button($"Choose##importedChoose_{entry.Id}"))
                 {
                     onImportedSelected?.Invoke(entry);
                     IsOpen = false;

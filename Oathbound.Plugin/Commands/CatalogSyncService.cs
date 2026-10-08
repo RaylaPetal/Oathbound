@@ -188,6 +188,8 @@ public sealed class CatalogSyncService
             config.RestraintMapping.ImportedPeerCatalog = oldRestraintCatalog;
             return new CatalogSnapshotResult(0, 0, 0, duplicates, $"Could not save the imported snapshot: {ex.Message}");
         }
+        // Only once saved, so a failed save that puts the old list back still finds its pictures.
+        UI.ImageTile.DeleteUnusedShared(quick.Restraints.Select(c => c.SharedImageFile));
         return new CatalogSnapshotResult(added, updated, removed, duplicates, null);
     }
 
@@ -232,6 +234,9 @@ public sealed class CatalogSyncService
                 // The Owner's own timer picks aren't part of the Sub's export.
                 incomingEntry.LockSeconds = match.LockSeconds;
                 incomingEntry.FavoriteLockSeconds = match.FavoriteLockSeconds;
+                incomingEntry.LockKey = match.LockKey;
+                incomingEntry.FavoriteLockKey = match.FavoriteLockKey;
+                incomingEntry.ImageFile = match.ImageFile;
                 incomingEntry.Struggle = match.Struggle;
                 incomingEntry.StrugglePenaltyMinutes = match.StrugglePenaltyMinutes;
                 carryForwardExtra?.Invoke(match, incomingEntry);
@@ -504,6 +509,7 @@ public sealed class CatalogSyncService
                 config.RestraintMapping.ImportedPeerCatalog = oldRestraintCatalog;
                 return new CatalogImportResult(0, 0, 0, 0, 0, 0, duplicates, $"Import could not be saved: {ex.Message}");
             }
+            UI.ImageTile.DeleteUnusedShared(quick.Restraints.Select(c => c.SharedImageFile));
         }
 
         return new CatalogImportResult(titleAdded, wardrobeAdded, gestureAdded, moodlesAdded, restraintsAdded, bundlesAdded, duplicates, null);
@@ -746,6 +752,7 @@ public sealed class CatalogSyncService
                     RestraintItemId = configured.ItemId,
                     RestraintRules = configured.Rules,
                     MoodleOverride = configured.Moodle,
+                    SharedImageFile = UI.ImageTile.WriteShared(configured.Id, configured.Picture),
                 });
                 usedCommands.Add(command);
                 added++;

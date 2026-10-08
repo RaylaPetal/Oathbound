@@ -39,7 +39,7 @@ public sealed class CodePairingView
         if (service.Notice is { Length: > 0 } notice)
         {
             Layout.TextWithActions(notice, Layout.ActionsWidth("OK"), t => ImGui.TextColored(Theme.Warning, t));
-            if (ImGui.SmallButton("OK##codePairingNotice"))
+            if (ImGui.Button("OK##codePairingNotice"))
                 service.DismissNotice();
         }
     }
@@ -69,7 +69,7 @@ public sealed class CodePairingView
         using (ImRaii.PushColor(ImGuiCol.Text, Theme.Accent))
             ImGui.TextUnformatted(formatted);
         ImGui.SameLine();
-        if (ImGui.SmallButton("Copy##pairingCode"))
+        if (ImGui.Button("Copy##pairingCode"))
             ImGui.SetClipboardText(formatted);
 
         if (outgoing.Status == "needs-confirm")
@@ -90,7 +90,7 @@ public sealed class CodePairingView
         IconGlyph.WrappedDisabled($"Waiting for someone to enter it - {Remaining(outgoing.ExpiresAt)} left. You'll be asked to confirm who they are.");
         using (ImRaii.Disabled(busy))
         {
-            if (ImGui.SmallButton("Cancel code##codeCancel"))
+            if (ImGui.Button("Cancel code##codeCancel"))
                 Run(service.CancelOutgoingAsync);
         }
     }

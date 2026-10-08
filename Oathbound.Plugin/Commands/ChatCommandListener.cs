@@ -322,17 +322,22 @@ public sealed class ChatCommandListener : IDisposable
     {
         if (!text.StartsWith(ChatComposer.StruggleNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
-        var (word, _) = SplitFirstToken(text[ChatComposer.StruggleNoticeKeyword.Length..].Trim());
-        if (!word.Equals(ChatComposer.StruggleFreeWord, StringComparison.OrdinalIgnoreCase))
+        var (word, restraint) = SplitFirstToken(text[ChatComposer.StruggleNoticeKeyword.Length..].Trim());
+        var usedKey = word.Equals(ChatComposer.StruggleKeyWord, StringComparison.OrdinalIgnoreCase);
+        if (!usedKey && !word.Equals(ChatComposer.StruggleFreeWord, StringComparison.OrdinalIgnoreCase))
+            return true;
+        // An older Sub's escape names no restraint and frees everything.
+        if (usedKey && restraint.Length == 0)
             return true;
         var (name, world) = ExtractNameAndWorld(sender);
         if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
             return true;
-        estimates.MarkUnrestrained(ownerPairing.Id);
+        estimates.MarkUnrestrained(ownerPairing.Id, restraint.Length > 0 ? restraint : null);
+        var what = restraint.Length > 0 ? restraint : "your restraints";
         Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
         {
-            Title = "Struggled free",
-            Content = $"{ownerPairing.PeerName} struggled free of your restraints.",
+            Title = usedKey ? "Key used" : "Struggled free",
+            Content = usedKey ? $"{ownerPairing.PeerName} used the key on {what}." : $"{ownerPairing.PeerName} struggled free of {what}.",
             Type = Dalamud.Interface.ImGuiNotification.NotificationType.Warning,
         });
         return true;
@@ -435,16 +440,23 @@ public sealed class ChatCommandListener : IDisposable
 
         switch (firstToken.ToLowerInvariant())
         {
+            // `lockfor:` comes off first; a malformed one is left in place, so the verb isn't recognized.
             case "title":
-                return permissions.Title ? HandleForceTitle(rest) : LocalTestResult.Fail("Title permission is not enabled.");
+                return permissions.Title
+                    ? HandleForceTitle(LockTimerOption.StripSeconds(rest, out var titleSeconds), LockExpiry(titleSeconds), sourcePairing)
+                    : LocalTestResult.Fail("Title permission is not enabled.");
             case "outfit":
-                return permissions.Outfit ? HandleForceOutfit(MoodleOption.Strip(rest, out var outfitMoodle), outfitMoodle) : LocalTestResult.Fail("Outfit permission is not enabled.");
+                return permissions.Outfit
+                    ? HandleForceOutfit(MoodleOption.Strip(LockTimerOption.StripSeconds(rest, out var outfitSeconds), out var outfitMoodle), outfitMoodle, LockExpiry(outfitSeconds))
+                    : LocalTestResult.Fail("Outfit permission is not enabled.");
             case "gesture":
                 return permissions.Gesture && config.TosAcknowledged ? HandleForceGesture(rest, sourcePairing) : LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
             case "collar":
                 return permissions.Collar ? HandleForceCollar(rest, sourcePairing) : LocalTestResult.Fail("Collar permission is not enabled.");
             case "moodle":
-                return permissions.Moodles ? HandleForceMoodle(rest, sourcePairing) : LocalTestResult.Fail("Moodles permission is not enabled.");
+                return permissions.Moodles
+                    ? HandleForceMoodle(LockTimerOption.StripSeconds(rest, out var moodleSeconds), moodleSeconds, sourcePairing)
+                    : LocalTestResult.Fail("Moodles permission is not enabled.");
             case "restraint":
                 // `lockfor:` comes off first, then the trailing `moodle:`.
                 return permissions.Restraints && config.TosAcknowledged
@@ -510,7 +522,11 @@ public sealed class ChatCommandListener : IDisposable
         Step("toy", permissions.ToyControl, () => toyControl.ForceStop());
         Step("teleport", permissions.Teleport && teleport.IsInProgress, () => teleport.Stop("Owner sent Revert all"));
         // Last, so the releases above have already dropped their own holds.
-        Step("moodles", permissions.Moodles, () => moodles.Ledger.ClearAllExceptCollar());
+        Step("moodles", permissions.Moodles, () =>
+        {
+            moodles.EndAllLocks();
+            moodles.Ledger.ClearAllExceptCollar();
+        });
         // A later "revert custom triggers" must not undo something applied after this.
         customTriggers.ForgetEffects();
 
@@ -520,7 +536,11 @@ public sealed class ChatCommandListener : IDisposable
         return failed.Count == 0 ? LocalTestResult.Ok(summary) : LocalTestResult.Fail($"{summary} Failed: {string.Join(", ", failed)}.");
     }
 
-    private LocalTestResult HandleForceTitle(string rest)
+    /// Clamped like a restraint timer, counted from now.
+    private static DateTime? LockExpiry(int? seconds) =>
+        RestraintLock.FromSeconds(seconds).Duration is { } duration ? DateTime.UtcNow + duration : null;
+
+    private LocalTestResult HandleForceTitle(string rest, DateTime? expiresAtUtc, PairingState? sourcePairing)
     {
         if (rest.Equals("clear", StringComparison.OrdinalIgnoreCase))
         {
@@ -534,8 +554,8 @@ public sealed class ChatCommandListener : IDisposable
             var text = StripQuotes(rest[createPrefix.Length..].Trim());
             if (text.Length > 0)
             {
-                title.ForceApply(text);
-                return LocalTestResult.Ok($"Title \"{text}\" applied.");
+                title.ForceApply(text, expiresAtUtc, sourcePairing?.Id);
+                return LocalTestResult.Ok($"Title \"{text}\" applied{Until(expiresAtUtc)}.");
             }
             return LocalTestResult.Fail("\"title create\" was given no text.");
         }
@@ -545,8 +565,8 @@ public sealed class ChatCommandListener : IDisposable
         {
             if (TitleCommand.TryParseStyleCommand(rest[stylePrefix.Length..], out var text, out var isPrefix, out var color, out var glow))
             {
-                title.ForceApply(text, isPrefix, color, glow);
-                return LocalTestResult.Ok($"Title \"{text}\" applied with style.");
+                title.ForceApply(text, isPrefix, color, glow, expiresAtUtc, sourcePairing?.Id);
+                return LocalTestResult.Ok($"Title \"{text}\" applied with style{Until(expiresAtUtc)}.");
             }
             return LocalTestResult.Fail("\"title style\" was malformed - expected \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b> [glow:<r>,<g>,<b>]\".");
         }
@@ -554,7 +574,10 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"title\" override \"{rest}\" - expected \"create <text>\", \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b>\", or \"clear\".");
     }
 
-    private LocalTestResult HandleForceOutfit(string rest, string? moodleOverride)
+    private static string Until(DateTime? expiresAtUtc) =>
+        expiresAtUtc is { } end ? $", locked for {RestraintLock.Format(end - DateTime.UtcNow)}" : "";
+
+    private LocalTestResult HandleForceOutfit(string rest, string? moodleOverride, DateTime? expiresAtUtc)
     {
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
@@ -570,9 +593,9 @@ public sealed class ChatCommandListener : IDisposable
             var name = StripQuotes(rest[wearPrefix.Length..].Trim());
             if (name.Length == 0)
                 return LocalTestResult.Fail("\"outfit wear\" was given no design name.");
-            var (worn, wearReason) = outfit.ForceApply(name, moodleOverride, lockOutfit: false);
+            var (worn, wearReason) = outfit.ForceApply(name, moodleOverride, lockOutfit: false, expiresAtUtc);
             return worn
-                ? LocalTestResult.Ok($"Outfit \"{name}\" applied (not locked)." + (wearReason is null ? "" : $" {wearReason}"))
+                ? LocalTestResult.Ok($"Outfit \"{name}\" applied ({(expiresAtUtc is null ? "not locked" : Until(expiresAtUtc).TrimStart(',', ' '))})." + (wearReason is null ? "" : $" {wearReason}"))
                 : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {wearReason}");
         }
 
@@ -582,9 +605,9 @@ public sealed class ChatCommandListener : IDisposable
             var name = StripQuotes(rest[lockPrefix.Length..].Trim());
             if (name.Length > 0)
             {
-                var (success, reason) = outfit.ForceApply(name, moodleOverride);
+                var (success, reason) = outfit.ForceApply(name, moodleOverride, expiresAtUtc: expiresAtUtc);
                 return success
-                    ? LocalTestResult.Ok($"Outfit \"{name}\" applied and locked." + (reason is null ? "" : $" {reason}"))
+                    ? LocalTestResult.Ok($"Outfit \"{name}\" applied and locked{Until(expiresAtUtc)}." + (reason is null ? "" : $" {reason}"))
                     : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {reason}");
             }
             return LocalTestResult.Fail("\"outfit lock\" was given no design name.");
@@ -640,8 +663,10 @@ public sealed class ChatCommandListener : IDisposable
         return LocalTestResult.Fail($"Unrecognized \"collar\" override \"{rest}\" - expected \"lock\" or \"unlock\".");
     }
 
-    private LocalTestResult HandleForceMoodle(string rest, PairingState? sourcePairing)
+    /// `lockSeconds` set locks the moodle for that long; a custom one is only locked when it has a timer.
+    private LocalTestResult HandleForceMoodle(string rest, int? lockSeconds, PairingState? sourcePairing)
     {
+        var expiresAtUtc = LockExpiry(lockSeconds);
         var (verb, payload) = SplitFirstToken(rest);
         if (verb.Equals(CustomMoodle.CustomWord, StringComparison.OrdinalIgnoreCase))
         {
@@ -651,9 +676,10 @@ public sealed class ChatCommandListener : IDisposable
                 return LocalTestResult.Fail("The custom moodle was malformed or over its limits.");
             // Moodles matches the applier against friends/party as Name@World.
             var applier = sourcePairing is { PeerName: { } name, PeerWorld: { } world } ? $"{name}@{world}" : "Owner";
-            return moodles.ApplyCustom(custom, applier);
+            return moodles.ApplyCustom(custom, applier, locked: lockSeconds is not null, expiresAtUtc, sourcePairing?.Id);
         }
-        if (verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase))
+        // `remove <id>` takes off a custom moodle; `remove "<name>"` (below) one from the Sub's library or a locked one.
+        if (lockSeconds is null && verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase) && CustomMoodle.TryDecodeId(payload, out _))
         {
             if (!moodles.CustomAllowed)
                 return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.");
@@ -675,14 +701,23 @@ public sealed class ChatCommandListener : IDisposable
             var name = rest[applyPrefix.Length..].Trim();
             if (name.Length > 0)
             {
-                return moodles.ForceApply(name)
-                    ? LocalTestResult.Ok($"Moodle \"{name}\" applied.")
+                return moodles.ForceApply(name, expiresAtUtc, sourcePairing?.Id)
+                    ? LocalTestResult.Ok($"Moodle \"{name}\" applied{Until(expiresAtUtc)}.")
                     : LocalTestResult.Fail($"No Moodles status named \"{name}\" (or the apply failed).");
             }
             return LocalTestResult.Fail("\"moodle apply\" was given no status name.");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\" or \"clear\".");
+        const string removePrefix = "remove ";
+        if (lockSeconds is null && rest.StartsWith(removePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var name = rest[removePrefix.Length..].Trim();
+            return moodles.Remove(name)
+                ? LocalTestResult.Ok($"Moodle {name} removed.")
+                : LocalTestResult.Fail($"No locked moodle or Moodles status named {name}.");
+        }
+
+        return LocalTestResult.Fail($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\", \"remove <status name>\" or \"clear\".");
     }
 
     private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride, RestraintLock restraintLock)
@@ -693,6 +728,15 @@ public sealed class ChatCommandListener : IDisposable
             return restraints.ForceUnlock()
                 ? LocalTestResult.Ok("Restraints unlocked.")
                 : LocalTestResult.Fail("Restraint unlock failed - nothing was force-locked.");
+        }
+
+        const string unlockPrefix = "unlock ";
+        if (rest.StartsWith(unlockPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            // Unlock carries no lock options; refusing them keeps a malformed command from unlocking.
+            if (restraintLock.IsTimed || restraintLock.Key is not null)
+                return LocalTestResult.Fail("\"restraint unlock\" doesn't take lock options.");
+            return restraints.UnlockByReference(rest[unlockPrefix.Length..], restraints.PendingLockPairingId);
         }
 
         const string timerPrefix = "timer ";
@@ -723,9 +767,9 @@ public sealed class ChatCommandListener : IDisposable
         const string catalogPrefix = "catalog ";
         if (rest.StartsWith(catalogPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            if (!RestraintCommand.TryParseCatalogCommand(rest[catalogPrefix.Length..], out var id, out var itemId, out var rules))
+            if (!RestraintCommand.TryParseCatalogCommand(rest[catalogPrefix.Length..], out var id, out var label, out var itemId, out var rules))
                 return LocalTestResult.Fail("The catalog restraint command was malformed.");
-            return restraints.ForceApplyCatalog(id, itemId, rules, moodleOverride, restraintLock)
+            return restraints.ForceApplyCatalog(id, itemId, rules, moodleOverride, restraintLock, label)
                 ? LocalTestResult.Ok("Shared restraint applied.")
                 : LocalTestResult.Fail(restraints.LastFailureReason ?? "The shared restraint could not be applied.");
         }
@@ -892,8 +936,8 @@ public sealed class ChatCommandListener : IDisposable
             return LocalTestResult.Ok($"\"{alias}\" matched unlock-outfit.");
         }
 
-        // `leash [length:N] [moodle:"..."]`: moodle is always last, so it's stripped first.
-        var leashRest = LengthOption.Strip(MoodleOption.Strip(alias, out var leashMoodle), out var leashLength);
+        // `leash [duty:pause] [length:N] [moodle:"..."]`: stripped from the end, moodle first.
+        var leashRest = DutyPauseOption.Strip(LengthOption.Strip(MoodleOption.Strip(alias, out var leashMoodle), out var leashLength), out var leashDutyPause);
         if (Matches(leashRest, ControlWords.Leash))
         {
             // A refused leash is reported back so the Owner's client doesn't show one that never engaged.
@@ -902,7 +946,7 @@ public sealed class ChatCommandListener : IDisposable
                 NotifyLeashRefused(sourcePairing);
                 return LocalTestResult.Fail("Follow permission is not enabled.");
             }
-            if (follow.Engage(sourcePairing, leashLength ?? LengthOption.DefaultYalms, leashMoodle))
+            if (follow.Engage(sourcePairing, leashLength ?? LengthOption.DefaultYalms, leashMoodle, leashDutyPause))
                 return LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).");
             NotifyLeashRefused(sourcePairing);
             return LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.");

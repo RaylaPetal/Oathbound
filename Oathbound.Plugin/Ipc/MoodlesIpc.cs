@@ -90,6 +90,13 @@ public sealed class MoodlesIpc
         }
     }
 
+    /// Null when Moodles can't be asked.
+    public HashSet<Guid>? GetActiveStatusIds()
+    {
+        try { return getClientStatusManagerInfo.InvokeFunc().Select(s => s.GUID).ToHashSet(); }
+        catch { return null; }
+    }
+
     public bool ApplyStatus(Guid statusId)
     {
         var player = Player.Object;

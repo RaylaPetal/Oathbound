@@ -7,7 +7,7 @@ namespace Oathbound.Plugin.UI;
 
 internal static class SafewordEditor
 {
-    public static void Draw(PluginConfig config, string id, ref bool reveal)
+    public static void Draw(PluginConfig config, string id, ref bool reveal, string? help = null)
     {
         ImGui.PushID(id);
         var value = config.PanicSafeword ?? "";
@@ -26,6 +26,8 @@ internal static class SafewordEditor
 
         IconGlyph.WrappedColored(config.PanicSafeword is null ? Theme.TextMuted : Theme.Success,
             config.PanicSafeword is null ? "No safeword set — plain /obpanic remains available." : "Safeword configured for /obpanic.");
+        if (help is not null)
+            IconGlyph.HelpMarker(help);
         ImGui.PopID();
     }
 }

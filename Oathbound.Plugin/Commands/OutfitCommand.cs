@@ -54,7 +54,10 @@ public sealed class OutfitCommand
         if (runtimeState.OutfitForceLocked)
             return (false, "the outfit is currently force-locked by your Owner.");
 
-        return ApplyDesign(alias.DesignId, alias.DesignName, alias.Locked, alias.AttachedMoodle, moodleOverride: null);
+        var result = ApplyDesign(alias.DesignId, alias.DesignName, alias.Locked, alias.AttachedMoodle, moodleOverride: null);
+        if (result.Success)
+            runtimeState.OutfitName = alias.DesignName;
+        return result;
     }
 
     /// Also clears the outfit's attached moodle even when nothing was locked. Never changes the look.
@@ -71,9 +74,10 @@ public sealed class OutfitCommand
     }
 
     /// The Owner only knows the design's name. The default moodle comes from the first alias for this design that has one.
-    /// `lockOutfit` false is `outfit wear`: nothing is locked.
-    public (bool Success, string? Reason) ForceApply(string designName, string? moodleOverride = null, bool lockOutfit = true)
+    /// `lockOutfit` false is `outfit wear`: nothing is locked, unless it has a timer.
+    public (bool Success, string? Reason) ForceApply(string designName, string? moodleOverride = null, bool lockOutfit = true, DateTime? expiresAtUtc = null)
     {
+        lockOutfit |= expiresAtUtc is not null;
         var design = config.WardrobeMapping.LocalDesigns.Values
             .FirstOrDefault(d => string.Equals(d.Name, designName, StringComparison.OrdinalIgnoreCase));
         if (design is null)
@@ -85,6 +89,11 @@ public sealed class OutfitCommand
             return (false, reason);
 
         runtimeState.OutfitForceLocked = lockOutfit;
+        runtimeState.OutfitName = designName;
+        config.OwnerLocks.Outfit = lockOutfit
+            ? new OutfitLock { DesignName = designName, ByPairingId = CommandSourcePairingId, ExpiresAtUtc = expiresAtUtc }
+            : null;
+        config.Save();
         return (true, null);
     }
 
@@ -94,6 +103,7 @@ public sealed class OutfitCommand
     {
         RevertedToBase?.Invoke();
         ForceUnlock();
+        runtimeState.OutfitName = null;
         var reverted = glamourer.RevertToAutomationFull() == GlamourerApiEc.Success;
         slotLocks.VerifySoon();
         return reverted;
@@ -115,8 +125,20 @@ public sealed class OutfitCommand
         if (hadLock)
             slotLocks.Release(Owner);
         runtimeState.OutfitForceLocked = false;
+        if (config.OwnerLocks.Outfit is not null)
+        {
+            config.OwnerLocks.Outfit = null;
+            config.Save();
+        }
         var hadMoodle = moodles.Ledger.Release(AttachedMoodleLedger.OutfitSource);
         return hadLock || hadMoodle;
+    }
+
+    /// A timed lock ran out: unlike the Owner's unlock, the punishment outfit comes off too.
+    public void ExpireLock()
+    {
+        Plugin.Log.Information($"Timed outfit lock on \"{config.OwnerLocks.Outfit?.DesignName}\" expired - reverting.");
+        RevertToBase();
     }
 
     /// A slot already locked by another owner (e.g. the collar's Neck) is restored right after the apply, so it never

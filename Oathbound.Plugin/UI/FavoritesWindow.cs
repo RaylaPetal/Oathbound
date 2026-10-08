@@ -83,7 +83,7 @@ public sealed class FavoritesWindow : Window, IDisposable
         ImGui.BeginGroup();
         using (ImRaii.Disabled(!canSend || !fits))
         {
-            if (ImGui.SmallButton($"Send##fav_{cmd.Label}_{cmd.Command}"))
+            if (ImGui.Button($"Send##fav_{cmd.Label}_{cmd.Command}"))
                 plugin.ChatSender.SendAll(messages);
         }
         ImGui.SameLine();
@@ -99,7 +99,7 @@ public sealed class FavoritesWindow : Window, IDisposable
     {
         using (ImRaii.Disabled(!canSend))
         {
-            if (ImGui.SmallButton("Send##favTeleport"))
+            if (ImGui.Button("Send##favTeleport"))
             {
                 var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
                 if (!success)

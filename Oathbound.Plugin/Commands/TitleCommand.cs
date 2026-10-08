@@ -7,17 +7,35 @@ using Oathbound.Plugin.Safety;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Alias-triggered titles plus the Owner's force-apply, which locks out the Sub's aliases until cleared.
-public sealed class TitleCommand
+/// Alias-triggered titles plus the Owner's title, which is locked: persisted in config, put back whenever something
+/// else replaces it, and blocking the Sub's own aliases until it ends.
+public sealed class TitleCommand : IDisposable
 {
+    private readonly PluginConfig config;
     private readonly HonorificIpc honorific;
     private readonly SubRuntimeState runtimeState;
 
-    public TitleCommand(HonorificIpc honorific, SubRuntimeState runtimeState)
+    public TitleCommand(PluginConfig config, HonorificIpc honorific, SubRuntimeState runtimeState)
     {
+        this.config = config;
         this.honorific = honorific;
         this.runtimeState = runtimeState;
+        honorific.LocalTitleChanged += OnLocalTitleChanged;
+        honorific.Ready += RequestReassert;
+        if (config.OwnerLocks.Title is { } saved)
+        {
+            runtimeState.TitleApplied = true;
+            runtimeState.TitleText = saved.Text;
+        }
     }
+
+    public void Dispose()
+    {
+        honorific.LocalTitleChanged -= OnLocalTitleChanged;
+        honorific.Ready -= RequestReassert;
+    }
+
+    public TitleLock? Lock => config.OwnerLocks.Title;
 
     public void Apply(TitleAliasDefinition alias)
     {
@@ -32,6 +50,7 @@ public sealed class TitleCommand
             Glow = alias.Glow,
         });
         runtimeState.TitleApplied = true;
+        runtimeState.TitleText = alias.Text;
     }
 
     public void Clear()
@@ -41,62 +60,84 @@ public sealed class TitleCommand
 
         honorific.ClearTitle();
         runtimeState.TitleApplied = false;
+        runtimeState.TitleText = null;
     }
 
     /// Plain white suffix; see the styled overload.
-    public void ForceApply(string text)
-    {
-        honorific.SetTitle(new HonorificTitleData { Title = text, IsPrefix = false, Color = new(1, 1, 1) });
-        runtimeState.TitleApplied = true;
-        runtimeState.TitleForceLocked = true;
-        runtimeState.TitleForceText = text;
-        runtimeState.TitleForceIsPrefix = false;
-        runtimeState.TitleForceColor = new(1, 1, 1);
-        runtimeState.TitleForceGlow = null;
-    }
+    public void ForceApply(string text, DateTime? expiresAtUtc = null, Guid? byPairingId = null) =>
+        ForceApply(text, false, new Vector3(1, 1, 1), null, expiresAtUtc, byPairingId);
 
-    /// `glow` is optional.
-    public void ForceApply(string text, bool isPrefix, Vector3 color, Vector3? glow = null)
+    /// `glow` is optional. `expiresAtUtc` null locks it until the Owner clears it.
+    public void ForceApply(string text, bool isPrefix, Vector3 color, Vector3? glow = null, DateTime? expiresAtUtc = null, Guid? byPairingId = null)
     {
-        honorific.SetTitle(new HonorificTitleData { Title = text, IsPrefix = isPrefix, Color = color, Glow = glow });
+        config.OwnerLocks.Title = new TitleLock
+        {
+            Text = text, IsPrefix = isPrefix, Color = color, Glow = glow, ByPairingId = byPairingId, ExpiresAtUtc = expiresAtUtc,
+        };
+        config.Save();
+        Set(config.OwnerLocks.Title);
         runtimeState.TitleApplied = true;
-        runtimeState.TitleForceLocked = true;
-        runtimeState.TitleForceText = text;
-        runtimeState.TitleForceIsPrefix = isPrefix;
-        runtimeState.TitleForceColor = color;
-        runtimeState.TitleForceGlow = glow;
+        runtimeState.TitleText = text;
     }
 
     public void ForceClear()
     {
+        var hadLock = config.OwnerLocks.Title is not null;
+        config.OwnerLocks.Title = null;
+        if (hadLock)
+            config.Save();
         honorific.ClearTitle();
         runtimeState.TitleApplied = false;
-        runtimeState.TitleForceLocked = false;
-        runtimeState.TitleForceText = null;
+        runtimeState.TitleText = null;
     }
 
-    /// Honorific has no change notification, so the forced style is re-sent on an interval, bypassing Apply.
+    /// Re-sent at once after a login or Honorific coming back.
+    public void RequestReassert() => reassertPending = true;
+
+    /// Honorific may raise this off the framework thread, so it only flags; our own set raises it too, so a title
+    /// that already matches is left alone.
+    private void OnLocalTitleChanged(HonorificTitleData? shown)
+    {
+        if (config.OwnerLocks.Title is { } locked && !Matches(shown, locked))
+            reassertPending = true;
+    }
+
+    /// Honorific's change event is the fast path; the interval covers versions without it and missed events.
     public void OnFrameworkUpdate()
     {
-        if (!runtimeState.TitleForceLocked || runtimeState.TitleForceText is null)
+        if (config.OwnerLocks.Title is not { } locked)
             return;
 
         var now = Environment.TickCount64;
+        if (reassertPending && now >= nextSetAllowedTicks)
+        {
+            reassertPending = false;
+            Set(locked);
+            nextSetAllowedTicks = now + MinSetIntervalMs;
+            nextReassertTicks = now + ReassertIntervalMs;
+            return;
+        }
         if (now < nextReassertTicks)
             return;
-
-        honorific.SetTitle(new HonorificTitleData
-        {
-            Title = runtimeState.TitleForceText,
-            IsPrefix = runtimeState.TitleForceIsPrefix,
-            Color = runtimeState.TitleForceColor,
-            Glow = runtimeState.TitleForceGlow,
-        });
         nextReassertTicks = now + ReassertIntervalMs;
+        if (honorific.TryGetLocalTitle(out var shown) && Matches(shown, locked))
+            return;
+        Set(locked);
+        nextSetAllowedTicks = now + MinSetIntervalMs;
     }
 
+    private void Set(TitleLock locked) =>
+        honorific.SetTitle(new HonorificTitleData { Title = locked.Text, IsPrefix = locked.IsPrefix, Color = locked.Color, Glow = locked.Glow });
+
+    private static bool Matches(HonorificTitleData? shown, TitleLock locked) =>
+        shown is not null && shown.Title == locked.Text && shown.IsPrefix == locked.IsPrefix;
+
     private const long ReassertIntervalMs = 10_000;
+    /// So two plugins both re-setting the title can't flip it every frame.
+    private const long MinSetIntervalMs = 1_000;
     private long nextReassertTicks;
+    private long nextSetAllowedTicks;
+    private volatile bool reassertPending;
 
     /// A separate `style` verb, since free-form title text has nothing for an old client to fail closed against.
     /// `glow` is omitted when null.

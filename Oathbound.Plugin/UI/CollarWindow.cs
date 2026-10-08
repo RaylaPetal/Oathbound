@@ -211,15 +211,16 @@ public class CollarWindow : Window, IDisposable
         TutorialService.Anchor(TutorialAnchors.MainPairing);
         DrawCollarWarnings(config);
         DrawSubControlToggle();
+        moduleWindow.DrawHeaderOaths();
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.BeginGroup();
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Safeword");
-        SafewordEditor.Draw(config, "mainHeader", ref revealSafeword);
+        SafewordEditor.Draw(config, "mainHeader", ref revealSafeword,
+            "This only configures the typed /obpanic command; editing it never triggers panic or changes pairing.");
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.MainSafeword);
-        IconGlyph.HelpMarker("This only configures the typed /obpanic command; editing it never triggers panic or changes pairing.");
 
         DrawTeleportJourneyRow();
 
@@ -280,7 +281,7 @@ public class CollarWindow : Window, IDisposable
             ImGui.PushID(pairingId.GetHashCode());
             var peerLabel = notice.PeerRole == PluginRole.Owner ? "Your Owner" : "Your Sub";
             IconGlyph.WrappedColored(Theme.Warning, $"{peerLabel} ({pairing?.PeerName}@{pairing?.PeerWorld}) ended this pairing on their side.");
-            if (ImGui.SmallButton("Dismiss##peerUnpairedNotice"))
+            if (ImGui.Button("Dismiss##peerUnpairedNotice"))
                 plugin.ChatCommandListener.DismissPeerUnpairedNotice(pairingId);
             ImGui.PopID();
         }
@@ -433,16 +434,11 @@ public class CollarWindow : Window, IDisposable
     {
         var favorites = plugin.Configuration.QuickCommands.FavoriteFixedActions;
         var isFavorite = favorites.Contains(favoriteId);
-        using (ImRaii.PushColor(ImGuiCol.Text, Theme.Warning, isFavorite))
+        if (IconGlyph.Star($"##fav_{favoriteId}", isFavorite, isFavorite ? "Remove from favorites" : "Add to favorites"))
         {
-            if (ImGui.SmallButton($"{(isFavorite ? "Favorited" : "Favorite")}##fav_{favoriteId}"))
-            {
-                if (isFavorite) favorites.Remove(favoriteId);
-                else favorites.Add(favoriteId);
-                plugin.Configuration.Save();
-            }
+            if (isFavorite) favorites.Remove(favoriteId);
+            else favorites.Add(favoriteId);
+            plugin.Configuration.Save();
         }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(isFavorite ? "Remove from favorites" : "Add to favorites");
     }
 }

@@ -1,5 +1,4 @@
 using System;
-using System.Numerics;
 using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Safety;
@@ -15,16 +14,13 @@ public sealed class SubRuntimeState
     }
 
     public bool TitleApplied { get; set; }
+    /// What's showing, for the Active banner. In memory only, like TitleApplied.
+    public string? TitleText { get; set; }
+    public string? OutfitName { get; set; }
     public bool MovementLockActive { get; set; }
 
-    /// While true, the Sub's own alias-triggered changes are refused.
-    public bool TitleForceLocked { get; set; }
-
-    /// Replayed by TitleCommand while TitleForceLocked. In-memory only, like the lock.
-    public string? TitleForceText { get; set; }
-    public bool TitleForceIsPrefix { get; set; }
-    public Vector3 TitleForceColor { get; set; } = new(1, 1, 1);
-    public Vector3? TitleForceGlow { get; set; }
+    /// While true, the Sub's own title aliases are refused.
+    public bool TitleForceLocked => config.OwnerLocks.Title is not null;
 
     public bool OutfitForceLocked
     {
@@ -37,55 +33,6 @@ public sealed class SubRuntimeState
     {
         get => config.CollarForceLocked;
         set { config.CollarForceLocked = value; config.Save(); }
-    }
-
-    public bool RestraintsForceLocked
-    {
-        get => config.RestraintsForceLocked;
-        set
-        {
-            config.RestraintsForceLocked = value;
-            // Every path that clears the lock also discards its timer and struggle state, so neither outlives it.
-            if (!value)
-            {
-                config.RestraintsLockExpiresAtUtc = null;
-                config.RestraintsStruggleLevel = Commands.StruggleLevel.None;
-                config.RestraintsStrugglePenaltyMinutes = 0;
-                config.RestraintsStruggleNextTryUtc = null;
-                config.RestraintsLockedByPairingId = null;
-            }
-            config.Save();
-        }
-    }
-
-    public Commands.StruggleSetting RestraintsStruggle
-    {
-        get => new(config.RestraintsStruggleLevel, config.RestraintsStrugglePenaltyMinutes);
-        set
-        {
-            config.RestraintsStruggleLevel = value.Level;
-            config.RestraintsStrugglePenaltyMinutes = value.PenaltyMinutes;
-            config.Save();
-        }
-    }
-
-    public DateTime? RestraintsStruggleNextTryUtc
-    {
-        get => config.RestraintsStruggleNextTryUtc;
-        set { config.RestraintsStruggleNextTryUtc = value; config.Save(); }
-    }
-
-    public Guid? RestraintsLockedByPairingId
-    {
-        get => config.RestraintsLockedByPairingId;
-        set { config.RestraintsLockedByPairingId = value; config.Save(); }
-    }
-
-    /// Null for a Permanent (or no) lock.
-    public DateTime? RestraintsLockExpiresAtUtc
-    {
-        get => config.RestraintsLockExpiresAtUtc;
-        set { config.RestraintsLockExpiresAtUtc = value; config.Save(); }
     }
 
     /// Persisted so a toy left running after a crash can still be cleared by panic.
@@ -112,11 +59,12 @@ public sealed class SubRuntimeState
     public void Reset()
     {
         TitleApplied = false;
+        TitleText = null;
+        OutfitName = null;
         MovementLockActive = false;
-        TitleForceLocked = false;
-        TitleForceText = null;
+        // Every Owner lock ends with panic; the moodles themselves are cleared by the ledger.
+        config.OwnerLocks = new OwnerLockState();
         OutfitForceLocked = false;
-        RestraintsForceLocked = false;
         ToyControlForceLocked = false;
         // ToyTriggersSuspended and CollarForceLocked are deliberately not cleared.
     }

@@ -150,7 +150,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         foreach (var (itemId, name) in visible)
         {
             Layout.TextWithActions(name, Layout.ButtonWidth("Choose"));
-            if (ImGui.SmallButton($"Choose##itemPicker_{itemId}"))
+            if (ImGui.Button($"Choose##itemPicker_{itemId}"))
             {
                 onChosen?.Invoke(itemId, name);
                 IsOpen = false;
