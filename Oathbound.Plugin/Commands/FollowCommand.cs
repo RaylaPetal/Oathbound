@@ -118,6 +118,13 @@ public sealed class FollowCommand
 
     public Guid? LeashedPairingId => state == LeashState.Released ? null : ownerPairingId;
 
+    /// Turns on the duty pause for the leash already running, without re-engaging it.
+    public void PauseInDuties()
+    {
+        if (state != LeashState.Released)
+            pauseInDuties = true;
+    }
+
     /// Waiting for, or traveling to, the Owner.
     public bool IsPaused => state is LeashState.Waiting or LeashState.Traveling;
 

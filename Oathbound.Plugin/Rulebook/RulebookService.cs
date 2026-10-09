@@ -1309,7 +1309,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
                 Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: skipped the leash - Follow permission is off.");
             else if (follow.LeashedPairingId == pairing.Id)
             {
-                // Already on: nothing to tell the Owner.
+                // Already on: nothing to tell the Owner, but the rule's duty pause still applies to that leash.
+                if (rule.LeashPauseInDuties)
+                    follow.PauseInDuties();
             }
             else if (follow.Engage(pairing, Math.Clamp(rule.LeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms), pauseInDuties: rule.LeashPauseInDuties))
             {
