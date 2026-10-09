@@ -175,4 +175,15 @@ describe("cross-runtime crypto vectors", () => {
     expect(Buffer.from(key).toString("hex")).toBe(v.encryptionKeyHex);
     expect(await decrypt(key, v.nonceBase64Url, v.additionalAuthenticatedDataUtf8, v.ciphertextWithTagBase64Url)).toBe(v.plaintextUtf8);
   });
+  it("decrypts the restraint picture blob with its catalog key and AAD, and matches its content hash", async () => {
+    const v = vectors.aesGcmCatalogPicture;
+    const blob = Buffer.from(v.blobBase64Url, "base64url");
+    const key = await crypto.subtle.importKey("raw", Buffer.from(v.keyBase64Url, "base64url"), "AES-GCM", false, ["decrypt"]);
+    const plaintext = new Uint8Array(
+      await crypto.subtle.decrypt({ name: "AES-GCM", iv: blob.subarray(0, 12), additionalData: new TextEncoder().encode(v.aad) }, key, blob.subarray(12)),
+    );
+    expect(Buffer.from(plaintext).toString("base64url")).toBe(v.plaintextBase64Url);
+    expect(Buffer.from(await crypto.subtle.digest("SHA-256", plaintext)).toString("hex")).toBe(v.plaintextSha256Hex);
+    expect(Buffer.from(blob.subarray(0, 12)).toString("base64url")).toBe(v.nonceBase64Url);
+  });
 });

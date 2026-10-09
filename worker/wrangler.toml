@@ -10,7 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 # ids below.
 
 [env.local]
-vars = { RELAY_ENVIRONMENT = "local", CIRCUIT_BREAKER_FORCE_OPEN = "false" }
+vars = { RELAY_ENVIRONMENT = "local", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "1" }
 
 [[env.local.d1_databases]]
 binding = "RELAY_DB"
@@ -41,7 +41,7 @@ head_sampling_rate = 1
 persist = true
 
 [env.staging]
-vars = { RELAY_ENVIRONMENT = "staging", CIRCUIT_BREAKER_FORCE_OPEN = "false" }
+vars = { RELAY_ENVIRONMENT = "staging", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "4" }
 
 [[env.staging.d1_databases]]
 binding = "RELAY_DB"
@@ -73,7 +73,7 @@ head_sampling_rate = 1
 persist = true
 
 [env.production]
-vars = { RELAY_ENVIRONMENT = "production", CIRCUIT_BREAKER_FORCE_OPEN = "false" }
+vars = { RELAY_ENVIRONMENT = "production", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "4" }
 
 [[env.production.d1_databases]]
 binding = "RELAY_DB"
@@ -96,8 +96,9 @@ simple = { limit = 120, period = 60 }
 [env.production.observability]
 [env.production.observability.logs]
 enabled = true
-head_sampling_rate = 1
-invocation_logs = true
+# Logs bill per event and every request emits one; a 10% sample still shows patterns. Staging keeps full logging.
+head_sampling_rate = 0.1
+invocation_logs = false
 persist = true
 [env.production.observability.traces]
 enabled = false

@@ -16,6 +16,7 @@ import {
 } from "./helpers";
 import { consume, ecdhPublicJwk, fetchKey, freshPair, publishKey, status, upload, type Pair } from "./mailbox-helpers";
 import { type Channel, consumeItem, fetchRulebookKey, publishRulebookKey, uploadItem } from "./rulebook-helpers";
+import { fetchPictures, pictureId, syncPictures, uploadPicture } from "./picture-helpers";
 import { ROUTE_WEIGHTS, routeKey } from "../src/lib/routeWeights";
 import { emptyTally, meteredFetcher, type WriteTally } from "./write-meter";
 
@@ -182,6 +183,9 @@ async function measureEveryRoute(): Promise<void> {
   // Pair status and collar status.
   const p = await freshPair();
   await measure("GET /v1/pairs/:id", () => signedFetch(`/v1/pairs/${p.pairIdHash}?epoch=0`, "GET", undefined, p.owner.privateKey, p.ownerId));
+  await measure("POST /v1/pairs/status", () =>
+    signedFetch("/v1/pairs/status", "POST", { type: "pair-status-batch-request", schemaVersion: 1, pairs: [{ pairIdHash: p.pairIdHash, pairEpoch: 0 }] }, p.owner.privateKey, p.ownerId),
+  );
   await measure("POST /v1/pairs/:id/collar-status", () =>
     signedFetch(`/v1/pairs/${p.pairIdHash}/collar-status`, "POST", { type: "collar-status", schemaVersion: 1, pairEpoch: 0, state: "locked", stateAt: now() }, p.sub.privateKey, p.subId),
   );
@@ -209,6 +213,12 @@ async function measureEveryRoute(): Promise<void> {
   await measure("POST /v1/catalog/mailbox/upload", async () => (await upload(m, key.envelope.receiveKeyId, 1)).r);
   await measure("POST /v1/catalog/mailbox/status", () => status(m));
   await measure("POST /v1/catalog/mailbox/consume", async () => (await consume(m, 1)).r);
+
+  const picture = pictureId();
+  await measure("POST /v1/pictures/sync", () => syncPictures(m, [picture]));
+  await measure("POST /v1/pictures/upload", () => uploadPicture(m, picture));
+  await measure("POST /v1/pictures/fetch", () => fetchPictures(m, [picture]));
+  await measure("POST /v1/pictures/sync", () => syncPictures(m, []));
 
   // Rulebook mailbox, both channels.
   for (const channel of ["rulebook", "report"] as Channel[]) {

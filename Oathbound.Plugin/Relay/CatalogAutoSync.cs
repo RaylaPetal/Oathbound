@@ -238,6 +238,14 @@ public sealed class CatalogAutoSync
         }
     }
 
+    /// A change waiting to go out to this pairing, and when the upload interval lets it.
+    public (bool Pending, DateTime OpensAtUtc) PendingChange(PairingState pairing)
+    {
+        var pending = pendingChange.ContainsKey(pairing.Id) || pendingRedelivery.ContainsKey(pairing.Id);
+        var opensAt = DateTimeOffset.FromUnixTimeSeconds(pairing.LastPublishedCatalogUnixSeconds).UtcDateTime + UploadInterval;
+        return (pending, opensAt);
+    }
+
     private bool IsHeld(PairingState pairing, DateTime now) =>
         subRetry.TryGetValue(pairing.Id, out var hold) && now < hold.NotBefore;
 
@@ -250,25 +258,34 @@ public sealed class CatalogAutoSync
         var task = mailbox.PublishAsync(pairing, exportText, digest, backgroundToken());
         Plugin.FireAndForget(task.ContinueWith(t =>
         {
-            if (t.IsCanceled || t.IsFaulted) return;
-            var result = t.Result;
+            if (t.IsCanceled) return;
+            var result = t.IsFaulted ? new MailboxPublishResult(MailboxPublishOutcome.Failed, Error: "Unexpected error - see /xllog.") : t.Result;
+            if (t.IsFaulted)
+                Plugin.Log.Warning(t.Exception!, $"Catalog sync for {pairing.PeerName}: publish failed unexpectedly.");
             var now = DateTime.UtcNow;
             Plugin.Log.Debug($"Catalog sync for {pairing.PeerName}: publish {result.Outcome}.");
+            DateTime? retryAt = null;
             switch (result.Outcome)
             {
                 case MailboxPublishOutcome.Published:
                     subRetry.TryRemove(pairing.Id, out _);
                     break;
                 case MailboxPublishOutcome.RateLimited:
-                    var retryAt = now.AddSeconds(result.RetryAfterSeconds + 1);
-                    subRetry[pairing.Id] = (retryAt, true);
-                    MarkDirtyAt(retryAt - ChangeQuietPeriod);
+                    retryAt = now.AddSeconds(result.RetryAfterSeconds + 1);
+                    subRetry[pairing.Id] = (retryAt.Value, true);
+                    MarkDirtyAt(retryAt.Value - ChangeQuietPeriod);
                     break;
                 default:
                     // The next pair status poll (or hourly fallback pass) retries.
-                    subRetry[pairing.Id] = (now + (mailboxAware.ContainsKey(pairing.Id) ? UploadInterval : Hourly), false);
+                    retryAt = now + (mailboxAware.ContainsKey(pairing.Id) ? UploadInterval : Hourly);
+                    subRetry[pairing.Id] = (retryAt.Value, false);
                     break;
             }
+            pairing.LastPublishAttemptUnixSeconds = new DateTimeOffset(now).ToUnixTimeSeconds();
+            pairing.LastPublishOutcome = result.Outcome;
+            pairing.LastPublishError = result.Error;
+            pairing.NextPublishRetryUnixSeconds = retryAt is { } at ? new DateTimeOffset(at).ToUnixTimeSeconds() : 0;
+            config.SaveDisplayState();
         }, TaskScheduler.Default));
     }
 

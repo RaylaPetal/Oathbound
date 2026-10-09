@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/pair-status-batch.schema.json",
+  "title": "Pair status batch",
+  "description": "One signed, read-only request for the status of several of the caller's pairings (POST /v1/pairs/status). Each entry is answered as GET /v1/pairs/:pairIdHash?epoch=N would answer it, or rejected on its own without revealing anything about it.",
+  "$defs": {
+    "pairRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairIdHash", "pairEpoch"],
+      "properties": {
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairs"],
+      "properties": {
+        "type": { "const": "pair-status-batch-request" },
+        "schemaVersion": { "const": 1 },
+        "pairs": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/pairRef" } }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairs"],
+      "properties": {
+        "type": { "const": "pair-status-batch" },
+        "schemaVersion": { "const": 1 },
+        "pairs": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["pairIdHash", "pairEpoch", "pair"],
+                "properties": {
+                  "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+                  "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+                  "pair": { "$ref": "pair.schema.json" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["pairIdHash", "pairEpoch", "error"],
+                "properties": {
+                  "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+                  "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+                  "error": { "const": "unauthorized" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
+import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import {
   CATALOG_MAILBOX_EXPIRY_SECONDS,
@@ -196,7 +196,7 @@ export async function publishMailboxKey(request: Request, env: Env): Promise<Res
  * push it made never reached the Owner (key reset, or expired unread) and publish it again.
  */
 export async function fetchMailboxKey(request: Request, env: Env): Promise<Response> {
-  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
   await enforceQuota(env, "deviceMailboxOps", deviceKeyId);
 
   const { pairIdHash, pairEpoch } = readPairRef(asRecord(bodyJson));
@@ -264,19 +264,9 @@ export async function uploadMailboxSnapshot(request: Request, env: Env): Promise
   // Sub's cue to refetch the key and publish again.
   if (mailbox.receive_key_id !== envelope.receiveKeyId) throw new RelayError("expired");
 
-  // Per-pair minimum interval, claimed atomically so two racing uploads can't both slip under it.
-  const intervalClaim = await env.RELAY_DB.prepare(
-    `UPDATE catalog_mailboxes SET last_upload_at = ?1
-     WHERE pair_id_hash = ?2 AND pair_epoch = ?3 AND receive_key_id = ?4
-       AND (last_upload_at IS NULL OR last_upload_at <= ?1 - ?5)`,
-  )
-    .bind(now, envelope.pairIdHash, envelope.pairEpoch, envelope.receiveKeyId, CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS)
-    .run();
-  if ((intervalClaim.meta.changes ?? 0) === 0) {
-    const current = await loadMailbox(env, envelope.pairIdHash, envelope.pairEpoch);
-    if (!current || current.receive_key_id !== envelope.receiveKeyId) throw new RelayError("expired");
-    const waited = now - (current.last_upload_at ?? 0);
-    throw new RelayError("rate_limited", Math.max(CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS - waited, 1));
+  // Cheap early answer for the common too-soon case; the authoritative claim is the final conditional update.
+  if (mailbox.last_upload_at !== null && now - mailbox.last_upload_at < CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS) {
+    throw new RelayError("rate_limited", Math.max(CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS - (now - mailbox.last_upload_at), 1));
   }
 
   await enforceQuota(env, "catalogUploadBytes", deviceKeyId, ciphertextBytes.byteLength);
@@ -299,18 +289,24 @@ export async function uploadMailboxSnapshot(request: Request, env: Env): Promise
   const r2Key = r2KeyForMailboxSnapshot(envelope.pairIdHash, envelope.pairEpoch, envelope.snapshotId);
   await putCiphertext(env, r2Key, ciphertextBytes);
 
-  // Conditional on the key still being current: if the Owner rotated between our check and now, this
-  // snapshot is undecryptable for them - drop it and tell the Sub to republish rather than park it.
+  // Only a stored upload starts the per-pair interval, so a rejection above never makes the Sub wait it out.
+  // One conditional update claims the interval and stores the snapshot, so of two racing uploads exactly one wins,
+  // and a receive key rotated since our check (undecryptable for the Owner) stores nothing.
   const stored = await env.RELAY_DB.prepare(
     `UPDATE catalog_mailboxes SET snapshot_id = ?1, snapshot_r2_key = ?2, snapshot_envelope = ?3,
-       snapshot_created_at = ?4, snapshot_expires_at = ?5
-     WHERE pair_id_hash = ?6 AND pair_epoch = ?7 AND receive_key_id = ?8`,
+       snapshot_created_at = ?4, snapshot_expires_at = ?5, last_upload_at = ?9
+     WHERE pair_id_hash = ?6 AND pair_epoch = ?7 AND receive_key_id = ?8
+       AND (last_upload_at IS NULL OR last_upload_at <= ?9 - ?10)`,
   )
-    .bind(envelope.snapshotId, r2Key, toCanonicalJson(envelope), envelope.createdAt, envelope.expiresAt, envelope.pairIdHash, envelope.pairEpoch, envelope.receiveKeyId)
+    .bind(envelope.snapshotId, r2Key, toCanonicalJson(envelope), envelope.createdAt, envelope.expiresAt, envelope.pairIdHash,
+      envelope.pairEpoch, envelope.receiveKeyId, now, CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS)
     .run();
   if ((stored.meta.changes ?? 0) === 0) {
     await deleteCiphertext(env, r2Key);
-    throw new RelayError("expired");
+    const current = await loadMailbox(env, envelope.pairIdHash, envelope.pairEpoch);
+    if (!current || current.receive_key_id !== envelope.receiveKeyId) throw new RelayError("expired");
+    const waited = now - (current.last_upload_at ?? 0);
+    throw new RelayError("rate_limited", Math.max(CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS - waited, 1));
   }
   if (mailbox.snapshot_r2_key && mailbox.snapshot_r2_key !== r2Key) await deleteCiphertext(env, mailbox.snapshot_r2_key);
 
@@ -319,7 +315,7 @@ export async function uploadMailboxSnapshot(request: Request, env: Env): Promise
 
 /** Owner: cheap check of what's waiting - drives both the auto-import and the "is my copy current" status. */
 export async function mailboxStatus(request: Request, env: Env): Promise<Response> {
-  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
   await enforceQuota(env, "deviceMailboxOps", deviceKeyId);
 
   const { pairIdHash, pairEpoch } = readPairRef(asRecord(bodyJson));

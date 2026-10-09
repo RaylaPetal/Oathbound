@@ -85,14 +85,20 @@
     "codeInvitationExpirySeconds": 604800,
     "pairStatusPollIntervalSeconds": 1800,
     "backupCiphertextMaxBytes": 32768,
-    "collarCheckinIntervalSeconds": 7200,
+    "collarCheckinIntervalSeconds": 21600,
     "collarBrokenGraceSeconds": 60,
     "collarStaleSeconds": 172800,
     "rulebookMailboxExpirySeconds": 1209600,
     "rulebookCiphertextMaxBytes": 65536,
     "rulebookReportCiphertextMaxBytes": 32768,
     "rulebookMinUploadIntervalSeconds": 60,
-    "rulebookReportMinUploadIntervalSeconds": 600
+    "rulebookReportMinUploadIntervalSeconds": 600,
+    "pictureCiphertextMaxBytes": 65536,
+    "picturesPerPairMax": 256,
+    "picturesPerPairMaxBytes": 12582912,
+    "pictureUnreferencedGraceSeconds": 86400,
+    "pictureIdleExpirySeconds": 2592000,
+    "pictureFetchBatchMax": 16
   },
   "pairingCode": {
     "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",

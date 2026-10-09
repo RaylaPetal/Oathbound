@@ -35,7 +35,7 @@
       }
     },
     "relayActiveDevices": {
-      "description": "Distinct devices that signed any relay request in the last pairStatusPollIntervalSeconds + 300 seconds, as of relayActiveDevicesAt (recomputed by the cron every 15 minutes). An anonymous count of installs; null until first computed.",
+      "description": "Distinct devices that signed any relay request today or yesterday (UTC days), as of relayActiveDevicesAt (recomputed by the cron at most hourly). An anonymous count of installs; null until first computed.",
       "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
     },
     "relayActiveDevicesAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },

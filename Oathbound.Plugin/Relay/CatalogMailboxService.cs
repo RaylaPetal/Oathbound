@@ -23,7 +23,8 @@ public enum MailboxPublishOutcome
     Failed,
 }
 
-public readonly record struct MailboxPublishResult(MailboxPublishOutcome Outcome, int RetryAfterSeconds = 0);
+/// `Error` is a short reason shown on the Sub's Sync module, for NotReady and Failed.
+public readonly record struct MailboxPublishResult(MailboxPublishOutcome Outcome, int RetryAfterSeconds = 0, string? Error = null);
 
 /// Automatic sync over the per-pair relay mailbox: the Sub pushes on change, the Owner collects what the pair status poll reports waiting.
 /// No chat on this path. Timing lives in CatalogAutoSync; this is only the relay/crypto work.
@@ -35,18 +36,20 @@ public sealed class CatalogMailboxService
     private readonly RelayClient relay;
     private readonly DeviceIdentityService identity;
     private readonly CatalogSyncService catalogSync;
+    private readonly CatalogPictureService pictures;
 
     private readonly object gate = new();
     private readonly HashSet<Guid> checksInFlight = new();
     private readonly HashSet<Guid> importing = new();
     private readonly HashSet<Guid> publishesInFlight = new();
 
-    public CatalogMailboxService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, CatalogSyncService catalogSync)
+    public CatalogMailboxService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, CatalogSyncService catalogSync, CatalogPictureService pictures)
     {
         this.config = config;
         this.relay = relay;
         this.identity = identity;
         this.catalogSync = catalogSync;
+        this.pictures = pictures;
     }
 
     public bool IsSyncing(Guid pairingId) { lock (gate) return importing.Contains(pairingId); }
@@ -59,7 +62,7 @@ public sealed class CatalogMailboxService
     {
         if (pairing is not { Direction: PairingDirection.SubSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash } ||
             pairing.PeerDeviceKeyId is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
-            return new(MailboxPublishOutcome.NotReady);
+            return new(MailboxPublishOutcome.Failed, Error: "This pairing has no Owner device key on file - pair again to sync automatically.");
         if (!config.Permissions.RelayCatalogSync)
             return new(MailboxPublishOutcome.NotReady);
 
@@ -81,7 +84,7 @@ public sealed class CatalogMailboxService
                 }
                 catch (RelayException ex) when (ex.Code == "not_found")
                 {
-                    return new(MailboxPublishOutcome.NotReady); // Owner hasn't published a receive key yet.
+                    return new(MailboxPublishOutcome.NotReady, Error: "Waiting for your Owner's plugin to set up automatic sync.");
                 }
 
                 var key = info.Key;
@@ -90,7 +93,7 @@ public sealed class CatalogMailboxService
                 {
                     // Never encrypt to a key the paired Owner didn't sign.
                     Plugin.Log.Warning($"Catalog mailbox for {pairing.PeerName}: receive key did not verify against the paired Owner - not publishing.");
-                    return new(MailboxPublishOutcome.Failed);
+                    return new(MailboxPublishOutcome.Failed, Error: "Your Owner's sync key didn't verify.");
                 }
 
                 // Same catalog as last time and the relay confirms delivery: nothing to do.
@@ -98,6 +101,10 @@ public sealed class CatalogMailboxService
                     (info.WaitingSnapshotId >= pairing.LastPublishedMailboxSnapshotId || info.LastConsumedSnapshotId >= pairing.LastPublishedMailboxSnapshotId);
                 if (digest == pairing.LastPublishedCatalogDigest && delivered)
                     return new(MailboxPublishOutcome.Published);
+
+                // Pictures first, so the catalog never points at one the Owner can't fetch yet.
+                if (attempt == 0)
+                    await pictures.SyncBeforePublishAsync(pairing, ct).ConfigureAwait(false);
 
                 try
                 {
@@ -113,7 +120,7 @@ public sealed class CatalogMailboxService
                 config.SaveNow();
                 return new(MailboxPublishOutcome.Published);
             }
-            return new(MailboxPublishOutcome.Failed);
+            return new(MailboxPublishOutcome.Failed, Error: "Your Owner's sync key changed twice during the upload.");
         }
         catch (RelayException ex) when (ex.Code is "rate_limited" or "cooldown_active")
         {
@@ -121,13 +128,13 @@ public sealed class CatalogMailboxService
         }
         catch (RelayException ex)
         {
-            Plugin.Log.Information($"Catalog mailbox publish for {pairing.PeerName} failed: {ex.Code}.");
-            return new(MailboxPublishOutcome.Failed);
+            Plugin.Log.Warning($"Catalog mailbox publish for {pairing.PeerName} failed: {ex.Code}.");
+            return new(MailboxPublishOutcome.Failed, Error: DescribePublishError(ex));
         }
         catch (InvalidDataException ex)
         {
             Plugin.Log.Warning(ex.Message);
-            return new(MailboxPublishOutcome.Failed);
+            return new(MailboxPublishOutcome.Failed, Error: ex.Message);
         }
         finally
         {
@@ -191,7 +198,12 @@ public sealed class CatalogMailboxService
     // ---- Owner side ----
 
     /// Publishes a receive key if needed, and imports a newer snapshot (then rotates the key). Never throws.
-    public Task CheckAsync(PairingState pairing, CancellationToken ct) => RunOwnerCheckAsync(pairing, null, ct);
+    /// Also retries any of the Sub's pictures that didn't download with the last import.
+    public async Task CheckAsync(PairingState pairing, CancellationToken ct)
+    {
+        await RunOwnerCheckAsync(pairing, null, ct).ConfigureAwait(false);
+        await pictures.FetchMissingAsync(pairing, ct).ConfigureAwait(false);
+    }
 
     /// From the pair status poll: no mailbox request at all unless a key needs publishing or a newer snapshot is waiting.
     public Task ApplyPairStatusAsync(PairingState pairing, CatalogMailboxSummary state, CancellationToken ct)
@@ -331,6 +343,7 @@ public sealed class CatalogMailboxService
         pairing.LastAcceptedCatalogSyncUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         config.SaveNow();
         LastAutoImport = (pairing.Id, result);
+        Plugin.FireAndForget(pictures.FetchMissingAsync(pairing, ct));
         if (result.Added + result.Updated + result.Removed > 0)
         {
             Plugin.NotificationManager.AddNotification(new Notification
@@ -457,6 +470,15 @@ public sealed class CatalogMailboxService
         pairing.LastMailboxCheckError = message;
         config.SaveNow();
     }
+
+    private static string DescribePublishError(RelayException ex) => ex.Code switch
+    {
+        "network" => "Could not reach the relay.",
+        "service_unavailable" => "The relay is temporarily unavailable.",
+        "unauthorized" => "The relay rejected the upload (pairing no longer active on the relay?).",
+        "payload_too_large" => "The catalog is too large to upload.",
+        _ => $"The relay rejected the upload ({ex.Code}).",
+    };
 
     private static string DescribeError(RelayException ex) => ex.Code switch
     {

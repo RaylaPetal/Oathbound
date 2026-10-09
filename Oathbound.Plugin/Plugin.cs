@@ -127,6 +127,7 @@ public sealed class Plugin : IDalamudPlugin
     public CatalogSyncRelayService CatalogSyncRelayService { get; }
     public CatalogMailboxService CatalogMailboxService { get; }
     public CatalogAutoSync CatalogAutoSync { get; }
+    public UI.RestraintThumbnailWorker RestraintThumbnailWorker { get; }
     public RulebookMailboxService RulebookMailboxService { get; }
     public Rulebook.RulebookService RulebookService { get; }
     public ChatComposer ChatComposer { get; }
@@ -210,6 +211,7 @@ public sealed class Plugin : IDalamudPlugin
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
         ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
+        RestraintThumbnailWorker = new UI.RestraintThumbnailWorker(Configuration, RestraintCommand);
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
         ChatComposer = new ChatComposer(Configuration);
         ChatSender = new ChatSender();
@@ -241,8 +243,9 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairingRevoked += QueueRestraintCleanup;
         RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked += GestureCommand.StopIfSourcePairingEnded;
-        CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService);
-        CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService);
+        var catalogPictures = new CatalogPictureService(Configuration, RelayClient, RestraintCommand);
+        CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService, catalogPictures);
+        CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService, catalogPictures);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
@@ -552,6 +555,7 @@ public sealed class Plugin : IDalamudPlugin
             if (BackupService.ShouldShowCodeDialog && !RecoveryCodeWindow.IsOpen)
                 RecoveryCodeWindow.IsOpen = true;
         }
+        RestraintThumbnailWorker.OnFrameworkUpdate();
         CatalogAutoSync.OnFrameworkUpdate();
         RulebookService.OnFrameworkUpdate();
         UpdateToyStatusDtr();

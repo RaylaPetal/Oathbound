@@ -103,6 +103,12 @@ public class PairingState
     /// Compared against the relay's delivery receipt so a push that never reached the Owner is published again.
     public int LastPublishedMailboxSnapshotId { get; set; }
 
+    /// Sub-side display state for the Sync tab: the most recent automatic publish attempt.
+    public long LastPublishAttemptUnixSeconds { get; set; }
+    public Relay.MailboxPublishOutcome? LastPublishOutcome { get; set; }
+    public string? LastPublishError { get; set; }
+    public long NextPublishRetryUnixSeconds { get; set; }
+
     /// Reset when the pairing ends.
     public Rulebook.RulebookPairingState Rulebook { get; set; } = new();
 
@@ -282,6 +288,10 @@ public class QuickCommand
     public string? ImageFile { get; set; }
     /// The Sub's shared picture for it, written on import. ImageFile wins when both are set.
     public string? SharedImageFile { get; set; }
+    /// The Sub has a picture for it, even when none could be shared.
+    public bool SubHasPicture { get; set; }
+    /// Where SharedImageFile is fetched from when it isn't on disk yet.
+    public PictureReference? SharedPictureRef { get; set; }
 
     /// CustomMoodles entries only: what the builder edits; Command is regenerated from it on save.
     public Commands.CustomMoodle? CustomMoodle { get; set; }
@@ -644,6 +654,8 @@ public class ConfiguredModRestraint
     public string? ImageFile { get; set; }
     /// The small JPEG copy of ImageFile that travels to the Owner in the catalog.
     public string? ThumbnailFile { get; set; }
+    /// The size ThumbnailFile was encoded to fit, so it's only redone when the per-picture budget shrinks below it.
+    public int ThumbnailTargetBytes { get; set; }
 }
 
 /// `ExpiresAtUtc` null = until the Owner clears it.
@@ -702,12 +714,31 @@ public class ConfiguredModRestraintExportEntry
     /// Base64 JPEG thumbnail of the Sub's picture, or null. An older Owner ignores it.
     public string? Picture { get; set; }
 
+    /// The Sub has a picture for it, whether or not one could be shared, so the Owner can say so.
+    public bool HasPicture { get; set; }
+
+    /// Relay catalogs carry this instead of Picture: the blob is fetched from the relay's picture store.
+    public PictureReference? PictureRef { get; set; }
+
     public static ConfiguredModRestraintExportEntry From(ConfiguredModRestraint entry) => new()
     {
         Id = entry.Id, CatalogId = entry.CatalogId, Name = entry.Name,
         ItemId = entry.ItemId, Rules = entry.Rules,
+        HasPicture = entry.ImageFile is not null,
         Moodle = entry.AttachedMoodle is { } m && MoodlesTextFormat.StripMarkup(m.StatusName).Trim() is { Length: > 0 } name && !name.Contains('"') ? name : null,
     };
+}
+
+/// A picture in the relay's picture store. Only ever travels inside the end-to-end encrypted catalog, since Key
+/// decrypts the blob; the relay sees Id alone.
+[Serializable]
+public sealed class PictureReference
+{
+    public string Id { get; set; } = "";
+    /// Hex SHA-256 of the JPEG, checked after decrypting.
+    public string Sha256 { get; set; } = "";
+    /// Base64url AES-256-GCM key.
+    public string Key { get; set; } = "";
 }
 
 [Serializable]
@@ -755,6 +786,10 @@ public class PluginConfig : IPluginConfiguration
     public bool HasSeenSubTutorial { get; set; }
 
     public List<PairingState> Pairings { get; set; } = new();
+
+    /// Sub side: the relay reference for each shared picture's small copy, by its SHA-256, so unchanged content keeps
+    /// one id and key across publishes and an unchanged picture is never uploaded again.
+    public Dictionary<string, PictureReference> SharedPictureRefs { get; set; } = new();
 
     /// Where outgoing commands go and which direction shared tabs render. Null = none selected.
     public Guid? ActivePairingId { get; set; }
@@ -965,6 +1000,14 @@ public class PluginConfig : IPluginConfiguration
         Interlocked.Exchange(ref saveRequestedAtTicks, now);
         Interlocked.CompareExchange(ref saveDirtySinceTicks, now, 0);
         NotifyChanged();
+    }
+
+    /// Like Save, for display-only state: not raised as Changed, so it never counts as a catalog change.
+    public void SaveDisplayState()
+    {
+        var now = Environment.TickCount64;
+        Interlocked.Exchange(ref saveRequestedAtTicks, now);
+        Interlocked.CompareExchange(ref saveDirtySinceTicks, now, 0);
     }
 
     /// Writes immediately, taking any pending coalesced change with it.

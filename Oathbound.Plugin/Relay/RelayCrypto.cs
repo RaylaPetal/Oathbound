@@ -271,4 +271,27 @@ public static class RelayCrypto
         aes.Decrypt(nonce, ciphertext, tag, plaintext, associatedData);
         return plaintext;
     }
+
+    // ---- Restraint pictures (catalog-pictures) ----
+
+    /// Binds a blob to its id, so the relay can't serve one picture's bytes under another reference.
+    private static byte[] PictureAad(string pictureId) => Encoding.UTF8.GetBytes($"oathbound-picture-v1|{pictureId}");
+
+    /// nonce(12) || ciphertext+tag, as stored by the relay.
+    public static byte[] EncryptPicture(byte[] key, string pictureId, byte[] jpeg)
+    {
+        var nonce = RandomBytes(AeadNonceLengthBytes);
+        var sealedBytes = AesGcmEncrypt(key, nonce, jpeg, PictureAad(pictureId));
+        var blob = new byte[nonce.Length + sealedBytes.Length];
+        Buffer.BlockCopy(nonce, 0, blob, 0, nonce.Length);
+        Buffer.BlockCopy(sealedBytes, 0, blob, nonce.Length, sealedBytes.Length);
+        return blob;
+    }
+
+    public static byte[] DecryptPicture(byte[] key, string pictureId, byte[] blob)
+    {
+        if (blob.Length < AeadNonceLengthBytes + AeadTagLengthBytes)
+            throw new CryptographicException("Picture blob too short.");
+        return AesGcmDecrypt(key, blob[..AeadNonceLengthBytes], blob[AeadNonceLengthBytes..], PictureAad(pictureId));
+    }
 }

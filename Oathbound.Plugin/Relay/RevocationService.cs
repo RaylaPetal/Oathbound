@@ -186,7 +186,47 @@ public sealed class RevocationService
     /// after 7 days). Asks about each pairing's exact epoch. Any error leaves every pairing untouched.
     public async Task CheckPairStatusAsync(CancellationToken ct)
     {
-        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.PairIdHash is not null).ToList())
+        var pairings = config.Pairings.Where(p => p.IsPaired && p.PairIdHash is not null).ToList();
+        if (pairings.Count == 0)
+            return;
+
+        if (batchSupported)
+        {
+            foreach (var chunk in pairings.Chunk(PairStatusBatchMax))
+            {
+                List<PairStatusBatchEntry> entries;
+                try
+                {
+                    entries = await relay.FetchPairStatusBatchAsync(chunk.Select(p => (p.PairIdHash!, p.PairEpoch)), ct).ConfigureAwait(false);
+                }
+                catch (RelayException ex) when (ex.Code == "not_found")
+                {
+                    // A relay without the batched request; the rest of this session asks per pairing.
+                    batchSupported = false;
+                    break;
+                }
+                catch (RelayException ex)
+                {
+                    Plugin.Log.Information($"Pair status check skipped: {ex.Code}.");
+                    return;
+                }
+
+                foreach (var pairing in chunk)
+                {
+                    var entry = entries.FirstOrDefault(e => e.PairIdHash == pairing.PairIdHash && e.PairEpoch == pairing.PairEpoch);
+                    if (entry?.Pair is not { } pair)
+                    {
+                        Plugin.Log.Information($"Pair status check skipped: {entry?.Error ?? "missing"}.");
+                        continue;
+                    }
+                    await ApplyPairStatusAsync(pairing, pair).ConfigureAwait(false);
+                }
+            }
+            if (batchSupported)
+                return;
+        }
+
+        foreach (var pairing in pairings)
         {
             PairEnvelope pair;
             try
@@ -199,30 +239,37 @@ public sealed class RevocationService
                 Plugin.Log.Information($"Pair status check skipped: {ex.Code}.");
                 continue;
             }
-
-            if (pair.PairIdHash != pairing.PairIdHash || pair.PairEpoch != pairing.PairEpoch || !pairing.IsPaired)
-                continue;
-            if (pair.RevokedAt is null)
-            {
-                if (PairStatusFetched is { } fetched)
-                    await Plugin.Framework.RunOnFrameworkThread(() => fetched(pairing, pair)).ConfigureAwait(false);
-                continue;
-            }
-
-            Plugin.Log.Information($"Pairing with {pairing.PeerName}@{pairing.PeerWorld} ended locally: the relay reports it was unpaired.");
-            if (EndPairingLocally is { } end)
-            {
-                await Plugin.Framework.RunOnFrameworkThread(() => end(pairing)).ConfigureAwait(false);
-            }
-            else
-            {
-                pairing.Paired = false;
-                pairing.Rulebook = new();
-                config.SaveNow();
-                PairingRevoked?.Invoke();
-            }
-            Plugin.ChatGui.Print($"[Oathbound] Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
+            await ApplyPairStatusAsync(pairing, pair).ConfigureAwait(false);
         }
+    }
+
+    private const int PairStatusBatchMax = 32;
+    private bool batchSupported = true;
+
+    private async Task ApplyPairStatusAsync(PairingState pairing, PairEnvelope pair)
+    {
+        if (pair.PairIdHash != pairing.PairIdHash || pair.PairEpoch != pairing.PairEpoch || !pairing.IsPaired)
+            return;
+        if (pair.RevokedAt is null)
+        {
+            if (PairStatusFetched is { } fetched)
+                await Plugin.Framework.RunOnFrameworkThread(() => fetched(pairing, pair)).ConfigureAwait(false);
+            return;
+        }
+
+        Plugin.Log.Information($"Pairing with {pairing.PeerName}@{pairing.PeerWorld} ended locally: the relay reports it was unpaired.");
+        if (EndPairingLocally is { } end)
+        {
+            await Plugin.Framework.RunOnFrameworkThread(() => end(pairing)).ConfigureAwait(false);
+        }
+        else
+        {
+            pairing.Paired = false;
+            pairing.Rulebook = new();
+            config.SaveNow();
+            PairingRevoked?.Invoke();
+        }
+        Plugin.ChatGui.Print($"[Oathbound] Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
     }
 
     /// Returns true if the pairing is still active afterwards.

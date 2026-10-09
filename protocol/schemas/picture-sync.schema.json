@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/picture-sync.schema.json",
+  "title": "Catalog pictures",
+  "description": "catalog-pictures: the per-pair encrypted picture store. A picture is an opaque blob, nonce(12) || AES-256-GCM(ciphertext+tag), whose key, content hash and id travel only inside the end-to-end encrypted catalog; the relay sees the id, the pair and the size, never the restraint, the picture or its key. All three requests are signed; sync and upload only by the pair's Sub, fetch only by its Owner.",
+  "$defs": {
+    "pictureId": {
+      "description": "128 random bits, base64url without padding.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "syncRequest": {
+      "description": "POST /v1/pictures/sync - the complete set of ids the Sub's latest catalog references. Held ids not listed start their unreferenced grace period.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairIdHash", "pairEpoch", "ids"],
+      "properties": {
+        "type": { "const": "picture-sync" },
+        "schemaVersion": { "const": 1 },
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+        "ids": { "type": "array", "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/pictureId" } }
+      }
+    },
+    "syncResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "missing"],
+      "properties": {
+        "type": { "const": "picture-sync-result" },
+        "schemaVersion": { "const": 1 },
+        "missing": { "type": "array", "items": { "$ref": "#/$defs/pictureId" } }
+      }
+    },
+    "uploadRequest": {
+      "description": "POST /v1/pictures/upload - one picture blob. Re-uploading a held id replaces nothing and succeeds.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairIdHash", "pairEpoch", "pictureId", "ciphertextBase64Url"],
+      "properties": {
+        "type": { "const": "picture-upload" },
+        "schemaVersion": { "const": 1 },
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+        "pictureId": { "$ref": "#/$defs/pictureId" },
+        "ciphertextBase64Url": { "type": "string", "description": "At most pictureCiphertextMaxBytes once decoded." }
+      }
+    },
+    "fetchRequest": {
+      "description": "POST /v1/pictures/fetch - up to pictureFetchBatchMax ids. Ids the relay doesn't hold are left out of the response.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairIdHash", "pairEpoch", "ids"],
+      "properties": {
+        "type": { "const": "picture-fetch" },
+        "schemaVersion": { "const": 1 },
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+        "ids": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/pictureId" } }
+      }
+    },
+    "fetchResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pictures"],
+      "properties": {
+        "type": { "const": "picture-fetch-result" },
+        "schemaVersion": { "const": 1 },
+        "pictures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pictureId", "ciphertextBase64Url"],
+            "properties": {
+              "pictureId": { "$ref": "#/$defs/pictureId" },
+              "ciphertextBase64Url": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

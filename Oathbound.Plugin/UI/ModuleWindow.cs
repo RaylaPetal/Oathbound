@@ -349,13 +349,22 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (ImGui.Button("Go to Sync tab"))
             Show("sync");
     }
+    private void DrawPicturesNotShared()
+    {
+        var failed = plugin.RestraintThumbnailWorker.Failed(plugin.RestraintCommand.ThumbnailTargetBytes());
+        if (failed.Count > 0)
+            IconGlyph.WrappedColored(Theme.Warning, $"Shared without their picture (couldn't be made small enough): {string.Join(", ", failed)}.");
+        var pending = plugin.RestraintCommand.PicturesLeftOut.Except(failed).ToList();
+        if (pending.Count > 0)
+            IconGlyph.WrappedDisabled($"Picture still being prepared for sharing: {string.Join(", ", pending)}.");
+    }
+
     private void DrawSyncTab(bool ownerMode)
     {
         if (!ownerMode)
         {
             DrawSubExportSection();
-            if (plugin.RestraintCommand.PicturesLeftOut is { Count: > 0 } leftOut)
-                IconGlyph.WrappedColored(Theme.Warning, $"Shared without their picture (over the size limit): {string.Join(", ", leftOut)}.");
+            DrawPicturesNotShared();
             return;
         }
 
@@ -477,7 +486,30 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 IconGlyph.WrappedDisabled($"Last shared with {name}: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastPublishedCatalogUnixSeconds).LocalDateTime:g}.");
             else
                 IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out once their plugin checks in.");
+            DrawSubPublishStatus(pairing, name);
         }
+    }
+
+    private void DrawSubPublishStatus(PairingState pairing, string name)
+    {
+        var retry = pairing.NextPublishRetryUnixSeconds > 0 ? DateTimeOffset.FromUnixTimeSeconds(pairing.NextPublishRetryUnixSeconds).LocalDateTime : (DateTime?)null;
+        switch (pairing.LastPublishOutcome)
+        {
+            case Relay.MailboxPublishOutcome.Failed:
+                IconGlyph.WrappedColored(Theme.Warning, $"Last automatic share with {name} failed: {pairing.LastPublishError ?? "unknown error"}{(retry is { } failRetry ? $" Trying again around {failRetry:t}." : "")}");
+                return;
+            case Relay.MailboxPublishOutcome.NotReady:
+                IconGlyph.WrappedDisabled(pairing.LastPublishError ?? $"Waiting for {name}'s plugin to set up automatic sync.");
+                return;
+            case Relay.MailboxPublishOutcome.RateLimited when retry is { } r:
+                IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {r:t}.");
+                return;
+        }
+        var (pending, opensAtUtc) = plugin.CatalogAutoSync.PendingChange(pairing);
+        if (pending && opensAtUtc > DateTime.UtcNow)
+            IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {opensAtUtc.ToLocalTime():t}.");
+        else if (pending)
+            IconGlyph.WrappedDisabled("A change goes out in a few minutes.");
     }
 
     /// One missing plugin disables only its own source's section.
@@ -1208,27 +1240,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private static float DetailTileWidth => Scaled(110);
 
-    /// Started once per restraint and session; a failure (no JPEG encoder) isn't retried until the picture changes.
-    private readonly HashSet<string> thumbnailsStarted = new();
-
-    private void EnsureThumbnail(ConfiguredModRestraint mod)
-    {
-        if (mod.ImageFile is not { } image || mod.ThumbnailFile is not null || !thumbnailsStarted.Add($"{mod.Id}:{image}"))
-            return;
-        _ = ImageTile.MakeThumbnailAsync(image).ContinueWith(task => Plugin.Framework.RunOnFrameworkThread(() =>
-        {
-            if (task.Result is not { } thumbnail)
-                return;
-            if (mod.ImageFile != image)
-            {
-                ImageTile.Delete(thumbnail);
-                return;
-            }
-            mod.ThumbnailFile = thumbnail;
-            plugin.Configuration.Save();
-        }));
-    }
-
     /// Picture on the left; name, actions and the picture's buttons beside it. The picture buttons stay out of the
     /// picture's column, which would otherwise grow as wide as their row and push everything beside it away.
     private void DrawDetailHeader(string name, string kind, string? imageFile, FontAwesomeIcon? icon, Action? pictureActions, Action headerActions)
@@ -1262,15 +1273,14 @@ public sealed partial class ModuleWindow : Window, IDisposable
             edit = restraintRuleEdits[key];
         }
 
-        EnsureThumbnail(created);
         DrawDetailHeader(created.Name, "Mod restraint", created.ImageFile, FontAwesomeIcon.Image,
             () => ImageTile.DrawPicker(key, created.ImageFile, plugin.FileDialogManager, plugin.Snapshot, file =>
             {
                 ImageTile.Delete(created.ThumbnailFile);
                 created.ThumbnailFile = null;
+                created.ThumbnailTargetBytes = 0;
                 created.ImageFile = file;
                 config.Save();
-                EnsureThumbnail(created);
             }),
             () =>
             {
@@ -3184,6 +3194,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
             ImGui.PopID();
             return;
         }
+        if (cmd.SubHasPicture && cmd.SharedImageFile is null && cmd.ImageFile is null)
+            IconGlyph.WrappedDisabled("Your Sub has a picture for this restraint, but it wasn't shared with you.");
+        else if (cmd.ImageFile is null && cmd.SharedPictureRef is not null && !ImageTile.SharedExists(cmd.SharedImageFile))
+            IconGlyph.WrappedDisabled("Your Sub's picture for this restraint hasn't downloaded yet - Check now on the Sync tab tries again.");
 
         Section.SubHeading("Send");
         using (ImRaii.Disabled(!hasRules || !hasEquipment || !catalogAvailable))

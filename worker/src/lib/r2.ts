@@ -17,6 +17,11 @@ export function r2KeyForRulebookItem(pairIdHash: string, pairEpoch: number, chan
   return `rulebook/${pairIdHash}/${pairEpoch}/${channel}/${sequence}`;
 }
 
+/** Content-addressed by the Sub's random id, so a re-upload of the same picture lands on the same object. */
+export function r2KeyForPicture(pairIdHash: string, pairEpoch: number, pictureId: string): string {
+  return `pictures/${pairIdHash}/${pairEpoch}/${pictureId}`;
+}
+
 /** Content type and max size are both server-controlled; nothing from the caller reaches R2 metadata unchecked. */
 export async function putCiphertext(env: Env, key: string, bytes: Uint8Array): Promise<void> {
   if (bytes.byteLength > CATALOG_CIPHERTEXT_MAX_BYTES) {

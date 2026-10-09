@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -56,6 +57,82 @@ internal sealed class CollarStatusBody
     [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
     [JsonPropertyName("state")] public string State { get; set; } = "";
     [JsonPropertyName("stateAt")] public long StateAt { get; set; }
+}
+
+internal sealed class PairStatusBatchRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "pair-status-batch-request";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairs")] public List<PairRef> Pairs { get; set; } = new();
+}
+
+internal sealed class PairRef
+{
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+}
+
+internal sealed class PairStatusBatchResponse
+{
+    [JsonPropertyName("pairs")] public List<PairStatusBatchEntry> Pairs { get; set; } = new();
+}
+
+/// Either Pair, or Error ("unauthorized") for a pairing the relay won't answer about.
+public sealed class PairStatusBatchEntry
+{
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("pair")] public PairEnvelope? Pair { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}
+
+internal sealed class PictureSyncRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "picture-sync";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("ids")] public List<string> Ids { get; set; } = new();
+}
+
+internal sealed class PictureSyncResponse
+{
+    [JsonPropertyName("missing")] public List<string> Missing { get; set; } = new();
+}
+
+internal sealed class PictureUploadRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "picture-upload";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("pictureId")] public string PictureId { get; set; } = "";
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
+}
+
+internal sealed class PictureUploadAck
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+}
+
+internal sealed class PictureFetchRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "picture-fetch";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("ids")] public List<string> Ids { get; set; } = new();
+}
+
+internal sealed class PictureFetchResponse
+{
+    [JsonPropertyName("pictures")] public List<FetchedPicture> Pictures { get; set; } = new();
+}
+
+internal sealed class FetchedPicture
+{
+    [JsonPropertyName("pictureId")] public string PictureId { get; set; } = "";
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
 }
 
 internal sealed class CollarStatusAck
@@ -237,6 +314,14 @@ public sealed class RelayClient : IDisposable
     /// One exact pairing's row, so a mutual pair's other epoch is never mistaken for it.
     public Task<PairEnvelope> FetchPairAtEpochAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
         SendSignedAsync<PairEnvelope>(HttpMethod.Get, $"/v1/pairs/{pairIdHash}?epoch={pairEpoch}", null, ct);
+
+    /// One request for several pairings' status. A relay without it answers not_found.
+    public async Task<List<PairStatusBatchEntry>> FetchPairStatusBatchAsync(IEnumerable<(string PairIdHash, int PairEpoch)> pairs, CancellationToken ct)
+    {
+        var body = new PairStatusBatchRequest { Pairs = pairs.Select(p => new PairRef { PairIdHash = p.PairIdHash, PairEpoch = p.PairEpoch }).ToList() };
+        var response = await SendSignedAsync<PairStatusBatchResponse>(HttpMethod.Post, "/v1/pairs/status", body, ct).ConfigureAwait(false);
+        return response.Pairs;
+    }
     // ---- Backups ----
     /// Sub only: the relay accepts it from this pair epoch's Sub device alone.
     public Task PutCollarStatusAsync(string pairIdHash, int pairEpoch, string state, long stateAt, CancellationToken ct) =>
@@ -288,6 +373,27 @@ public sealed class RelayClient : IDisposable
     public Task<CatalogMailboxKeyEnvelope> PublishMailboxKeyAsync(CatalogMailboxKeyEnvelope key, CancellationToken ct) =>
         SendSignedAsync<CatalogMailboxKeyEnvelope>(HttpMethod.Post, "/v1/catalog/mailbox/key",
             new MailboxPublishKeyBody { PairIdHash = key.PairIdHash, PairEpoch = key.PairEpoch, Key = key }, ct);
+
+    // ---- Catalog pictures ----
+
+    /// The ids of `ids` the relay doesn't hold for this pair.
+    public async Task<List<string>> SyncPicturesAsync(string pairIdHash, int pairEpoch, IEnumerable<string> ids, CancellationToken ct)
+    {
+        var body = new PictureSyncRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, Ids = ids.ToList() };
+        return (await SendSignedAsync<PictureSyncResponse>(HttpMethod.Post, "/v1/pictures/sync", body, ct).ConfigureAwait(false)).Missing;
+    }
+
+    public Task UploadPictureAsync(string pairIdHash, int pairEpoch, string pictureId, byte[] blob, CancellationToken ct) =>
+        SendSignedAsync<PictureUploadAck>(HttpMethod.Post, "/v1/pictures/upload",
+            new PictureUploadRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, PictureId = pictureId, CiphertextBase64Url = RelayCrypto.Base64UrlEncode(blob) }, ct);
+
+    /// Blobs for the ids the relay holds; the rest are left out.
+    public async Task<List<(string PictureId, byte[] Blob)>> FetchPicturesAsync(string pairIdHash, int pairEpoch, IEnumerable<string> ids, CancellationToken ct)
+    {
+        var body = new PictureFetchRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, Ids = ids.ToList() };
+        var response = await SendSignedAsync<PictureFetchResponse>(HttpMethod.Post, "/v1/pictures/fetch", body, ct).ConfigureAwait(false);
+        return response.Pictures.Select(p => (p.PictureId, RelayCrypto.Base64UrlDecode(p.CiphertextBase64Url))).ToList();
+    }
 
     public Task<CatalogMailboxKeyInfo> FetchMailboxKeyAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>
         SendSignedAsync<CatalogMailboxKeyInfo>(HttpMethod.Post, "/v1/catalog/mailbox/key/fetch",

@@ -3,14 +3,15 @@ import { RelayError } from "./lib/errors";
 import { logEvent } from "./lib/log";
 import { acceptInvitation, cancelInvitation, consumeInvitation, createInvitation, fetchInvitation } from "./routes/invitations";
 import { deleteBackup, fetchBackup, putBackup } from "./routes/backups";
-import { fetchPair, putCollarStatus } from "./routes/pairs";
+import { fetchPair, fetchPairStatusBatch, putCollarStatus } from "./routes/pairs";
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
 import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxKey, uploadMailboxSnapshot } from "./routes/mailbox";
 import { consumeRulebookItem, fetchRulebookKey, publishRulebookKey, uploadRulebookItem } from "./routes/rulebook";
 import { health } from "./routes/health";
+import { fetchPictures, syncPictures, uploadPicture } from "./routes/pictures";
 import { runScheduledCleanup } from "./scheduled";
-import { enforceQuota } from "./lib/quotas";
+import { assertQuotaRemaining, enforceQuota, sampledUnits } from "./lib/quotas";
 import { originScope } from "./lib/origin";
 import { routeWeight } from "./lib/routeWeights";
 
@@ -30,8 +31,16 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (!origin.success) throw new RelayError("rate_limited", ORIGIN_RATE_LIMIT_PERIOD_SECONDS);
   // Account-level budget guard, charged in estimated rows written. Safety traffic has an independent reserve so
   // scans/pairing abuse cannot consume its allowance.
-  const safetyRoute = segments[1] === "revocations";
-  await enforceQuota(env, safetyRoute ? "globalDailySafety" : "globalDailyWork", "all", 0, routeWeight(method, segments));
+  // The small safety pool is charged exactly; the work pool by sampling, which writes its counter a quarter as often.
+  const weight = routeWeight(method, segments);
+  if (segments[1] === "revocations") {
+    await enforceQuota(env, "globalDailySafety", "all", 0, weight);
+  } else {
+    const random = crypto.getRandomValues(new Uint32Array(1))[0]! / 2 ** 32;
+    const units = sampledUnits(weight, Number(env.GLOBAL_CHARGE_SAMPLING ?? "4"), random);
+    if (units > 0) await enforceQuota(env, "globalDailyWork", "all", 0, units);
+    else await assertQuotaRemaining(env, "globalDailyWork", "all", weight);
+  }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "health") {
     return health(env);
@@ -52,6 +61,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (segments[1] === "pairs") {
+    if (method === "POST" && segments.length === 3 && segments[2] === "status") return fetchPairStatusBatch(request, env);
     if (method === "GET" && segments.length === 3) return fetchPair(request, env, segments[2]!);
     if (method === "POST" && segments.length === 4 && segments[3] === "collar-status") return putCollarStatus(request, env, segments[2]!);
   }
@@ -75,6 +85,12 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (action === "upload") return uploadMailboxSnapshot(request, env);
     if (action === "status") return mailboxStatus(request, env);
     if (action === "consume") return consumeMailboxSnapshot(request, env);
+  }
+
+  if (segments[1] === "pictures" && method === "POST" && segments.length === 3) {
+    if (segments[2] === "sync") return syncPictures(request, env);
+    if (segments[2] === "upload") return uploadPicture(request, env);
+    if (segments[2] === "fetch") return fetchPictures(request, env);
   }
 
   if (segments[1] === "rulebook" && method === "POST") {

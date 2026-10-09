@@ -34,6 +34,11 @@ export const QUOTA_LIMITS = {
   deviceCollarStatus: { windowSeconds: 3600, maxCount: 30 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
+  // catalog-pictures: a first publish after updating sends every picture once (dozens at most 64 KB each); after
+  // that only changed pictures go up.
+  pictureUploadBytes: { windowSeconds: 3600, maxCount: 300, maxBytes: 8 * 1024 * 1024 },
+  // Picture reference syncs (one per publish) and the Owner's batched fetches.
+  devicePictureOps: { windowSeconds: 3600, maxCount: 120 },
   // The per-channel upload interval already allows at most 60 rulebooks or 6 reports per hour per pair.
   rulebookUploadBytes: { windowSeconds: 3600, maxCount: 60, maxBytes: 2 * 1024 * 1024 },
   // Counted in estimated D1 rows written (ROUTE_WEIGHTS), not requests: D1 Free fails every query after 100k
@@ -86,6 +91,26 @@ export async function enforceQuota(
   if (!row) {
     throw new RelayError("rate_limited", retryAfterSeconds);
   }
+}
+
+/**
+ * Units to charge one admission when only one in `factor` admissions writes the counter: `weight * factor` for the
+ * sampled one, 0 for the rest, so the expected daily total equals charging every request. `random` is in [0, 1).
+ */
+export function sampledUnits(weight: number, factor: number, random: number): number {
+  if (!(factor > 1)) return weight;
+  return random < 1 / factor ? weight * factor : 0;
+}
+
+/** Read-only counterpart of enforceQuota for an admission that isn't charged, so a spent pool still rejects it. */
+export async function assertQuotaRemaining(env: Env, name: QuotaName, scopeId: string, units: number): Promise<void> {
+  const limit: QuotaLimit = QUOTA_LIMITS[name];
+  const now = nowSeconds();
+  const bucket = windowStart(now, limit.windowSeconds);
+  const row = await env.RELAY_DB.prepare(`SELECT count FROM quota_counters WHERE scope = ?1 AND window_start = ?2`)
+    .bind(`${name}:${scopeId}`, bucket)
+    .first<{ count: number }>();
+  if ((row?.count ?? 0) + units > limit.maxCount) throw new RelayError("rate_limited", bucket + limit.windowSeconds - now);
 }
 
 /**

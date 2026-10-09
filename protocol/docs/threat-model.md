@@ -65,6 +65,17 @@ holding the same key.
   its own old signed requests, or hold the connection open; server-side
   cooldown/replay/timeout enforcement must not trust client-declared retry
   behavior.
+- Read-only signed requests are not replay-protected. Pair status (single
+  `GET /v1/pairs/{hash}` and batched `POST /v1/pairs/status`), revocation check
+  (`GET /v1/revocations/{hash}`), catalog mailbox status and key fetch, and
+  rulebook key fetch are authenticated by signature and the 300 s timestamp
+  window but write no nonce, so the relay's routine polling costs no
+  bookkeeping rows. A replay of one of these within the 300 s window changes no
+  state and only returns the same kind of answer (pair/mailbox metadata, no
+  character identity, no plaintext, no key material) to whoever replays it.
+  To do that, the replayer must already hold the exact request, which is only
+  ever sent over TLS. Every state-changing request still records and checks
+  its nonce.
 - Decompression bombs are assumed to be attempted against the Owner client on
   import (bounded allocation during decompress, per
   `specs/collar/catalog-sync/spec.md` and task 6.4) and are not a relay-side
@@ -94,6 +105,7 @@ test in task 2.9).
 | `reason` (`unpair`/`panic`) | Lets a peer distinguish safety-relevant revocation from routine unpair (both processed identically as "end pairing now") | Deleted at revocation expiry (max 7 days) |
 | `algorithm`, `ciphertextDigest`, `ciphertextSizeBytes`, `nonce` | Integrity/size bookkeeping for the R2 ciphertext object, never key material | Deleted at consumption or 15 min expiry |
 | R2 object bytes (ciphertext) | The only place catalog content exists on the relay, and only in encrypted form | One-use retrieval, eager delete on consumption, scheduled orphan cleanup, hard 15 min expiry |
+| Device `active_day` (UTC day number) | The relay's anonymous "active today" install count | Overwritten in place at most once a day per device; kept with the device key row |
 | `code`, `retryAfterSeconds` (error) | Client-facing outcome, deliberately coarse (see `schemas/error.schema.json`) | Not persisted; response-only |
 | `revocation`, `attempt`, `nextAttemptAt` (retry) | **Client-local** outbox state for best-effort re-publication | Never sent to or stored by the relay; lives only in the plugin's own configuration store, deleted on successful publish or outbox expiry |
 

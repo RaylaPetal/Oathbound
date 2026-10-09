@@ -251,9 +251,11 @@ plugin knows where to go. It's sent only to your paired Sub, the same way as eve
 
 Pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay service. Your
 catalog, the Owner's rulebook and the Sub's rulebook activity report are end-to-end encrypted, and the relay
-never sees their contents or your character's name. While a Sub has a rulebook, their plugin uploads that
+never sees their contents or your character's name. A Sub's restraint pictures go to their Owner the same way, as
+separately encrypted small copies: the relay keeps one only while that Sub's catalog still uses it, and only sees how
+many there are, their sizes and when they change - never the pictures or which restraint they belong to. While a Sub has a rulebook, their plugin uploads that
 encrypted activity report by itself, at most every 10 minutes and only when something changed. The relay also counts how many installs
-checked in during the last half hour, as one anonymous number shown in the main window's header. It does keep,
+used it today or yesterday, as one anonymous number shown in the main window's header. It does keep,
 under an anonymous id per pairing, whether that pairing has ended and whether a locked collar is still on.
 
 **Using third-party plugins is against FINAL FANTASY XIV's Terms of Service. Use Oathbound at your own

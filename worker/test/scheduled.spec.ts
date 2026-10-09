@@ -165,23 +165,17 @@ describe("scheduled cleanup", () => {
     expect(await env.RELAY_CATALOG_BUCKET.head(revokedKey)).toBeNull();
   });
 
-  it("counts devices active within the window once each, and keeps their nonces long enough to see them", async () => {
+  it("drops nonces once they're past the replay window", async () => {
     const now = Math.floor(Date.now() / 1000);
     const insert = (device: string, nonce: string, seenAt: number) =>
       env.RELAY_DB.prepare(`INSERT INTO nonces (device_key_id, nonce, seen_at) VALUES (?1, ?2, ?3)`).bind(device, nonce, seenAt).run();
     await env.RELAY_DB.prepare(`DELETE FROM nonces`).run();
-    await insert("active-a", "n1", now - 60);
-    await insert("active-a", "n2", now - 1500);
-    await insert("active-b", "n3", now - 1700);
-    await insert("gone", "n4", now - 3000);
+    await insert("device-a", "n1", now - 60);
+    await insert("device-a", "n2", now - 3000);
 
     await runScheduledCleanup(env);
 
-    const stats = await env.RELAY_DB.prepare(`SELECT active_devices, computed_at FROM relay_stats WHERE id = 1`).first<{ active_devices: number; computed_at: number }>();
-    expect(stats?.active_devices).toBe(2);
-    expect(stats?.computed_at).toBeGreaterThanOrEqual(now);
-    // Past the 600s replay window, but still inside the activity window: kept.
-    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n3'`).first()).not.toBeNull();
-    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n4'`).first()).toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n1'`).first()).not.toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM nonces WHERE nonce = 'n2'`).first()).toBeNull();
   });
 });

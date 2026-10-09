@@ -1,6 +1,12 @@
 import type { Env } from "./env";
-import { ACTIVE_DEVICE_WINDOW_SECONDS, NONCE_RETENTION_SECONDS, nowSeconds } from "./lib/constants";
-import { deleteCiphertext } from "./lib/r2";
+import {
+  ACTIVE_DEVICE_RECOMPUTE_SECONDS,
+  NONCE_RETENTION_SECONDS,
+  nowSeconds,
+  PICTURE_IDLE_EXPIRY_SECONDS,
+  PICTURE_UNREFERENCED_GRACE_SECONDS,
+} from "./lib/constants";
+import { deleteCiphertext, r2KeyForPicture } from "./lib/r2";
 import { logEvent } from "./lib/log";
 import { QUOTA_LIMITS } from "./lib/quotas";
 
@@ -114,21 +120,15 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
       .run();
   }
 
+  const removedPictures = await removeExpiredPictures(env, now);
+
   const removedNonces = await env.RELAY_DB.prepare(
     `DELETE FROM nonces WHERE seen_at <= ?1`,
   )
     .bind(now - NONCE_RETENTION_SECONDS)
     .run();
 
-  const active = await env.RELAY_DB.prepare(`SELECT COUNT(DISTINCT device_key_id) AS n FROM nonces WHERE seen_at > ?1`)
-    .bind(now - ACTIVE_DEVICE_WINDOW_SECONDS)
-    .first<{ n: number }>();
-  await env.RELAY_DB.prepare(
-    `INSERT INTO relay_stats (id, active_devices, computed_at) VALUES (1, ?1, ?2)
-     ON CONFLICT (id) DO UPDATE SET active_devices = excluded.active_devices, computed_at = excluded.computed_at`,
-  )
-    .bind(active?.n ?? 0, now)
-    .run();
+  const active = await refreshActiveDevices(env, now);
 
   const maxWindowSeconds = Math.max(...Object.values(QUOTA_LIMITS).map((limit) => limit.windowSeconds));
   const removedQuotaCounters = await env.RELAY_DB.prepare(
@@ -140,6 +140,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
   await sweepOrphanCatalogObjects(env);
   await sweepOrphanMailboxObjects(env);
   await sweepOrphanRulebookObjects(env);
+  await sweepOrphanPictureObjects(env);
 
   logEvent("scheduled_cleanup_complete", {
     expiredInvitations: expiredInvitations.meta.changes ?? 0,
@@ -150,12 +151,53 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
     removedRevokedMailboxes: revokedMailboxes.results.length,
     expiredRulebookItems: expiredRulebookItems.results.length,
     removedRevokedRulebookMailboxes: revokedRulebookMailboxes.results.length,
+    removedPictures,
     removedNonces: removedNonces.meta.changes ?? 0,
-    activeDevices: active?.n ?? 0,
+    activeDevices: active,
     removedQuotaCounters: removedQuotaCounters.meta.changes ?? 0,
   });
 
   await checkQuotaAlarm(env);
+}
+
+/**
+ * catalog-pictures: a picture the Sub's latest reference sync dropped (after a grace period, so a snapshot still waiting
+ * in the mailbox keeps its pictures), one no sync has referenced for the idle period, and every picture of a revoked
+ * pair epoch. Only revocation ends an epoch's pictures: both directions of a mutual pair share one pairIdHash.
+ * Bounded per run; the rest go on the next.
+ */
+async function removeExpiredPictures(env: Env, now: number): Promise<number> {
+  const expired = await env.RELAY_DB.prepare(
+    `SELECT c.pair_id_hash, c.pair_epoch, c.picture_id FROM catalog_pictures c
+     LEFT JOIN pairs p ON p.pair_id_hash = c.pair_id_hash AND p.pair_epoch = c.pair_epoch
+     WHERE c.unreferenced_since <= ?1 OR c.last_referenced_at <= ?2 OR p.pair_id_hash IS NULL OR p.revoked_at IS NOT NULL
+     LIMIT 200`,
+  )
+    .bind(now - PICTURE_UNREFERENCED_GRACE_SECONDS, now - PICTURE_IDLE_EXPIRY_SECONDS)
+    .all<{ pair_id_hash: string; pair_epoch: number; picture_id: string }>();
+  for (const row of expired.results) {
+    await deleteCiphertext(env, r2KeyForPicture(row.pair_id_hash, row.pair_epoch, row.picture_id));
+    await env.RELAY_DB.prepare(`DELETE FROM catalog_pictures WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND picture_id = ?3`)
+      .bind(row.pair_id_hash, row.pair_epoch, row.picture_id)
+      .run();
+  }
+  return expired.results.length;
+}
+
+/** Devices active today or yesterday (UTC). Recomputed hourly, since it scans every device on file. Null when skipped. */
+async function refreshActiveDevices(env: Env, now: number): Promise<number | null> {
+  const last = await env.RELAY_DB.prepare(`SELECT computed_at FROM relay_stats WHERE id = 1`).first<{ computed_at: number }>();
+  if (last && now - last.computed_at < ACTIVE_DEVICE_RECOMPUTE_SECONDS) return null;
+  const today = Math.floor(now / 86400);
+  const row = await env.RELAY_DB.prepare(`SELECT COUNT(*) AS n FROM device_keys WHERE active_day >= ?1`).bind(today - 1).first<{ n: number }>();
+  const count = row?.n ?? 0;
+  await env.RELAY_DB.prepare(
+    `INSERT INTO relay_stats (id, active_devices, computed_at) VALUES (1, ?1, ?2)
+     ON CONFLICT (id) DO UPDATE SET active_devices = excluded.active_devices, computed_at = excluded.computed_at`,
+  )
+    .bind(count, now)
+    .run();
+  return count;
 }
 
 /**
@@ -199,6 +241,21 @@ async function sweepOrphanRulebookObjects(env: Env): Promise<void> {
   for (const object of listed.objects) {
     const row = await env.RELAY_DB.prepare(`SELECT 1 FROM rulebook_mailboxes WHERE item_r2_key = ?1`)
       .bind(object.key)
+      .first();
+    if (!row) {
+      await deleteCiphertext(env, object.key);
+    }
+  }
+}
+
+async function sweepOrphanPictureObjects(env: Env): Promise<void> {
+  const listed = await env.RELAY_CATALOG_BUCKET.list({ prefix: "pictures/", limit: 200 });
+  for (const object of listed.objects) {
+    // An upload puts the object before its row; deleting a fresh one would leave a row the Sub never re-uploads.
+    if (Date.now() - object.uploaded.getTime() < 3600_000) continue;
+    const [, pairIdHash, epoch, pictureId] = object.key.split("/");
+    const row = await env.RELAY_DB.prepare(`SELECT 1 FROM catalog_pictures WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND picture_id = ?3`)
+      .bind(pairIdHash ?? "", Number(epoch), pictureId ?? "")
       .first();
     if (!row) {
       await deleteCiphertext(env, object.key);

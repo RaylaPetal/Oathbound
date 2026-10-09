@@ -23,11 +23,12 @@ public static class ImageTile
 
     public static string Folder => Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "images");
 
-    /// The small copy that travels in the catalog, whose ciphertext is capped at 768 KB in all.
+    /// The small copy shared with the Owner: through the relay's picture store, or inside a catalog file.
     public const int ThumbWidth = 240;
     public const int ThumbHeight = 288;
+    /// Below this width a thumbnail is no longer worth sharing; the picture is left out instead.
+    private const int MinThumbWidth = 96;
     public const int MaxThumbBytes = 40 * 1024;
-    public const int MaxSharedTotalBytes = 256 * 1024;
     private const string SharedPrefix = "shared-";
 
     /// Only bare file names inside the images folder, so a tampered config can't point anywhere else.
@@ -184,9 +185,10 @@ public static class ImageTile
         return name;
     }
 
-    /// Fits the picture into 240 x 288 and encodes JPEG, lowering quality until it fits. Null when it can't (no JPEG
-    /// encoder, e.g. under Wine, or still too big); the restraint is then shared without a picture.
-    public static async Task<string?> MakeThumbnailAsync(string imageFile)
+    /// Fits the picture into `maxWidth` x `maxHeight` and encodes JPEG, lowering quality and then the frame until it
+    /// is at most `targetBytes`. Null when it can't (no JPEG encoder, e.g. under Wine, or still too big at the smallest
+    /// frame); the restraint is then shared without a picture.
+    public static async Task<string?> MakeThumbnailAsync(string imageFile, int maxWidth, int maxHeight, int targetBytes)
     {
         if (PathOf(imageFile) is not { } path || !File.Exists(path))
             return null;
@@ -201,26 +203,31 @@ public static class ImageTile
             }
 
             using var source = await Plugin.TextureProvider.CreateFromImageAsync(await File.ReadAllBytesAsync(path));
-            var scale = MathF.Min(1f, MathF.Min((float)ThumbWidth / source.Width, (float)ThumbHeight / source.Height));
-            using var scaled = await Plugin.TextureProvider.CreateFromExistingTextureAsync(source, new TextureModificationArgs
+            targetBytes = Math.Min(targetBytes, MaxThumbBytes);
+            for (float frame = 1f; maxWidth * frame >= MinThumbWidth; frame *= 0.8f)
             {
-                NewWidth = Math.Max(1, (int)(source.Width * scale)),
-                NewHeight = Math.Max(1, (int)(source.Height * scale)),
-                MakeOpaque = true,
-            }, leaveWrapOpen: true);
+                var scale = MathF.Min(1f, MathF.Min(maxWidth * frame / source.Width, maxHeight * frame / source.Height));
+                using var scaled = await Plugin.TextureProvider.CreateFromExistingTextureAsync(source, new TextureModificationArgs
+                {
+                    NewWidth = Math.Max(1, (int)(source.Width * scale)),
+                    NewHeight = Math.Max(1, (int)(source.Height * scale)),
+                    MakeOpaque = true,
+                }, leaveWrapOpen: true);
 
-            foreach (var quality in new[] { 0.85f, 0.7f, 0.55f, 0.4f, 0.3f })
-            {
-                using var stream = new MemoryStream();
-                await Plugin.TextureReadback.SaveToStreamAsync(scaled, jpeg.ContainerGuid, stream,
-                    new Dictionary<string, object> { ["ImageQuality"] = quality }, leaveWrapOpen: true, leaveStreamOpen: true);
-                if (stream.Length > MaxThumbBytes)
-                    continue;
-                var name = $"{Path.GetFileNameWithoutExtension(imageFile)}.thumb.jpg";
-                await File.WriteAllBytesAsync(Path.Combine(Folder, name), stream.ToArray());
-                return name;
+                foreach (var quality in new[] { 0.85f, 0.7f, 0.55f, 0.4f, 0.3f })
+                {
+                    using var stream = new MemoryStream();
+                    await Plugin.TextureReadback.SaveToStreamAsync(scaled, jpeg.ContainerGuid, stream,
+                        new Dictionary<string, object> { ["ImageQuality"] = quality }, leaveWrapOpen: true, leaveStreamOpen: true);
+                    if (stream.Length > targetBytes)
+                        continue;
+                    var name = $"{Path.GetFileNameWithoutExtension(imageFile)}.thumb.jpg";
+                    await File.WriteAllBytesAsync(Path.Combine(Folder, name), stream.ToArray());
+                    Plugin.Log.Debug($"Restraint picture small copy: {scaled.Width}x{scaled.Height} at quality {quality}, {stream.Length} bytes (target {targetBytes}).");
+                    return name;
+                }
             }
-            Plugin.Log.Warning("A restraint picture's small copy stayed over 40 KB - it won't be shared.");
+            Plugin.Log.Warning($"A restraint picture's small copy stayed over {targetBytes / 1024} KB even at its smallest - it won't be shared.");
         }
         catch (Exception ex)
         {
@@ -248,26 +255,47 @@ public static class ImageTile
     /// The Owner's copy of a picture the Sub shared. Named by content, so an unchanged picture isn't rewritten.
     public static string? WriteShared(string restraintId, string? base64)
     {
-        if (base64 is null || restraintId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (base64 is null)
             return null;
         try
         {
             var bytes = Convert.FromBase64String(base64);
-            if (bytes.Length > MaxThumbBytes || bytes.Length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF)
-                return null;
-            var name = $"{SharedPrefix}{restraintId}-{Convert.ToHexString(SHA256.HashData(bytes))[..12].ToLowerInvariant()}.jpg";
-            var path = Path.Combine(Folder, name);
+            return SharedNameFor(restraintId, Convert.ToHexStringLower(SHA256.HashData(bytes))) is { } name && WriteSharedBytes(name, bytes) ? name : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    /// The file name a shared picture with this content hash is saved under, or null for an unusable restraint id.
+    public static string? SharedNameFor(string restraintId, string sha256Hex) =>
+        restraintId.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && sha256Hex.Length >= 12 && sha256Hex.All(Uri.IsHexDigit)
+            ? $"{SharedPrefix}{restraintId}-{sha256Hex[..12].ToLowerInvariant()}.jpg"
+            : null;
+
+    public static bool SharedExists(string? fileName) => PathOf(fileName) is { } path && File.Exists(path);
+
+    /// Writes a shared picture once it checks out as a small JPEG. False when it doesn't, or couldn't be written.
+    public static bool WriteSharedBytes(string fileName, byte[] bytes)
+    {
+        if (bytes.Length > MaxThumbBytes || bytes.Length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF)
+            return false;
+        if (PathOf(fileName) is not { } path)
+            return false;
+        try
+        {
             if (!File.Exists(path))
             {
                 Directory.CreateDirectory(Folder);
                 File.WriteAllBytes(path, bytes);
             }
-            return name;
+            return true;
         }
         catch (Exception ex)
         {
             Plugin.Log.Warning(ex, "Couldn't save a picture shared by the Sub.");
-            return null;
+            return false;
         }
     }
 

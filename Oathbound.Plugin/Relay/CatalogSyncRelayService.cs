@@ -19,6 +19,7 @@ public sealed class CatalogSyncRelayService
     private readonly ChatComposer composer;
     private readonly ChatSender sender;
     private readonly CatalogSyncService catalogSync;
+    private readonly CatalogPictureService pictures;
 
     /// Memory-only by design; an interrupted request is cleared on startup rather than persisted or resumed.
     private readonly Dictionary<string, RelayEcKeyPair> pendingOwnerRequests = new();
@@ -37,8 +38,9 @@ public sealed class CatalogSyncRelayService
     public DateTimeOffset? LastAttemptAt { get; private set; }
     public CatalogSnapshotResult? LastImportResult { get; private set; }
 
-    public CatalogSyncRelayService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, ChatComposer composer, ChatSender sender, CatalogSyncService catalogSync)
+    public CatalogSyncRelayService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, ChatComposer composer, ChatSender sender, CatalogSyncService catalogSync, CatalogPictureService pictures)
     {
+        this.pictures = pictures;
         this.config = config;
         this.relay = relay;
         this.identity = identity;
@@ -202,6 +204,7 @@ public sealed class CatalogSyncRelayService
             LastImportResult = result;
             SetPhase("Complete");
             SetError(null);
+            Plugin.FireAndForget(pictures.FetchMissingAsync(pairing, ct));
         }
         catch (RelayException ex)
         {
@@ -358,6 +361,7 @@ public sealed class CatalogSyncRelayService
                 Plugin.Log.Warning(exportError ?? "Catalog snapshot exceeded a local size limit.");
                 return;
             }
+            await pictures.SyncBeforePublishAsync(pairing, ct).ConfigureAwait(false);
             var plaintext = System.Text.Encoding.UTF8.GetBytes(exportText);
             var compressed = RelayCompression.Compress(plaintext);
             if (compressed.Length > RelayProtocolConstants.CatalogCiphertextMaxBytes)

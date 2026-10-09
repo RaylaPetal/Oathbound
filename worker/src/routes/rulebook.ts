@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
+import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import {
   RULEBOOK_CIPHERTEXT_MAX_BYTES,
@@ -256,7 +256,7 @@ export async function publishRulebookKey(request: Request, env: Env): Promise<Re
  * the delivery receipt, so it can tell when an item never reached the recipient and send it again.
  */
 export async function fetchRulebookKey(request: Request, env: Env): Promise<Response> {
-  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
   await enforceQuota(env, "deviceRulebookOps", deviceKeyId);
 
   const { pairIdHash, pairEpoch, channel } = readMailboxRef(asRecord(bodyJson));

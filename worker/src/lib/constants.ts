@@ -29,6 +29,12 @@ interface ProtocolConstants {
     rulebookReportCiphertextMaxBytes: number;
     rulebookMinUploadIntervalSeconds: number;
     rulebookReportMinUploadIntervalSeconds: number;
+    pictureCiphertextMaxBytes: number;
+    picturesPerPairMax: number;
+    picturesPerPairMaxBytes: number;
+    pictureUnreferencedGraceSeconds: number;
+    pictureIdleExpirySeconds: number;
+    pictureFetchBatchMax: number;
   };
 }
 
@@ -36,10 +42,11 @@ export const PROTOCOL = raw as unknown as ProtocolConstants;
 
 export const TIMESTAMP_TOLERANCE_SECONDS = PROTOCOL.requestSigning.timestampToleranceSeconds;
 export const NONCE_REPLAY_WINDOW_SECONDS = PROTOCOL.requestSigning.nonce.replayWindowSeconds;
-// Nonces are kept past the replay window so they also show which devices were recently active. Clients check in
-// about every pairStatusPollIntervalSeconds, so the activity window has to span one full interval plus slack.
-export const ACTIVE_DEVICE_WINDOW_SECONDS = PROTOCOL.sizeAndExpiryLimits.pairStatusPollIntervalSeconds + 300;
-export const NONCE_RETENTION_SECONDS = Math.max(NONCE_REPLAY_WINDOW_SECONDS, ACTIVE_DEVICE_WINDOW_SECONDS);
+export const NONCE_RETENTION_SECONDS = NONCE_REPLAY_WINDOW_SECONDS;
+/** The active count covers devices seen today or yesterday (UTC), recomputed at most this often. */
+export const ACTIVE_DEVICE_RECOMPUTE_SECONDS = 3600;
+/** Pairings one pair status batch may ask about; far above any real device's pairing count. */
+export const PAIR_STATUS_BATCH_MAX = 32;
 export const INVITATION_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.invitationExpirySeconds;
 export const CATALOG_REQUEST_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.catalogRequestExpirySeconds;
 export const CATALOG_OBJECT_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.catalogObjectExpirySeconds;
@@ -64,3 +71,9 @@ export const RULEBOOK_REPORT_MIN_UPLOAD_INTERVAL_SECONDS = PROTOCOL.sizeAndExpir
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
+export const PICTURE_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.pictureCiphertextMaxBytes;
+export const PICTURES_PER_PAIR_MAX = PROTOCOL.sizeAndExpiryLimits.picturesPerPairMax;
+export const PICTURES_PER_PAIR_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.picturesPerPairMaxBytes;
+export const PICTURE_UNREFERENCED_GRACE_SECONDS = PROTOCOL.sizeAndExpiryLimits.pictureUnreferencedGraceSeconds;
+export const PICTURE_IDLE_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.pictureIdleExpirySeconds;
+export const PICTURE_FETCH_BATCH_MAX = PROTOCOL.sizeAndExpiryLimits.pictureFetchBatchMax;

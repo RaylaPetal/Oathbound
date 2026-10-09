@@ -222,5 +222,15 @@
     "ciphertextWithTagBase64Url": "eRWQpcpRF7rhJZLyzSVEZEbXKHXpya6fWeSS2WvZBqCWbCHVCYDl7RMD",
     "ciphertextDigestSha256Hex": "7805c682c5142448ff8b832f5c9145947d28319d4dbbbd0cc2c3998d5af10da7",
     "roundTripDecryptMatchesPlaintext": true
+  },
+  "aesGcmCatalogPicture": {
+    "description": "Restraint picture blob (catalog-pictures): AES-256-GCM with the per-picture key carried in the encrypted catalog, AAD = UTF-8 of \"oathbound-picture-v1|\" + pictureId, stored as nonce(12) || ciphertext+tag. The Owner checks SHA-256 of the plaintext against the catalog's reference.",
+    "pictureId": "cGljdHVyZS12ZWN0b3ItMQ",
+    "keyBase64Url": "AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dw",
+    "nonceBase64Url": "BRAbJjE8R1JdaHN-",
+    "aad": "oathbound-picture-v1|cGljdHVyZS12ZWN0b3ItMQ",
+    "plaintextBase64Url": "_9j_4G9hdGhib3VuZCBwaWN0dXJlIHZlY3Rvcv_Z",
+    "plaintextSha256Hex": "742e74bbff074763bac469a965c8b1b4ca3572b04c48cff5143a015a94d5dfeb",
+    "blobBase64Url": "BRAbJjE8R1JdaHN-b4OZDRovVR31VE0BdQhuaXuCQCD5PmmTbDWg2ghL75Oep4micrQAGHk-dCwbZA"
   }
 }

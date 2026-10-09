@@ -1,8 +1,8 @@
 import type { Env } from "../env";
-import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
-import { nowSeconds, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
+import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
+import { nowSeconds, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
 import { RelayError } from "../lib/errors";
-import { type CollarState, isMemberOfPair, latestPair, pairAtEpoch } from "../lib/pairs";
+import { type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
 import { rulebookMailboxSummary } from "./rulebook";
@@ -17,7 +17,7 @@ import { asRecord, isHex64, isNonNegInt, isUnixSeconds, requireField } from "../
  */
 export async function fetchPair(request: Request, env: Env, pairIdHash: string): Promise<Response> {
   if (!isHex64(pairIdHash)) throw new RelayError("not_found");
-  const { deviceKeyId } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  const { deviceKeyId } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
 
   // collar/pairing: `?epoch=N` asks about one exact pairing. A mutual pair (both directions between the same
   // two devices) shares one pairIdHash across epochs, so "is my pairing over?" must never be answered from
@@ -29,7 +29,37 @@ export async function fetchPair(request: Request, env: Env, pairIdHash: string):
     throw new RelayError("unauthorized");
   }
 
-  return Response.json({
+  return Response.json(await pairStatusBody(env, pair, await relayActivity(env)));
+}
+
+/**
+ * relay-budget: the status of several of the caller's pairings in one read-only request, each answered exactly as
+ * fetchPair would, or rejected on its own with the same generic "unauthorized" so nothing is learned about it.
+ */
+export async function fetchPairStatusBatch(request: Request, env: Env): Promise<Response> {
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
+  const body = asRecord(bodyJson);
+  if (body.type !== "pair-status-batch-request" || body.schemaVersion !== 1) throw new RelayError("invalid_request");
+  const refs = body.pairs;
+  if (!Array.isArray(refs) || refs.length === 0 || refs.length > PAIR_STATUS_BATCH_MAX) throw new RelayError("invalid_request");
+  const parsed = refs.map((ref) => {
+    const r = asRecord(ref);
+    return { pairIdHash: requireField(r, "pairIdHash", isHex64), pairEpoch: requireField(r, "pairEpoch", isNonNegInt) };
+  });
+
+  const activity = await relayActivity(env);
+  const pairs = [];
+  for (const { pairIdHash, pairEpoch } of parsed) {
+    const pair = await pairAtEpoch(env, pairIdHash, pairEpoch);
+    pairs.push(pair && isMemberOfPair(pair, deviceKeyId)
+      ? { pairIdHash, pairEpoch, pair: await pairStatusBody(env, pair, activity) }
+      : { pairIdHash, pairEpoch, error: "unauthorized" as const });
+  }
+  return Response.json({ type: "pair-status-batch", schemaVersion: 1, pairs });
+}
+
+async function pairStatusBody(env: Env, pair: PairRow, activity: Awaited<ReturnType<typeof relayActivity>>) {
+  return {
     type: "pair",
     schemaVersion: 1,
     pairIdHash: pair.pair_id_hash,
@@ -43,8 +73,8 @@ export async function fetchPair(request: Request, env: Env, pairIdHash: string):
     collarCheckinAt: pair.collar_checkin_at ?? null,
     catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
-    ...(await relayActivity(env)),
-  });
+    ...activity,
+  };
 }
 
 /** Null until the cron has run once. */

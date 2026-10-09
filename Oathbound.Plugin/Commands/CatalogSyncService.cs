@@ -286,7 +286,8 @@ public sealed class CatalogSyncService
     }
 
     /// Every header is emitted even when empty, so a cleared category isn't misread as "section absent".
-    public string BuildExport()
+    /// Pictures go inline for a catalog file; a relay publish carries references to the relay's picture store instead.
+    public string BuildExport(PictureMode pictures = PictureMode.Inline)
     {
         var sb = new StringBuilder();
         AppendSection(sb, TitleAliasesHeader, ExportCategoryAliasEntries(CustomTriggerActionKind.Title, config.Aliases.Titles.Select(a => new AliasExportEntry(a.Alias, DescribeTitleAlias(a)) { Command = SharedPresetCommands.Title(a) })).Select(EncodeAliasEntry));
@@ -296,7 +297,7 @@ public sealed class CatalogSyncService
         AppendSection(sb, GestureAliasesHeader, ExportCategoryAliasEntries(CustomTriggerActionKind.Gesture, config.Aliases.Gestures.Select(a => new AliasExportEntry(a.Alias, DescribeGestureAlias(a), a.GestureId) { Command = SharedPresetCommands.Gesture(a, config) })).Select(EncodeAliasEntry));
         AppendSection(sb, MoodlesHeader, moodles.ExportNames());
         AppendSection(sb, MoodlesAliasesHeader, ExportCategoryAliasEntries(CustomTriggerActionKind.Moodle, config.Aliases.Moodles.Select(a => new AliasExportEntry(a.Alias, DescribeMoodleAlias(a), MoodlesTextFormat.StripMarkup(a.StatusName)) { Command = SharedPresetCommands.Moodle(a, config) })).Select(EncodeAliasEntry));
-        AppendSection(sb, RestraintsHeader, restraints.ExportEntries());
+        AppendSection(sb, RestraintsHeader, restraints.ExportEntries(pictures));
         AppendSection(sb, RestraintsAliasesHeader, ExportCategoryAliasEntries(CustomTriggerActionKind.Restraint, RestraintWordEntries()).Select(EncodeAliasEntry));
         AppendSection(sb, BundlesHeader, ExportBundleEntries().Select(EncodeAliasEntry));
         return sb.ToString();
@@ -304,7 +305,7 @@ public sealed class CatalogSyncService
 
     public bool TryBuildBoundedExport(out string export, out string? error)
     {
-        export = BuildExport();
+        export = BuildExport(PictureMode.Reference);
         if (FitsPlaintextLimit(export))
         {
             error = null;
@@ -726,6 +727,23 @@ public sealed class CatalogSyncService
     }
 
 
+    /// Fails closed: a malformed reference is dropped rather than fetched.
+    private static PictureReference? ValidPictureRef(PictureReference? reference)
+    {
+        if (reference is null || reference.Id.Length != 22 || !reference.Id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            return null;
+        if (reference.Sha256.Length != 64 || !reference.Sha256.All(Uri.IsHexDigit))
+            return null;
+        try
+        {
+            return RelayCrypto.Base64UrlDecode(reference.Key).Length == 32 ? reference : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     private int ImportRestraintLines(IEnumerable<string> lines, List<QuickCommand> target, HashSet<string> usedCommands,
         ref int duplicates, Dictionary<string, RestraintCatalogExportEntry> importedCatalog)
     {
@@ -752,7 +770,12 @@ public sealed class CatalogSyncService
                     RestraintItemId = configured.ItemId,
                     RestraintRules = configured.Rules,
                     MoodleOverride = configured.Moodle,
-                    SharedImageFile = UI.ImageTile.WriteShared(configured.Id, configured.Picture),
+                    // A reference is fetched after the import; an inline picture (a catalog file) is written now.
+                    SharedImageFile = ValidPictureRef(configured.PictureRef) is { } pictureRef
+                        ? UI.ImageTile.SharedNameFor(configured.Id, pictureRef.Sha256)
+                        : UI.ImageTile.WriteShared(configured.Id, configured.Picture),
+                    SharedPictureRef = ValidPictureRef(configured.PictureRef),
+                    SubHasPicture = configured.HasPicture || configured.Picture is not null || configured.PictureRef is not null,
                 });
                 usedCommands.Add(command);
                 added++;

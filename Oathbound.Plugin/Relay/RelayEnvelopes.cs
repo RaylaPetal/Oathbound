@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
@@ -347,6 +348,8 @@ public static class EnvelopeCanonical
                 return value;
             case EcPublicKeyJwk jwk:
                 return new Dictionary<string, object?> { ["kty"] = jwk.Kty, ["crv"] = jwk.Crv, ["x"] = jwk.X, ["y"] = jwk.Y };
+            case System.Collections.IList list:
+                return list.Cast<object?>().Select(item => ToCanonicalValue(item, isRoot: false, excludeSignature)).ToList();
             default:
                 var dict = new Dictionary<string, object?>();
                 foreach (var prop in value.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))

@@ -144,7 +144,7 @@ public class CollarWindow : Window, IDisposable
         ImGui.SameLine(0, spacing);
         ImGui.TextDisabled(text);
         if (hovered || ImGui.IsItemHovered())
-            ImGui.SetTooltip("Oathbound players whose plugin checked in with the relay in the last half hour or so. Counts installs, never who they are.");
+            ImGui.SetTooltip("Oathbound players whose plugin used the relay today or yesterday. Counts installs, never who they are.");
     }
 
     private void DrawCharacterHeader()

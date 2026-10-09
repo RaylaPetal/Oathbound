@@ -24,10 +24,21 @@ export type PublicKeyResolver = (deviceKeyId: string, bodyJson: unknown) => Prom
  * signature from an unknown device key or a replayed nonce (spec: "Relay is
  * capability-secured and replay-resistant").
  */
+export interface SignedRequestOptions {
+  /**
+   * False only for routes that change no relay state: their replay within the timestamp window just returns the same
+   * kind of answer to whoever already holds the exact TLS-protected request, so the nonce row isn't worth writing.
+   */
+  replayProtected: boolean;
+}
+
+export const READ_ONLY: SignedRequestOptions = { replayProtected: false };
+
 export async function verifySignedRequest(
   request: Request,
   env: Env,
   resolvePublicKey: PublicKeyResolver,
+  options: SignedRequestOptions = { replayProtected: true },
 ): Promise<SignedRequestResult> {
   const deviceKeyId = request.headers.get("x-relay-device-key-id");
   const timestampHeader = request.headers.get("x-relay-timestamp");
@@ -76,10 +87,10 @@ export async function verifySignedRequest(
     throw new RelayError("unauthorized");
   }
 
-  const consumed = await consumeNonce(env, deviceKeyId, nonce);
-  if (!consumed) {
+  if (options.replayProtected && !(await consumeNonce(env, deviceKeyId, nonce))) {
     throw new RelayError("unauthorized");
   }
+  await markActiveToday(env, deviceKeyId);
 
   return { deviceKeyId, publicKeyJwk, bodyText, bodyJson };
 }
@@ -112,6 +123,13 @@ async function readBoundedBody(request: Request, maxBytes: number): Promise<stri
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); }
   catch { throw new RelayError("invalid_request"); }
+}
+
+/** Writes a row only on a device's first signed request of the UTC day; a device not on file yet is skipped. */
+async function markActiveToday(env: Env, deviceKeyId: string): Promise<void> {
+  await env.RELAY_DB.prepare(`UPDATE device_keys SET active_day = ?1 WHERE device_key_id = ?2 AND active_day IS NOT ?1`)
+    .bind(Math.floor(nowSeconds() / 86400), deviceKeyId)
+    .run();
 }
 
 /** Returns false if the nonce was already consumed for this device (replay). */

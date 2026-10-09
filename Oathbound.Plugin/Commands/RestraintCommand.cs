@@ -1289,32 +1289,76 @@ public sealed class RestraintCommand
         config.RestraintMapping.Devices.Values.Select(d => d.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 
-    /// Restraints whose picture didn't fit the last export's picture budget.
+    /// Restraints with a picture whose small copy wasn't ready (or couldn't be made) at the last export.
     public IReadOnlyList<string> PicturesLeftOut { get; private set; } = [];
 
-    public IEnumerable<string> ExportEntries()
+    /// The pictures the last Reference export pointed at, for uploading what the relay lacks before that catalog goes out.
+    public IReadOnlyList<(PictureReference Ref, string ThumbnailFile)> LastSharedPictures { get; private set; } = [];
+
+    private IEnumerable<ConfiguredModRestraint> ExportedMods() =>
+        config.RestraintMapping.ConfiguredMods
+            .Where(x => config.RestraintMapping.LocalCatalog.ContainsKey(x.CatalogId) && x.Rules.Count > 0 && x.ItemId > 0);
+
+    /// Size each shared picture's small copy is made to fit. Relay pictures travel on their own, so it doesn't shrink with the count.
+    public int ThumbnailTargetBytes() => UI.ImageTile.MaxThumbBytes;
+
+    /// Inline carries each picture in the text (the catalog file); Reference carries only an id, hash and key for the relay's picture store.
+    public IEnumerable<string> ExportEntries(PictureMode mode)
     {
         var left = new List<string>();
-        var budget = UI.ImageTile.MaxSharedTotalBytes;
+        var shared = new List<(PictureReference, string)>();
         var configured = new List<string>();
-        foreach (var mod in config.RestraintMapping.ConfiguredMods
-                     .Where(x => config.RestraintMapping.LocalCatalog.ContainsKey(x.CatalogId) && x.Rules.Count > 0 && x.ItemId > 0)
-                     .OrderBy(x => x.Name))
+        foreach (var mod in ExportedMods().OrderBy(x => x.Name))
         {
             var entry = ConfiguredModRestraintExportEntry.From(mod);
             if (mod.ImageFile is not null)
             {
-                if (UI.ImageTile.ReadThumbnail(mod.ThumbnailFile) is { } bytes && bytes.Length <= budget)
-                {
-                    entry.Picture = Convert.ToBase64String(bytes);
-                    budget -= bytes.Length;
-                }
-                else
+                if (UI.ImageTile.ReadThumbnail(mod.ThumbnailFile) is not { } bytes)
                     left.Add(mod.Name);
+                else if (mode == PictureMode.Inline)
+                    entry.Picture = Convert.ToBase64String(bytes);
+                else
+                {
+                    entry.PictureRef = ReferenceFor(bytes);
+                    shared.Add((entry.PictureRef, mod.ThumbnailFile!));
+                }
             }
             configured.Add(EncodeConfiguredExport(entry));
         }
         PicturesLeftOut = left;
+        if (mode == PictureMode.Reference)
+        {
+            LastSharedPictures = shared;
+            var live = shared.Select(s => s.Item1.Sha256).ToHashSet();
+            var stale = config.SharedPictureRefs.Keys.Where(sha => !live.Contains(sha)).ToList();
+            foreach (var sha in stale)
+                config.SharedPictureRefs.Remove(sha);
+            if (stale.Count > 0)
+                config.SaveDisplayState();
+        }
         return ExportCatalog().Split('\n', StringSplitOptions.RemoveEmptyEntries).Concat(configured);
     }
+
+    private PictureReference ReferenceFor(byte[] thumbnail)
+    {
+        var sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(thumbnail));
+        if (config.SharedPictureRefs.TryGetValue(sha, out var existing))
+            return existing;
+        var created = new PictureReference
+        {
+            Id = Relay.RelayCrypto.Base64UrlEncode(Relay.RelayCrypto.RandomBytes(16)),
+            Sha256 = sha,
+            Key = Relay.RelayCrypto.Base64UrlEncode(Relay.RelayCrypto.RandomBytes(32)),
+        };
+        config.SharedPictureRefs[sha] = created;
+        // Not a catalog change by itself; persisted so a restart keeps the id and doesn't upload it again.
+        config.SaveDisplayState();
+        return created;
+    }
+}
+
+public enum PictureMode
+{
+    Inline,
+    Reference,
 }

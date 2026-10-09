@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
+import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { verifyEcdsaSignature, type EcPublicKeyJwk } from "../lib/crypto";
 import { toCanonicalJson } from "../lib/json";
 import { enforceQuota } from "../lib/quotas";
@@ -106,7 +106,7 @@ export async function publishRevocation(request: Request, env: Env): Promise<Res
 /** Check: available even when a device's own pair was already revoked, and never gated by the circuit breaker. */
 export async function checkRevocations(request: Request, env: Env, pairIdHash: string): Promise<Response> {
   if (!isHex64(pairIdHash)) throw new RelayError("not_found");
-  const { deviceKeyId } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  const { deviceKeyId } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env), READ_ONLY);
 
   const membership = await env.RELAY_DB.prepare(
     `SELECT 1 FROM pairs WHERE pair_id_hash = ?1 AND (owner_device_key_id = ?2 OR sub_device_key_id = ?2) LIMIT 1`,
