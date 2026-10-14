@@ -866,6 +866,9 @@ public class PluginConfig : IPluginConfiguration
 
     public ChatChannel OutgoingChannel { get; set; } = ChatChannel.Tell;
 
+    /// Troubleshooting only: leaves command and notice lines in the chat log next to their Oathbound line.
+    public bool ShowRawCommandText { get; set; }
+
     public int LinkshellNumber { get; set; } = 1;
     public int CrossWorldLinkshellNumber { get; set; } = 1;
 

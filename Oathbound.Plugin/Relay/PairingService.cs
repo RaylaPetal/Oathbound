@@ -171,6 +171,7 @@ public sealed class PairingService
             }
             Pending = new PendingPairingRequest(invitationId, senderName, senderWorld, senderRole, invitation.TriggerPhrase, invitation.ExpiresAt);
             PendingChanged?.Invoke();
+            OathboundChat.Print($"{senderName}@{senderWorld} sent you a pairing request - open Settings to answer it.");
         }
         catch (RelayException ex)
         {
@@ -333,7 +334,10 @@ public sealed class PairingService
                 if (!ActivateLocally(pair, outgoing.Direction, Guid.NewGuid(), senderName, senderWorld, acceptance.AccepterDeviceKeyId, acceptance.AccepterPublicKey, acceptance.TriggerPhrase))
                     SetError("The relay returned pairing data that did not match the verified devices and roles.");
                 else
+                {
                     SetError(null);
+                    OathboundChat.Print($"{senderName}@{senderWorld} accepted - you're paired.");
+                }
                 return;
             }
             catch (RelayException ex) when (ex.Code is "network" or "service_unavailable" or "rate_limited" && attempt < AcknowledgementRetryDelaysSeconds.Length)

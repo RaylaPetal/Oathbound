@@ -385,7 +385,7 @@ public sealed class CodePairingService
                 state.PeerPublicKeyX = acceptance.AccepterPublicKey.X;
                 state.PeerPublicKeyY = acceptance.AccepterPublicKey.Y;
                 config.SaveNow();
-                Plugin.ChatGui.Print($"[Oathbound] {character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
+                OathboundChat.Print($"{character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
                 break;
             case "cancelled" or "rejected" or "consumed":
                 Remove(state);
@@ -413,7 +413,7 @@ public sealed class CodePairingService
                 if (pairing.ActivateLocally(pair, state.Direction, state.PairingId, state.PeerName!, state.PeerWorld!, state.PeerDeviceKeyId, peerKey, state.PeerTriggerPhrase))
                 {
                     Remove(state);
-                    Plugin.ChatGui.Print($"[Oathbound] {state.PeerName}@{state.PeerWorld} confirmed - you're paired.");
+                    OathboundChat.Print($"{state.PeerName}@{state.PeerWorld} confirmed - you're paired.");
                     return;
                 }
             }

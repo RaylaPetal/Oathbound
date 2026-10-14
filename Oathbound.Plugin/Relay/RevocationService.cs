@@ -269,7 +269,7 @@ public sealed class RevocationService
             config.SaveNow();
             PairingRevoked?.Invoke();
         }
-        Plugin.ChatGui.Print($"[Oathbound] Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
+        Commands.OathboundChat.Print($"Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
     }
 
     /// Returns true if the pairing is still active afterwards.

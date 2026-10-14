@@ -171,6 +171,8 @@ public class SettingsWindow : Window, IDisposable
         {
             using (Section.Begin("testCommandCard"))
                 DrawTestCommandCard(config);
+            using (Section.Begin("rawCommandTextCard"))
+                DrawRawCommandTextCard(config);
             ImGui.EndTabItem();
         }
 
@@ -603,6 +605,18 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("Only turn this on if animations, restraint mods or Reaction mods don't show up until something else redraws you. Penumbra can redraw on its own, and each extra redraw makes a sync plugin re-send your character, so people synced with you see you flash.");
+    }
+
+    private static void DrawRawCommandTextCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.CommentDots, "Chat log");
+        ImGui.Separator();
+        if (ImGuiCheckbox("Show raw command text", config.ShowRawCommandText, out var showRaw))
+        {
+            config.ShowRawCommandText = showRaw;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Oathbound normally hides commands and its own notices from your chat log and prints a short [Oathbound] line instead. Turn this on to also see the raw text, for troubleshooting. Anyone else in a party or linkshell always sees commands sent there.");
     }
 
     private void DrawTutorialCard(PluginConfig config)

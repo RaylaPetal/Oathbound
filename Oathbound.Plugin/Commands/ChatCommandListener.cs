@@ -105,31 +105,37 @@ public sealed class ChatCommandListener : IDisposable
 
     public void Dispose() => Plugin.ChatGui.ChatMessage -= OnChatMessage;
 
-    private void OnChatMessage(Dalamud.Game.Chat.IChatMessage message)
+    private void OnChatMessage(Dalamud.Game.Chat.IHandleableChatMessage message)
     {
+        if (message.LogKind == XivChatType.TellOutgoing)
+        {
+            OnOwnCommandLine(message);
+            return;
+        }
         if (Array.IndexOf(AllowedTriggerChatTypes, message.LogKind) < 0)
             return;
+        if (IsFromLocalPlayer(message.Sender))
+        {
+            OnOwnCommandLine(message);
+            return;
+        }
 
         var text = message.Message.TextValue.Trim();
 
         if (message.LogKind == XivChatType.TellIncoming)
         {
-            if (TryHandleRelayAckMessage(text, message.Sender))
+            if (TryHandleRelayAckMessage(text, message.Sender)
+                || TryHandleRelayInviteMessage(text, message.Sender)
+                || TryHandleUnpairNoticeMessage(text, message.Sender)
+                || TryHandleCatalogRequestMessage(text, message.Sender)
+                || TryHandleCatalogPermissionDeniedMessage(text, message.Sender)
+                || TryHandleLeashOffNoticeMessage(text, message.Sender)
+                || TryHandleRulebookNudgeMessage(text, message.Sender)
+                || TryHandleStruggleNoticeMessage(text, message.Sender))
+            {
+                Swallow(message);
                 return;
-            if (TryHandleRelayInviteMessage(text, message.Sender))
-                return;
-            if (TryHandleUnpairNoticeMessage(text, message.Sender))
-                return;
-            if (TryHandleCatalogRequestMessage(text, message.Sender))
-                return;
-            if (TryHandleCatalogPermissionDeniedMessage(text, message.Sender))
-                return;
-            if (TryHandleLeashOffNoticeMessage(text, message.Sender))
-                return;
-            if (TryHandleRulebookNudgeMessage(text, message.Sender))
-                return;
-            if (TryHandleStruggleNoticeMessage(text, message.Sender))
-                return;
+            }
         }
 
         // Only Sub-side pairings apply anything from chat, matched against every paired peer.
@@ -165,15 +171,127 @@ public sealed class ChatCommandListener : IDisposable
         if (alias.Length == 0)
             return;
 
+        LocalTestResult outcome;
         try
         {
-            var outcome = ResolveFromPairing(alias, matchedPairing);
+            outcome = ResolveFromPairing(alias, matchedPairing);
             Plugin.Log.Information($"Trigger tell dispatch: {outcome.Message}");
         }
         catch (Exception ex)
         {
             Plugin.Log.Error(ex, $"Failed to apply alias \"{alias}\" from a trigger tell.");
+            outcome = LocalTestResult.Fail(ex.Message, $"sent \"{alias}\", but it failed on your side");
         }
+
+        // A trigger word glued to the next word ("commandx") still dispatches, but only a whole word counts as a command line.
+        if (!HasTriggerWord(text, trigger))
+            return;
+        // A Reactions phrase looks exactly like a command; it stays a visible chat line.
+        if (outcome.Unmatched && IsReactionPhrase(alias))
+            return;
+        Swallow(message);
+        OathboundChat.Print(Sentence(outcome.Feedback is { } feedback
+            ? $"{matchedPairing.PeerName} {feedback}"
+            : outcome.Success ? $"{matchedPairing.PeerName}: {outcome.Message}" : $"{matchedPairing.PeerName}'s command didn't apply: {outcome.Message}"));
+    }
+
+    /// This client's own line: a tell it sent, or a line the local player said on a command channel. Hides the
+    /// plugin's notices and any command to a paired Sub, however it was sent, and says what went out.
+    private void OnOwnCommandLine(Dalamud.Game.Chat.IHandleableChatMessage message)
+    {
+        var text = message.Message.TextValue.Trim();
+        var isTell = message.LogKind == XivChatType.TellOutgoing;
+        if (isTell && IsNoticeLine(text))
+        {
+            Swallow(message);
+            return;
+        }
+
+        var subs = config.Pairings.Where(p => p is { IsPaired: true, Direction: PairingDirection.OwnerSide }).ToList();
+        if (subs.Count == 0)
+            return;
+
+        PairingState? sub;
+        string trigger;
+        if (isTell)
+        {
+            // An outgoing tell's sender field names the recipient.
+            var (name, world) = ExtractNameAndWorld(message.Sender);
+            if (name is null)
+                return;
+            sub = world is not null
+                ? config.FindPairing(name, world, PairingDirection.OwnerSide)
+                : SingleOrDefaultIfUnambiguous(subs.Where(p => string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase)));
+            if (sub is null || !HasTriggerWord(text, trigger = TriggerFor(sub)))
+                return;
+        }
+        else
+        {
+            // A channel can't address one Sub; the active pairing is who the composer sent it for.
+            var matching = subs.Where(p => HasTriggerWord(text, TriggerFor(p))).ToList();
+            if (matching.Count == 0)
+                return;
+            var activeId = config.GetActivePairing()?.Id;
+            sub = matching.FirstOrDefault(p => p.Id == activeId) ?? (matching.Count == 1 ? matching[0] : null);
+            trigger = TriggerFor(sub ?? matching[0]);
+        }
+
+        var body = text[trigger.Length..].Trim();
+        Swallow(message);
+        var channel = isTell ? "" : $"({ChannelName(message.LogKind)}) ";
+        OathboundChat.Print(Sentence($"{channel}Sent {sub?.PeerName ?? "your Subs"}: {CommandDescriber.Describe(body)}"));
+    }
+
+    private void Swallow(Dalamud.Game.Chat.IHandleableChatMessage message)
+    {
+        if (!config.ShowRawCommandText)
+            message.PreventOriginal();
+    }
+
+    private string TriggerFor(PairingState pairing) =>
+        (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
+
+    /// The trigger phrase as a whole word, followed by something.
+    private static bool HasTriggerWord(string text, string trigger) =>
+        trigger.Length > 0 && text.Length > trigger.Length && text.StartsWith(trigger, StringComparison.OrdinalIgnoreCase)
+        && char.IsWhiteSpace(text[trigger.Length]) && text[trigger.Length..].Trim().Length > 0;
+
+    private static readonly string[] NoticeKeywords =
+    [
+        PairingAckKeyword, InviteKeyword, UnpairNoticeKeyword, CatalogRequestKeyword, CatalogPermissionDeniedKeyword,
+        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword,
+    ];
+
+    private static bool IsNoticeLine(string text) =>
+        NoticeKeywords.Any(k => text.StartsWith(k, StringComparison.OrdinalIgnoreCase) && (text.Length == k.Length || char.IsWhiteSpace(text[k.Length])));
+
+    private bool IsReactionPhrase(string said) =>
+        config.Reactions.Any(r => r is { Enabled: true, TriggerKind: ReactionTriggerKind.ChatPhrase } && r.HasAnyAction && ReactionService.PhraseMatches(said, r.ChatPhrase));
+
+    private static bool IsFromLocalPlayer(SeString sender)
+    {
+        if (Plugin.ObjectTable.LocalPlayer is not { } me)
+            return false;
+        // Our own party lines carry no PlayerPayload and may lead with the party slot glyph.
+        var (name, _) = ExtractNameAndWorld(sender);
+        return name is not null && name.EndsWith(me.Name.TextValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ChannelName(XivChatType kind) => kind switch
+    {
+        XivChatType.Party => "Party",
+        XivChatType.Alliance => "Alliance",
+        >= XivChatType.Ls1 and <= XivChatType.Ls8 => $"Linkshell {kind - XivChatType.Ls1 + 1}",
+        XivChatType.CrossLinkShell1 => "Cross-world Linkshell 1",
+        >= XivChatType.CrossLinkShell2 and <= XivChatType.CrossLinkShell8 => $"Cross-world Linkshell {kind - XivChatType.CrossLinkShell2 + 2}",
+        _ => kind.ToString(),
+    };
+
+    /// Ends with exactly one sentence mark.
+    private static string Sentence(string text)
+    {
+        var trimmed = text.TrimEnd();
+        return trimmed.EndsWith('.') || trimmed.EndsWith('!') || trimmed.EndsWith('?') ? trimmed : trimmed + ".";
     }
 
     /// Runs the same dispatch as a real tell. Never sends chat and never requires pairing.
@@ -268,6 +386,7 @@ public sealed class ChatCommandListener : IDisposable
             restraints.ForceUnlock();
         pairing.EndFromVerifiedPeerNotice(matchedPairing);
         PeerUnpairedNoticeChanged?.Invoke();
+        OathboundChat.Print($"{matchedPairing.PeerName}@{matchedPairing.PeerWorld} unpaired from you.");
         return true;
     }
 
@@ -444,26 +563,26 @@ public sealed class ChatCommandListener : IDisposable
             case "title":
                 return permissions.Title
                     ? HandleForceTitle(LockTimerOption.StripSeconds(rest, out var titleSeconds), LockExpiry(titleSeconds), sourcePairing)
-                    : LocalTestResult.Fail("Title permission is not enabled.");
+                    : LocalTestResult.Fail("Title permission is not enabled.", "tried to change your title - Title is turned off");
             case "outfit":
                 return permissions.Outfit
                     ? HandleForceOutfit(MoodleOption.Strip(LockTimerOption.StripSeconds(rest, out var outfitSeconds), out var outfitMoodle), outfitMoodle, LockExpiry(outfitSeconds))
-                    : LocalTestResult.Fail("Outfit permission is not enabled.");
+                    : LocalTestResult.Fail("Outfit permission is not enabled.", "tried to change your outfit - Outfit is turned off");
             case "gesture":
-                return permissions.Gesture && config.TosAcknowledged ? HandleForceGesture(rest, sourcePairing) : LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
+                return permissions.Gesture && config.TosAcknowledged ? HandleForceGesture(rest, sourcePairing) : LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.", "tried to play an animation on you - Gesture or the automation acknowledgement is off");
             case "collar":
-                return permissions.Collar ? HandleForceCollar(rest, sourcePairing) : LocalTestResult.Fail("Collar permission is not enabled.");
+                return permissions.Collar ? HandleForceCollar(rest, sourcePairing) : LocalTestResult.Fail("Collar permission is not enabled.", "tried to use your collar - Collar is turned off");
             case "moodle":
                 return permissions.Moodles
                     ? HandleForceMoodle(LockTimerOption.StripSeconds(rest, out var moodleSeconds), moodleSeconds, sourcePairing)
-                    : LocalTestResult.Fail("Moodles permission is not enabled.");
+                    : LocalTestResult.Fail("Moodles permission is not enabled.", "tried to change your moodles - Moodles is turned off");
             case "restraint":
                 // `lockfor:` comes off first, then the trailing `moodle:`.
                 return permissions.Restraints && config.TosAcknowledged
                     ? HandleForceRestraint(MoodleOption.Strip(LockTimerOption.Strip(rest, out var restraintLock), out var restraintMoodle), restraintMoodle, restraintLock)
-                    : LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.");
+                    : LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.", "tried to restrain you - Restraints or the automation acknowledgement is off");
             case "toy":
-                return permissions.ToyControl && config.ToyControlAcknowledged ? HandleForceToy(rest) : LocalTestResult.Fail("Toy control permission or its dedicated acknowledgement is not enabled.");
+                return permissions.ToyControl && config.ToyControlAcknowledged ? HandleForceToy(rest) : LocalTestResult.Fail("Toy control permission or its dedicated acknowledgement is not enabled.", "tried to control your toy - Toy control or its acknowledgement is off");
             case "customtrigger":
                 // No outer gate: each bundled action checks its own permission.
                 return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock, sourcePairing);
@@ -473,7 +592,7 @@ public sealed class ChatCommandListener : IDisposable
                     return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
                 if (follow.LeashedPairingId != sourcePairing?.Id)
                     NotifyNotLeashed(sourcePairing);
-                return LocalTestResult.Fail("Follow permission is not enabled.");
+                return LocalTestResult.Fail("Follow permission is not enabled.", "tried to pull you along on the leash - Follow is turned off");
             case "teleport":
                 // No outer gate: TeleportCommand owns every guard, each with its own reportable reason.
                 return HandleForceTeleport(rest, sourcePairing);
@@ -481,9 +600,9 @@ public sealed class ChatCommandListener : IDisposable
                 // No outer gate: each category below checks its own permission.
                 return HandleForceRevert(rest);
             case Rulebook.ConsequenceValidator.DeckWord:
-                return RulebookSink is { } deckSink ? deckSink.DeckDraw(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.");
+                return RulebookSink is { } deckSink ? deckSink.DeckDraw(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.", "sent a rulebook command, but rulebooks aren't available");
             case Rulebook.ConsequenceValidator.LedgerWord:
-                return RulebookSink is { } ledgerSink ? ledgerSink.Ledger(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.");
+                return RulebookSink is { } ledgerSink ? ledgerSink.Ledger(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.", "sent a rulebook command, but rulebooks aren't available");
         }
 
         return ResolveAlias(commandText, sourcePairing);
@@ -493,7 +612,7 @@ public sealed class ChatCommandListener : IDisposable
     private LocalTestResult HandleForceRevert(string rest)
     {
         if (!rest.Equals("all", StringComparison.OrdinalIgnoreCase))
-            return LocalTestResult.Fail($"Unrecognized \"revert\" override \"{rest}\" - expected \"all\".");
+            return NotUnderstood($"Unrecognized \"revert\" override \"{rest}\" - expected \"all\".");
 
         var permissions = config.Permissions;
         var done = new List<string>();
@@ -531,9 +650,11 @@ public sealed class ChatCommandListener : IDisposable
         customTriggers.ForgetEffects();
 
         if (done.Count == 0 && failed.Count == 0)
-            return LocalTestResult.Fail("Revert all did nothing - every category it covers has its permission turned off.");
+            return LocalTestResult.Fail("Revert all did nothing - every category it covers has its permission turned off.", "tried to revert everything on you, but none of those permissions are on");
         var summary = $"Reverted {string.Join(", ", done)} (collar and pairing untouched).";
-        return failed.Count == 0 ? LocalTestResult.Ok(summary) : LocalTestResult.Fail($"{summary} Failed: {string.Join(", ", failed)}.");
+        return failed.Count == 0
+            ? LocalTestResult.Ok(summary, $"reverted your {string.Join(", ", done)} (your collar stays on)")
+            : LocalTestResult.Fail($"{summary} Failed: {string.Join(", ", failed)}.", $"reverted your {string.Join(", ", done)}, but {string.Join(", ", failed)} failed");
     }
 
     /// Clamped like a restraint timer, counted from now.
@@ -545,7 +666,7 @@ public sealed class ChatCommandListener : IDisposable
         if (rest.Equals("clear", StringComparison.OrdinalIgnoreCase))
         {
             title.ForceClear();
-            return LocalTestResult.Ok("Title cleared.");
+            return LocalTestResult.Ok("Title cleared.", "cleared your title");
         }
 
         const string createPrefix = "create ";
@@ -555,9 +676,9 @@ public sealed class ChatCommandListener : IDisposable
             if (text.Length > 0)
             {
                 title.ForceApply(text, expiresAtUtc, sourcePairing?.Id);
-                return LocalTestResult.Ok($"Title \"{text}\" applied{Until(expiresAtUtc)}.");
+                return LocalTestResult.Ok($"Title \"{text}\" applied{Until(expiresAtUtc)}.", $"set your title to \"{text}\"{Until(expiresAtUtc)}");
             }
-            return LocalTestResult.Fail("\"title create\" was given no text.");
+            return NotUnderstood("\"title create\" was given no text.");
         }
 
         const string stylePrefix = "style ";
@@ -566,12 +687,12 @@ public sealed class ChatCommandListener : IDisposable
             if (TitleCommand.TryParseStyleCommand(rest[stylePrefix.Length..], out var text, out var isPrefix, out var color, out var glow))
             {
                 title.ForceApply(text, isPrefix, color, glow, expiresAtUtc, sourcePairing?.Id);
-                return LocalTestResult.Ok($"Title \"{text}\" applied with style{Until(expiresAtUtc)}.");
+                return LocalTestResult.Ok($"Title \"{text}\" applied with style{Until(expiresAtUtc)}.", $"set your title to \"{text}\"{Until(expiresAtUtc)}");
             }
-            return LocalTestResult.Fail("\"title style\" was malformed - expected \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b> [glow:<r>,<g>,<b>]\".");
+            return NotUnderstood("\"title style\" was malformed - expected \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b> [glow:<r>,<g>,<b>]\".");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"title\" override \"{rest}\" - expected \"create <text>\", \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b>\", or \"clear\".");
+        return NotUnderstood($"Unrecognized \"title\" override \"{rest}\" - expected \"create <text>\", \"style \\\"<text>\\\" prefix:<0|1> color:<r>,<g>,<b>\", or \"clear\".");
     }
 
     private static string Until(DateTime? expiresAtUtc) =>
@@ -582,8 +703,8 @@ public sealed class ChatCommandListener : IDisposable
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
             return outfit.ForceUnlock()
-                ? LocalTestResult.Ok("Outfit released (locks and attached moodle).")
-                : LocalTestResult.Fail("Outfit unlock did nothing - no lock or attached moodle was held.");
+                ? LocalTestResult.Ok("Outfit released (locks and attached moodle).", "released your outfit")
+                : LocalTestResult.Fail("Outfit unlock did nothing - no lock or attached moodle was held.", "tried to release your outfit, but nothing was locked");
         }
 
         // `outfit wear <name>`: like `lock`, but nothing gets locked.
@@ -592,11 +713,11 @@ public sealed class ChatCommandListener : IDisposable
         {
             var name = StripQuotes(rest[wearPrefix.Length..].Trim());
             if (name.Length == 0)
-                return LocalTestResult.Fail("\"outfit wear\" was given no design name.");
+                return NotUnderstood("\"outfit wear\" was given no design name.");
             var (worn, wearReason) = outfit.ForceApply(name, moodleOverride, lockOutfit: false, expiresAtUtc);
             return worn
-                ? LocalTestResult.Ok($"Outfit \"{name}\" applied ({(expiresAtUtc is null ? "not locked" : Until(expiresAtUtc).TrimStart(',', ' '))})." + (wearReason is null ? "" : $" {wearReason}"))
-                : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {wearReason}");
+                ? LocalTestResult.Ok($"Outfit \"{name}\" applied ({(expiresAtUtc is null ? "not locked" : Until(expiresAtUtc).TrimStart(',', ' '))})." + (wearReason is null ? "" : $" {wearReason}"), $"dressed you in {name}{Until(expiresAtUtc)}")
+                : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {wearReason}", $"tried to dress you in {name} - {wearReason}");
         }
 
         const string lockPrefix = "lock ";
@@ -607,36 +728,36 @@ public sealed class ChatCommandListener : IDisposable
             {
                 var (success, reason) = outfit.ForceApply(name, moodleOverride, expiresAtUtc: expiresAtUtc);
                 return success
-                    ? LocalTestResult.Ok($"Outfit \"{name}\" applied and locked{Until(expiresAtUtc)}." + (reason is null ? "" : $" {reason}"))
-                    : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {reason}");
+                    ? LocalTestResult.Ok($"Outfit \"{name}\" applied and locked{Until(expiresAtUtc)}." + (reason is null ? "" : $" {reason}"), $"locked your outfit: {name}{Until(expiresAtUtc)}")
+                    : LocalTestResult.Fail($"Outfit \"{name}\" not applied: {reason}", $"tried to lock your outfit {name} - {reason}");
             }
-            return LocalTestResult.Fail("\"outfit lock\" was given no design name.");
+            return NotUnderstood("\"outfit lock\" was given no design name.");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"outfit\" override \"{rest}\" - expected \"lock <design name>\", \"wear <design name>\" or \"unlock\".");
+        return NotUnderstood($"Unrecognized \"outfit\" override \"{rest}\" - expected \"lock <design name>\", \"wear <design name>\" or \"unlock\".");
     }
 
     private LocalTestResult HandleForceGesture(string rest, PairingState? sourcePairing)
     {
         var name = LockTimerOption.StripSeconds(rest, out var holdSeconds).Trim();
         if (name.Length == 0)
-            return LocalTestResult.Fail("\"gesture\" was given no name.");
+            return NotUnderstood("\"gesture\" was given no name.");
         // Reserved, so no animation called "stop" can be sent by name.
         if (name.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
-            return gesture.Stop() ? LocalTestResult.Ok("Animation stopped.") : LocalTestResult.Ok("No animation was playing.");
+            return gesture.Stop() ? LocalTestResult.Ok("Animation stopped.", "stopped your animation") : LocalTestResult.Ok("No animation was playing.", "tried to stop your animation, but none was playing");
 
         var result = gesture.ForceApplyDetailed(name, sourcePairing?.Id, holdSeconds);
         var held = holdSeconds is { } s ? $", held for {RestraintLock.Format(TimeSpan.FromSeconds(Math.Clamp(s, GestureCommand.MinHoldSeconds, GestureCommand.MaxHoldSeconds)))}" : "";
         return result.Status switch
         {
-            GestureCommand.ApplyStatus.Success => LocalTestResult.Ok($"Gesture \"{result.DisplayName ?? name}\" queued for playback{held}."),
-            GestureCommand.ApplyStatus.Missing => LocalTestResult.Fail($"Gesture \"{name}\" is missing or stale in the Sub's current animation catalog. Re-import and edit the Owner quick command."),
-            GestureCommand.ApplyStatus.Ambiguous => LocalTestResult.Fail($"Gesture \"{name}\" matches more than one animation; choose a more specific selector."),
-            GestureCommand.ApplyStatus.Malformed => LocalTestResult.Fail($"Gesture selector \"{name}\" is malformed."),
-            GestureCommand.ApplyStatus.CollectionUnavailable => LocalTestResult.Fail("Gesture failed because the Sub's effective Penumbra collection is unavailable."),
-            GestureCommand.ApplyStatus.TemporarySettingsFailed => LocalTestResult.Fail($"Gesture \"{result.DisplayName ?? name}\" failed while applying temporary Penumbra settings."),
-            GestureCommand.ApplyStatus.RedrawFailed => LocalTestResult.Fail($"Gesture \"{result.DisplayName ?? name}\" failed while redrawing; temporary settings were rolled back."),
-            _ => LocalTestResult.Fail($"Gesture \"{name}\" failed."),
+            GestureCommand.ApplyStatus.Success => LocalTestResult.Ok($"Gesture \"{result.DisplayName ?? name}\" queued for playback{held}.", $"made you play {result.DisplayName ?? name}{held}"),
+            GestureCommand.ApplyStatus.Missing => LocalTestResult.Fail($"Gesture \"{name}\" is missing or stale in the Sub's current animation catalog. Re-import and edit the Owner quick command.", $"tried to make you play {name} - it isn't in your animation list"),
+            GestureCommand.ApplyStatus.Ambiguous => LocalTestResult.Fail($"Gesture \"{name}\" matches more than one animation; choose a more specific selector.", $"tried to make you play {name} - it matches more than one of your animations"),
+            GestureCommand.ApplyStatus.Malformed => NotUnderstood($"Gesture selector \"{name}\" is malformed."),
+            GestureCommand.ApplyStatus.CollectionUnavailable => LocalTestResult.Fail("Gesture failed because the Sub's effective Penumbra collection is unavailable.", $"tried to make you play {name} - your Penumbra collection isn't available"),
+            GestureCommand.ApplyStatus.TemporarySettingsFailed => LocalTestResult.Fail($"Gesture \"{result.DisplayName ?? name}\" failed while applying temporary Penumbra settings.", $"tried to make you play {result.DisplayName ?? name}, but Penumbra couldn't apply it"),
+            GestureCommand.ApplyStatus.RedrawFailed => LocalTestResult.Fail($"Gesture \"{result.DisplayName ?? name}\" failed while redrawing; temporary settings were rolled back.", $"tried to make you play {result.DisplayName ?? name}, but the redraw failed"),
+            _ => LocalTestResult.Fail($"Gesture \"{name}\" failed.", $"tried to make you play {name}, but it failed"),
         };
     }
 
@@ -648,19 +769,19 @@ public sealed class ChatCommandListener : IDisposable
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
             return collar.ForceUnlock(sourcePairing.Id)
-                ? LocalTestResult.Ok("Collar unlocked.")
-                : LocalTestResult.Fail("Collar unlock failed - nothing was locked by this pairing.");
+                ? LocalTestResult.Ok("Collar unlocked.", "unlocked your collar")
+                : LocalTestResult.Fail("Collar unlock failed - nothing was locked by this pairing.", "tried to unlock your collar, but they hadn't locked it");
         }
 
         if (rest.Equals("lock", StringComparison.OrdinalIgnoreCase))
         {
             // Always supersedes whichever pairing owned the collar before.
             return collar.ForceApply(sourcePairing.Id)
-                ? LocalTestResult.Ok("Collar applied and locked.")
-                : LocalTestResult.Fail("Collar apply failed - no collar item configured.");
+                ? LocalTestResult.Ok("Collar applied and locked.", "locked your collar on")
+                : LocalTestResult.Fail("Collar apply failed - no collar item configured.", "tried to lock your collar on, but no collar item is set up");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"collar\" override \"{rest}\" - expected \"lock\" or \"unlock\".");
+        return NotUnderstood($"Unrecognized \"collar\" override \"{rest}\" - expected \"lock\" or \"unlock\".");
     }
 
     /// `lockSeconds` set locks the moodle for that long; a custom one is only locked when it has a timer.
@@ -671,9 +792,9 @@ public sealed class ChatCommandListener : IDisposable
         if (verb.Equals(CustomMoodle.CustomWord, StringComparison.OrdinalIgnoreCase))
         {
             if (!moodles.CustomAllowed)
-                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.");
+                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.", "tried to give you a moodle they wrote - \"Allow moodles my Owner writes\" is off");
             if (!CustomMoodle.TryDecode(payload, out var custom))
-                return LocalTestResult.Fail("The custom moodle was malformed or over its limits.");
+                return NotUnderstood("The custom moodle was malformed or over its limits.");
             // Moodles matches the applier against friends/party as Name@World.
             var applier = sourcePairing is { PeerName: { } name, PeerWorld: { } world } ? $"{name}@{world}" : "Owner";
             return moodles.ApplyCustom(custom, applier, locked: lockSeconds is not null, expiresAtUtc, sourcePairing?.Id);
@@ -682,17 +803,17 @@ public sealed class ChatCommandListener : IDisposable
         if (lockSeconds is null && verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase) && CustomMoodle.TryDecodeId(payload, out _))
         {
             if (!moodles.CustomAllowed)
-                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.");
+                return LocalTestResult.Fail("\"Allow moodles my Owner writes\" is not enabled.", "tried to remove a moodle they wrote - \"Allow moodles my Owner writes\" is off");
             return CustomMoodle.TryDecodeId(payload, out var id) && moodles.RemoveCustom(id)
-                ? LocalTestResult.Ok("Custom moodle removed.")
-                : LocalTestResult.Fail("The custom moodle couldn't be removed.");
+                ? LocalTestResult.Ok("Custom moodle removed.", "removed a moodle they wrote")
+                : LocalTestResult.Fail("The custom moodle couldn't be removed.", "tried to remove a moodle they wrote, but it couldn't be removed");
         }
 
         if (rest.Equals("clear", StringComparison.OrdinalIgnoreCase))
         {
             return moodles.ForceClear()
-                ? LocalTestResult.Ok("Moodle cleared.")
-                : LocalTestResult.Fail("Moodle clear failed - Moodles may be unavailable.");
+                ? LocalTestResult.Ok("Moodle cleared.", "cleared your moodles")
+                : LocalTestResult.Fail("Moodle clear failed - Moodles may be unavailable.", "tried to clear your moodles - Moodles may be unavailable");
         }
 
         const string applyPrefix = "apply ";
@@ -702,10 +823,10 @@ public sealed class ChatCommandListener : IDisposable
             if (name.Length > 0)
             {
                 return moodles.ForceApply(name, expiresAtUtc, sourcePairing?.Id)
-                    ? LocalTestResult.Ok($"Moodle \"{name}\" applied{Until(expiresAtUtc)}.")
-                    : LocalTestResult.Fail($"No Moodles status named \"{name}\" (or the apply failed).");
+                    ? LocalTestResult.Ok($"Moodle \"{name}\" applied{Until(expiresAtUtc)}.", $"gave you the moodle {StripQuotes(name)}{Until(expiresAtUtc)}")
+                    : LocalTestResult.Fail($"No Moodles status named \"{name}\" (or the apply failed).", $"tried to give you the moodle {StripQuotes(name)} - you don't have it, or it failed");
             }
-            return LocalTestResult.Fail("\"moodle apply\" was given no status name.");
+            return NotUnderstood("\"moodle apply\" was given no status name.");
         }
 
         const string removePrefix = "remove ";
@@ -713,11 +834,11 @@ public sealed class ChatCommandListener : IDisposable
         {
             var name = rest[removePrefix.Length..].Trim();
             return moodles.Remove(name)
-                ? LocalTestResult.Ok($"Moodle {name} removed.")
-                : LocalTestResult.Fail($"No locked moodle or Moodles status named {name}.");
+                ? LocalTestResult.Ok($"Moodle {name} removed.", $"removed your moodle {StripQuotes(name)}")
+                : LocalTestResult.Fail($"No locked moodle or Moodles status named {name}.", $"tried to remove your moodle {StripQuotes(name)}, but you don't have it");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\", \"remove <status name>\" or \"clear\".");
+        return NotUnderstood($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\", \"remove <status name>\" or \"clear\".");
     }
 
     private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride, RestraintLock restraintLock)
@@ -726,8 +847,8 @@ public sealed class ChatCommandListener : IDisposable
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))
         {
             return restraints.ForceUnlock()
-                ? LocalTestResult.Ok("Restraints unlocked.")
-                : LocalTestResult.Fail("Restraint unlock failed - nothing was force-locked.");
+                ? LocalTestResult.Ok("Restraints unlocked.", "unlocked your restraints")
+                : LocalTestResult.Fail("Restraint unlock failed - nothing was force-locked.", "tried to unlock your restraints, but nothing was locked");
         }
 
         const string unlockPrefix = "unlock ";
@@ -735,7 +856,7 @@ public sealed class ChatCommandListener : IDisposable
         {
             // Unlock carries no lock options; refusing them keeps a malformed command from unlocking.
             if (restraintLock.IsTimed || restraintLock.Key is not null)
-                return LocalTestResult.Fail("\"restraint unlock\" doesn't take lock options.");
+                return NotUnderstood("\"restraint unlock\" doesn't take lock options.");
             return restraints.UnlockByReference(rest[unlockPrefix.Length..], restraints.PendingLockPairingId);
         }
 
@@ -744,10 +865,10 @@ public sealed class ChatCommandListener : IDisposable
         {
             // No lock option on this form; refusing one keeps a timed command from being misread.
             if (restraintLock.IsTimed)
-                return LocalTestResult.Fail("\"restraint timer\" doesn't take a lockfor: option.");
+                return NotUnderstood("\"restraint timer\" doesn't take a lockfor: option.");
             return RestraintCommand.TryParseTimerAdjust(rest[timerPrefix.Length..], out var delta)
                 ? restraints.AdjustTimedLock(delta)
-                : LocalTestResult.Fail("\"restraint timer\" expects +<seconds> or -<seconds>, 60 to 604800.");
+                : NotUnderstood("\"restraint timer\" expects +<seconds> or -<seconds>, 60 to 604800.");
         }
 
         const string lockPrefix = "lock ";
@@ -758,20 +879,20 @@ public sealed class ChatCommandListener : IDisposable
             {
                 var applied = rules is { Count: > 0 } ? restraints.ForceApply(name, rules, moodleOverride, restraintLock) : restraints.ForceApply(name, moodleOverride, restraintLock);
                 return applied
-                    ? LocalTestResult.Ok($"Restraint device \"{name}\" applied.")
-                    : LocalTestResult.Fail($"No restraint device named \"{name}\" (or the apply failed).");
+                    ? LocalTestResult.Ok($"Restraint device \"{name}\" applied.", $"locked you in {name}")
+                    : LocalTestResult.Fail($"No restraint device named \"{name}\" (or the apply failed).", $"tried to lock you in {name} - you don't have it, or it failed");
             }
-            return LocalTestResult.Fail("\"restraint lock\" was given no device name.");
+            return NotUnderstood("\"restraint lock\" was given no device name.");
         }
 
         const string catalogPrefix = "catalog ";
         if (rest.StartsWith(catalogPrefix, StringComparison.OrdinalIgnoreCase))
         {
             if (!RestraintCommand.TryParseCatalogCommand(rest[catalogPrefix.Length..], out var id, out var label, out var itemId, out var rules))
-                return LocalTestResult.Fail("The catalog restraint command was malformed.");
+                return NotUnderstood("The catalog restraint command was malformed.");
             return restraints.ForceApplyCatalog(id, itemId, rules, moodleOverride, restraintLock, label)
-                ? LocalTestResult.Ok("Shared restraint applied.")
-                : LocalTestResult.Fail(restraints.LastFailureReason ?? "The shared restraint could not be applied.");
+                ? LocalTestResult.Ok("Shared restraint applied.", $"locked you in {label}")
+                : LocalTestResult.Fail(restraints.LastFailureReason ?? "The shared restraint could not be applied.", $"tried to lock you in {label} - {restraints.LastFailureReason ?? "it couldn't be applied"}");
         }
 
         const string wearPrefix = "wear ";
@@ -781,13 +902,13 @@ public sealed class ChatCommandListener : IDisposable
             if (RestraintCommand.TryParseWearCommand(remainder, out var slot, out var itemId, out var label, out var rules))
             {
                 return restraints.ForceApplyAdHoc(slot, itemId, label, rules, moodleOverride, restraintLock)
-                    ? LocalTestResult.Ok($"Ad-hoc restraint device \"{label}\" applied.")
-                    : LocalTestResult.Fail($"Ad-hoc restraint device \"{label}\" failed to apply.");
+                    ? LocalTestResult.Ok($"Ad-hoc restraint device \"{label}\" applied.", $"locked you in {label}")
+                    : LocalTestResult.Fail($"Ad-hoc restraint device \"{label}\" failed to apply.", $"tried to lock you in {label}, but it failed");
             }
-            return LocalTestResult.Fail("\"restraint wear\" was malformed - expected \"wear <slot> <itemId> \\\"<label>\\\" rules:...\".");
+            return NotUnderstood("\"restraint wear\" was malformed - expected \"wear <slot> <itemId> \\\"<label>\\\" rules:...\".");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", \"timer +|-<seconds>\", or \"unlock\" (an apply form may be preceded by \"lockfor:<seconds>\").");
+        return NotUnderstood($"Unrecognized \"restraint\" override \"{rest}\" - expected \"catalog <id> \\\"<label>\\\" rules:...\", \"disable <id>\", \"wear <slot> <itemId> \\\"<label>\\\" rules:...\", \"timer +|-<seconds>\", or \"unlock\" (an apply form may be preceded by \"lockfor:<seconds>\").");
     }
 
     private LocalTestResult HandleForceToy(string rest)
@@ -795,8 +916,8 @@ public sealed class ChatCommandListener : IDisposable
         if (rest.Equals("stop", StringComparison.OrdinalIgnoreCase))
         {
             return toyControl.ForceStop()
-                ? LocalTestResult.Ok("Toy stopped.")
-                : LocalTestResult.Fail("Toy stop failed.");
+                ? LocalTestResult.Ok("Toy stopped.", "stopped your toy")
+                : LocalTestResult.Fail("Toy stop failed.", "tried to stop your toy, but it failed");
         }
 
         const string patternPrefix = "pattern:";
@@ -804,8 +925,8 @@ public sealed class ChatCommandListener : IDisposable
         {
             var name = rest[patternPrefix.Length..].Trim();
             return toyControl.ForceApplyPattern(name)
-                ? LocalTestResult.Ok($"Toy pattern \"{name}\" started.")
-                : LocalTestResult.Fail($"Unrecognized toy pattern \"{name}\", or no toy is connected.");
+                ? LocalTestResult.Ok($"Toy pattern \"{name}\" started.", $"started the {name} pattern on your toy")
+                : LocalTestResult.Fail($"Unrecognized toy pattern \"{name}\", or no toy is connected.", $"tried to start the {name} pattern - you don't have it, or no toy is connected");
         }
 
         const string vibratePrefix = "vibrate ";
@@ -814,10 +935,10 @@ public sealed class ChatCommandListener : IDisposable
             if (ToyControlCommand.TryParseVibrateCommand(rest[vibratePrefix.Length..], out var intensity, out var duration))
             {
                 return toyControl.ForceApplyVibrate(intensity, duration)
-                    ? LocalTestResult.Ok($"Toy vibrating at {intensity}%.")
-                    : LocalTestResult.Fail("Toy vibrate failed - no toy is connected.");
+                    ? LocalTestResult.Ok($"Toy vibrating at {intensity}%.", $"set your toy vibrating at {intensity}%")
+                    : LocalTestResult.Fail("Toy vibrate failed - no toy is connected.", "tried to vibrate your toy - no toy is connected");
             }
-            return LocalTestResult.Fail("\"toy vibrate\" was malformed - expected \"intensity:<0-100> [duration:<seconds>|duration:permanent]\".");
+            return NotUnderstood("\"toy vibrate\" was malformed - expected \"intensity:<0-100> [duration:<seconds>|duration:permanent]\".");
         }
 
         const string sequencePrefix = "sequence ";
@@ -826,13 +947,13 @@ public sealed class ChatCommandListener : IDisposable
             if (ToyControlCommand.TryParseCustomSequenceCommand(rest[sequencePrefix.Length..], out var steps, out var loop))
             {
                 return toyControl.ForceApplyCustomSequence(steps, loop)
-                    ? LocalTestResult.Ok($"Toy playing a {steps.Count}-step custom sequence.")
-                    : LocalTestResult.Fail("Toy sequence failed - no toy is connected.");
+                    ? LocalTestResult.Ok($"Toy playing a {steps.Count}-step custom sequence.", $"started a {steps.Count}-step pattern on your toy")
+                    : LocalTestResult.Fail("Toy sequence failed - no toy is connected.", "tried to play a pattern on your toy - no toy is connected");
             }
-            return LocalTestResult.Fail("\"toy sequence\" was malformed - expected \"steps:<intensity>=<ms>,... [loop:true]\".");
+            return NotUnderstood("\"toy sequence\" was malformed - expected \"steps:<intensity>=<ms>,... [loop:true]\".");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"toy\" override \"{rest}\" - expected \"vibrate intensity:<0-100> [duration:<seconds>|duration:permanent]\", \"pattern:<weak|medium|strong|pulse|a custom pattern name>\", \"sequence steps:<intensity>=<ms>,... [loop:true]\", or \"stop\".");
+        return NotUnderstood($"Unrecognized \"toy\" override \"{rest}\" - expected \"vibrate intensity:<0-100> [duration:<seconds>|duration:permanent]\", \"pattern:<weak|medium|strong|pulse|a custom pattern name>\", \"sequence steps:<intensity>=<ms>,... [loop:true]\", or \"stop\".");
     }
 
     private LocalTestResult HandleForceCustomTrigger(string rest, RestraintLock restraintLock, PairingState? sourcePairing)
@@ -849,31 +970,31 @@ public sealed class ChatCommandListener : IDisposable
             {
                 var result = customTriggers.Apply(actions, restraintLock, sourcePairing?.Id);
                 return result.Success
-                    ? LocalTestResult.Ok($"Custom trigger \"{label}\": {result.Message}")
-                    : LocalTestResult.Fail($"Custom trigger \"{label}\": {result.Message}");
+                    ? LocalTestResult.Ok($"Custom trigger \"{label}\": {result.Message}", $"cast \"{label}\" on you - {result.Message}")
+                    : LocalTestResult.Fail($"Custom trigger \"{label}\": {result.Message}", $"tried to cast \"{label}\" on you - {result.Message}");
             }
-            return LocalTestResult.Fail("\"customtrigger cast\" was malformed - expected \"cast \\\"<label>\\\" title=...;outfit=...;gesture=...;moodle=...;restraint=...;chat=<rest of line>\" (chat, if present, must be last).");
+            return NotUnderstood("\"customtrigger cast\" was malformed - expected \"cast \\\"<label>\\\" title=...;outfit=...;gesture=...;moodle=...;restraint=...;chat=<rest of line>\" (chat, if present, must be last).");
         }
 
-        return LocalTestResult.Fail($"Unrecognized \"customtrigger\" override \"{rest}\" - expected \"[lockfor:<seconds>] cast \\\"<label>\\\" ...\".");
+        return NotUnderstood($"Unrecognized \"customtrigger\" override \"{rest}\" - expected \"[lockfor:<seconds>] cast \\\"<label>\\\" ...\".");
     }
 
     private LocalTestResult HandleForceTeleport(string rest, PairingState? sourcePairing)
     {
         if (!TeleportTarget.TryParse(rest, out var destination))
-            return LocalTestResult.Fail($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" terr:<id> inst:<n> ward:<n> sub:<0|1> pos:<x>,<y>,<z>\" (your Owner may be on an older Oathbound build).");
+            return NotUnderstood($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" terr:<id> inst:<n> ward:<n> sub:<0|1> pos:<x>,<y>,<z>\" (your Owner may be on an older Oathbound build).");
 
         var (success, reason) = teleport.Apply(destination, sourcePairing);
         return success
-            ? LocalTestResult.Ok($"On the way to your Owner on \"{destination.World}\".")
-            : LocalTestResult.Fail(reason ?? "Teleport failed.");
+            ? LocalTestResult.Ok($"On the way to your Owner on \"{destination.World}\".", $"is bringing you to them on {destination.World}")
+            : LocalTestResult.Fail(reason ?? "Teleport failed.", $"tried to bring you to them - {reason ?? "the teleport failed"}");
     }
 
     /// Only acts while leashed to the sender; Teleport's guards apply and a refusal pauses the leash.
     private LocalTestResult HandleLeashTravel(string payload, PairingState? sourcePairing)
     {
         if (!TeleportTarget.TryParse(payload, out var destination))
-            return LocalTestResult.Fail($"Unrecognized \"leash travel\" payload \"{payload}\".");
+            return NotUnderstood($"Unrecognized \"leash travel\" payload \"{payload}\".");
 
         var wasLeashedToSender = sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id;
         var (success, reason) = follow.TravelTo(destination, sourcePairing);
@@ -881,8 +1002,8 @@ public sealed class ChatCommandListener : IDisposable
         if (!success && !wasLeashedToSender)
             NotifyNotLeashed(sourcePairing);
         return success
-            ? LocalTestResult.Ok($"Leash travel: following your Owner to \"{destination.World}\".")
-            : LocalTestResult.Fail(reason ?? "Leash travel failed.");
+            ? LocalTestResult.Ok($"Leash travel: following your Owner to \"{destination.World}\".", $"is pulling you along on the leash to {destination.World}")
+            : LocalTestResult.Fail(reason ?? "Leash travel failed.", $"tried to pull you along on the leash - {reason ?? "it failed"}");
     }
 
     private void NotifyLeashRefused(PairingState? sourcePairing)
@@ -914,6 +1035,13 @@ public sealed class ChatCommandListener : IDisposable
 
     private static string StripQuotes(string text) => text.Trim('"', '\'');
 
+    /// A command the Sub's version can't read: malformed, or newer than this build.
+    private static LocalTestResult NotUnderstood(string message) =>
+        LocalTestResult.Fail(message, "sent a command your version of Oathbound doesn't understand");
+
+    private static LocalTestResult WithFeedback(LocalTestResult result, string done, string tried) =>
+        result with { Feedback = $"{(result.Success ? done : tried)} - {result.Message}" };
+
     private LocalTestResult ResolveAlias(string alias, PairingState? sourcePairing)
     {
         var aliases = config.Aliases;
@@ -923,17 +1051,17 @@ public sealed class ChatCommandListener : IDisposable
         if (Matches(alias, ControlWords.ClearTitle))
         {
             if (!permissions.Title)
-                return LocalTestResult.Fail("Title permission is not enabled.");
+                return LocalTestResult.Fail("Title permission is not enabled.", "tried to change your title - Title is turned off");
             title.Clear();
-            return LocalTestResult.Ok($"\"{alias}\" matched clear-title.");
+            return LocalTestResult.Ok($"\"{alias}\" matched clear-title.", "cleared your title");
         }
 
         if (Matches(alias, ControlWords.Unlock))
         {
             if (!permissions.Outfit)
-                return LocalTestResult.Fail("Outfit permission is not enabled.");
+                return LocalTestResult.Fail("Outfit permission is not enabled.", "tried to change your outfit - Outfit is turned off");
             outfit.Unlock();
-            return LocalTestResult.Ok($"\"{alias}\" matched unlock-outfit.");
+            return LocalTestResult.Ok($"\"{alias}\" matched unlock-outfit.", "unlocked your outfit");
         }
 
         // `leash [duty:pause] [length:N] [moodle:"..."]`: stripped from the end, moodle first.
@@ -944,87 +1072,87 @@ public sealed class ChatCommandListener : IDisposable
             if (!permissions.Follow)
             {
                 NotifyLeashRefused(sourcePairing);
-                return LocalTestResult.Fail("Follow permission is not enabled.");
+                return LocalTestResult.Fail("Follow permission is not enabled.", "tried to leash you - Follow is turned off");
             }
             if (follow.Engage(sourcePairing, leashLength ?? LengthOption.DefaultYalms, leashMoodle, leashDutyPause))
-                return LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).");
+                return LocalTestResult.Ok($"\"{alias}\" matched leash-engage ({follow.EffectiveLength:0} yalms).", $"leashed you ({follow.EffectiveLength:0} yalms)");
             NotifyLeashRefused(sourcePairing);
-            return LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.");
+            return LocalTestResult.Fail("Leash engage failed - movement lock is unavailable, or no Owner to follow.", "tried to leash you, but the leash couldn't engage");
         }
 
         if (Matches(alias, ControlWords.Unleash))
         {
             if (!permissions.Follow)
-                return LocalTestResult.Fail("Follow permission is not enabled.");
+                return LocalTestResult.Fail("Follow permission is not enabled.", "tried to take your leash off - Follow is turned off");
             // An unleash from a different Owner still releases the leash; the holding Owner is told.
             follow.Release(sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id ? LeashEnd.OwnerUnleash : LeashEnd.Other);
-            return LocalTestResult.Ok($"\"{alias}\" matched leash-release.");
+            return LocalTestResult.Ok($"\"{alias}\" matched leash-release.", "took your leash off");
         }
 
         if (Matches(alias, ControlWords.ClearMoodle))
         {
             if (!permissions.Moodles)
-                return LocalTestResult.Fail("Moodles permission is not enabled.");
+                return LocalTestResult.Fail("Moodles permission is not enabled.", "tried to change your moodles - Moodles is turned off");
             return moodles.Clear()
-                ? LocalTestResult.Ok($"\"{alias}\" matched clear-moodle.")
-                : LocalTestResult.Fail($"\"{alias}\" matched clear-moodle, but Moodles may be unavailable.");
+                ? LocalTestResult.Ok($"\"{alias}\" matched clear-moodle.", "cleared your moodles")
+                : LocalTestResult.Fail($"\"{alias}\" matched clear-moodle, but Moodles may be unavailable.", "tried to clear your moodles - Moodles may be unavailable");
         }
 
         var titleAlias = aliases.Titles.FirstOrDefault(a => Matches(alias, a.Alias));
         if (titleAlias is not null)
         {
             if (!permissions.Title)
-                return LocalTestResult.Fail("Title permission is not enabled.");
+                return LocalTestResult.Fail("Title permission is not enabled.", "tried to change your title - Title is turned off");
             title.Apply(titleAlias);
-            return LocalTestResult.Ok($"Alias \"{alias}\" matched a title.");
+            return LocalTestResult.Ok($"Alias \"{alias}\" matched a title.", $"changed your title (\"{alias}\")");
         }
 
         var outfitAlias = aliases.Outfits.FirstOrDefault(a => Matches(alias, a.Alias));
         if (outfitAlias is not null)
         {
             if (!permissions.Outfit)
-                return LocalTestResult.Fail("Outfit permission is not enabled.");
+                return LocalTestResult.Fail("Outfit permission is not enabled.", "tried to change your outfit - Outfit is turned off");
             var (outfitApplied, outfitReason) = outfit.Apply(outfitAlias);
             return outfitApplied
-                ? LocalTestResult.Ok($"Alias \"{alias}\" matched an outfit." + (outfitReason is null ? "" : $" {outfitReason}"))
-                : LocalTestResult.Fail($"Alias \"{alias}\" matched an outfit, but it wasn't applied: {outfitReason}");
+                ? LocalTestResult.Ok($"Alias \"{alias}\" matched an outfit." + (outfitReason is null ? "" : $" {outfitReason}"), $"changed your outfit (\"{alias}\")")
+                : LocalTestResult.Fail($"Alias \"{alias}\" matched an outfit, but it wasn't applied: {outfitReason}", $"tried to change your outfit (\"{alias}\") - {outfitReason}");
         }
 
         var gestureAlias = aliases.Gestures.FirstOrDefault(a => Matches(alias, a.Alias));
         if (gestureAlias is not null)
         {
             if (!(permissions.Gesture && config.TosAcknowledged))
-                return LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.");
+                return LocalTestResult.Fail("Gesture permission or the automation-risk acknowledgement is not enabled.", "tried to play an animation on you - Gesture or the automation acknowledgement is off");
             return gesture.Apply(gestureAlias, sourcePairing?.Id)
-                ? LocalTestResult.Ok($"Alias \"{alias}\" matched a gesture.")
-                : LocalTestResult.Fail($"Alias \"{alias}\" matched a gesture, but it failed to play.");
+                ? LocalTestResult.Ok($"Alias \"{alias}\" matched a gesture.", $"made you play \"{alias}\"")
+                : LocalTestResult.Fail($"Alias \"{alias}\" matched a gesture, but it failed to play.", $"tried to make you play \"{alias}\", but it failed");
         }
 
         if (restraints.MatchesWord(alias))
         {
             if (!(permissions.Restraints && config.TosAcknowledged))
-                return LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.");
+                return LocalTestResult.Fail("Restraints permission or the automation-risk acknowledgement is not enabled.", "tried to restrain you - Restraints or the automation acknowledgement is off");
             return restraints.ToggleByWord(alias)
-                ? LocalTestResult.Ok($"\"{alias}\" matched a restraint (toggled).")
-                : LocalTestResult.Fail($"\"{alias}\" matched a restraint, but it wasn't toggled: {restraints.LastFailureReason ?? "the apply failed"}.");
+                ? LocalTestResult.Ok($"\"{alias}\" matched a restraint (toggled).", $"toggled your restraint \"{alias}\"")
+                : LocalTestResult.Fail($"\"{alias}\" matched a restraint, but it wasn't toggled: {restraints.LastFailureReason ?? "the apply failed"}.", $"tried to toggle your restraint \"{alias}\" - {restraints.LastFailureReason ?? "the apply failed"}");
         }
 
         var moodleAlias = aliases.Moodles.FirstOrDefault(a => Matches(alias, a.Alias));
         if (moodleAlias is not null)
         {
             if (!permissions.Moodles)
-                return LocalTestResult.Fail("Moodles permission is not enabled.");
+                return LocalTestResult.Fail("Moodles permission is not enabled.", "tried to change your moodles - Moodles is turned off");
             return moodles.Apply(moodleAlias)
-                ? LocalTestResult.Ok($"Alias \"{alias}\" matched a Moodle.")
-                : LocalTestResult.Fail($"Alias \"{alias}\" matched a Moodle, but it failed to apply.");
+                ? LocalTestResult.Ok($"Alias \"{alias}\" matched a Moodle.", $"gave you the moodle \"{alias}\"")
+                : LocalTestResult.Fail($"Alias \"{alias}\" matched a Moodle, but it failed to apply.", $"tried to give you the moodle \"{alias}\", but it failed");
         }
 
         // No permission gate: each bundled action checks its own.
         var customTrigger = aliases.CustomTriggers.FirstOrDefault(t => Matches(alias, t.Alias));
         if (customTrigger is not null)
-            return customTriggers.Apply(customTrigger.Actions, sourcePairingId: sourcePairing?.Id);
+            return WithFeedback(customTriggers.Apply(customTrigger.Actions, sourcePairingId: sourcePairing?.Id), $"used \"{alias}\" on you", $"tried \"{alias}\" on you");
 
-        return LocalTestResult.Fail($"No matching alias or reserved-word command for \"{alias}\".");
+        return new LocalTestResult(false, $"No matching alias or reserved-word command for \"{alias}\".", $"sent \"{alias}\", which isn't one of your aliases or commands", Unmatched: true);
     }
 
     private static bool Matches(string received, string configured) =>

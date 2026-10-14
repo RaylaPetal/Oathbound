@@ -28,6 +28,11 @@ everything instantly with their safeword.
 > Commands travel as ordinary in-game `/tell`s between the two of you. Changes to your look are applied
 > through your own Glamourer and Penumbra, so anyone who sees your synced appearance (Snowcloak,
 > Lightless, or a similar sync tool) sees them too.
+>
+> Your plugin hides those command messages from your own chat log and shows a short **[Oathbound]**
+> line instead, saying what was sent or what happened. That only tidies your own chat: a command sent in
+> party or a linkshell is still seen by everyone there. To see the raw messages, turn on **Show raw command
+> text** in Settings > Test Commands.
 
 ---
 
@@ -245,6 +250,10 @@ plugin sends the Owner who set it one short "collarstruggle free" tell naming th
 a key your Owner gave you, one "collarstruggle key" tell naming it; failed tries and wrong keys send nothing. An Owner's
 **Grant leave** button (for an "ask before logging off" oath) sends one tell with the word they chose, only when
 they press it.
+
+Your plugin also hides its command and notice messages from your own chat log, whether your plugin sent
+them or you typed them yourself, and prints a short [Oathbound] line in their place. It only changes what
+your own chat log shows, never what is sent or who sees it.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
 plugin knows where to go. It's sent only to your paired Sub, the same way as every other command.
