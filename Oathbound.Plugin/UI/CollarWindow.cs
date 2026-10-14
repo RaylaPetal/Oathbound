@@ -67,7 +67,8 @@ public class CollarWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    /// Content height measured at the end of last frame's Draw(); PreDraw adds the title bar and bottom padding.
+    /// Where last frame's content ended, from the window's top edge (so it already includes the title bar); PreDraw
+    /// adds the bottom padding.
     private float lastContentHeight = 400f;
 
     private const float MinWidth = 465f;
@@ -77,9 +78,7 @@ public class CollarWindow : Window, IDisposable
     public override void PreDraw()
     {
         Theme.PushWindowStyle();
-        var titleBarHeight = ImGui.GetFrameHeight();
-        var bottomPadding = ImGui.GetStyle().WindowPadding.Y;
-        var height = titleBarHeight + lastContentHeight + bottomPadding;
+        var height = lastContentHeight + ImGui.GetStyle().WindowPadding.Y;
         // Dalamud multiplies SizeConstraints by the global scale, but `height` is already measured in screen pixels.
         var scale = ImGuiHelpers.GlobalScale;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(MinWidth, height / scale), MaximumSize = new Vector2(float.MaxValue, height / scale) };
@@ -110,14 +109,15 @@ public class CollarWindow : Window, IDisposable
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
-        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id), supportRow: true);
+        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id));
         TutorialService.Anchor(TutorialAnchors.MainNav);
         if (clicked is not null)
             moduleWindow.Show(clicked);
 
         // Not on the appearing frame: widths aren't settled, so wrapped text measures far too tall.
+        // Minus the spacing ImGui leaves after the last item, which would otherwise show as a gap under the nav grid.
         if (!ImGui.IsWindowAppearing())
-            lastContentHeight = ImGui.GetCursorPosY();
+            lastContentHeight = ImGui.GetCursorPosY() - ImGui.GetStyle().ItemSpacing.Y;
     }
 
     /// Right-aligned on the name's line when it fits, else on its own line, so it never pushes the name aside.
@@ -147,6 +147,24 @@ public class CollarWindow : Window, IDisposable
             ImGui.SetTooltip("Oathbound players whose plugin used the relay today or yesterday. Counts installs, never who they are.");
     }
 
+    /// The support icons sit right-aligned under the relay count; the details wrap short of them.
+    private static void DrawDetailsWithSupport(string details)
+    {
+        var start = ImGui.GetCursorPos();
+        var right = ImGui.GetContentRegionMax().X;
+        ImGui.SetCursorPosX(right - SupportLinks.Width);
+        SupportLinks.Draw();
+
+        ImGui.SetCursorPos(start);
+        ImGui.PushTextWrapPos(right - SupportLinks.Width - ImGui.GetStyle().ItemSpacing.X);
+        ImGui.TextDisabled(details);
+        ImGui.PopTextWrapPos();
+
+        var iconsBottom = start.Y + SupportLinks.Height + ImGui.GetStyle().ItemSpacing.Y;
+        if (ImGui.GetCursorPosY() < iconsBottom)
+            ImGui.SetCursorPosY(iconsBottom);
+    }
+
     private void DrawCharacterHeader()
     {
         var pending = plugin.PairingService.Pending;
@@ -170,17 +188,18 @@ public class CollarWindow : Window, IDisposable
         TutorialService.Anchor(TutorialAnchors.MainCharacter);
         DrawRelayActivity();
 
+        string details;
         if (character.IsAvailable)
         {
-            var details = character.HomeWorld is { Length: > 0 } ? character.HomeWorld : "Home world unavailable";
+            details = character.HomeWorld is { Length: > 0 } ? character.HomeWorld : "Home world unavailable";
             if (character.FreeCompany is { Length: > 0 })
                 details += $"  ·  «{character.FreeCompany}»";
-            IconGlyph.WrappedDisabled(details);
         }
         else
         {
-            IconGlyph.WrappedDisabled("Local character details will appear after login. Pairing and safety controls remain available.");
+            details = "Local character details will appear after login. Pairing and safety controls remain available.";
         }
+        DrawDetailsWithSupport(details);
 
         ImGui.Spacing();
         ImGui.Separator();

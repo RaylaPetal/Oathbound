@@ -5,50 +5,47 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace Oathbound.Plugin.UI;
 
-/// The nav grid's last row: a "Support" label cell, then Ko-fi and Patreon tiles.
+/// A "Support me" label and two small Ko-fi and Patreon icon buttons, on one line in the header.
 public static class SupportLinks
 {
     private const string KofiUrl = "https://ko-fi.com/raylapetal";
     private const string PatreonUrl = "https://www.patreon.com/RaylaPetal";
+    private const string Label = "Support me";
 
     private static readonly Vector4 White = new(1f, 1f, 1f, 1f);
-    private static readonly Vector4 KofiRed = new(1f, 0.369f, 0.357f, 1f);
-    private static readonly Vector4 KofiRedHovered = new(1f, 0.47f, 0.46f, 1f);
-    private static readonly Vector4 PatreonDark = new(0.08f, 0.08f, 0.09f, 1f);
-    private static readonly Vector4 PatreonDarkHovered = new(0.2f, 0.2f, 0.22f, 1f);
+    private static readonly Vector4 KofiBlue = new(0.161f, 0.671f, 0.878f, 1f);
+    private static readonly Vector4 KofiBlueHovered = new(0.29f, 0.75f, 0.93f, 1f);
+    private static readonly Vector4 PatreonCoral = new(1f, 0.259f, 0.302f, 1f);
+    private static readonly Vector4 PatreonCoralHovered = new(1f, 0.4f, 0.44f, 1f);
 
-    public static void DrawRow(Vector2 cellSize)
+    private static float ButtonSize => ImGui.GetFrameHeight();
+    private static float IconsWidth => ButtonSize * 2 + ImGui.GetStyle().ItemSpacing.X;
+
+    public static float Width => ImGui.CalcTextSize(Label).X + ImGui.GetStyle().ItemSpacing.X + IconsWidth;
+    public static float Height => ButtonSize;
+
+    /// Drawn at the cursor, label then icons on one line.
+    public static void Draw()
     {
-        DrawLabelCell(cellSize);
-
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(Label);
         ImGui.SameLine();
-        if (NavBar.DrawTile(("kofi", FontAwesomeIcon.MugHot, "Ko-fi"), cellSize, null, KofiRed, KofiRedHovered, White) is not null)
+        if (IconButton("kofi", FontAwesomeIcon.MugHot, KofiBlue, KofiBlueHovered))
             Dalamud.Utility.Util.OpenLink(KofiUrl);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Support Oathbound on Ko-fi\nko-fi.com/raylapetal");
 
         ImGui.SameLine();
-        if (NavBar.DrawTile(("patreon", FontAwesomeIcon.Heart, "Patreon"), cellSize, null, PatreonDark, PatreonDarkHovered, White) is not null)
+        if (IconButton("patreon", FontAwesomeIcon.HandHoldingHeart, PatreonCoral, PatreonCoralHovered))
             Dalamud.Utility.Util.OpenLink(PatreonUrl);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Support Oathbound on Patreon\npatreon.com/RaylaPetal");
     }
 
-    /// Not a button. Drawn straight to the draw list so only the Dummy counts as the item: text wider than the cell
-    /// would otherwise widen it and push the tiles off the grid's columns.
-    private static void DrawLabelCell(Vector2 size)
+    private static bool IconButton(string id, FontAwesomeIcon icon, Vector4 bg, Vector4 bgHovered)
     {
-        var origin = ImGui.GetCursorScreenPos();
-        ImGui.Dummy(size);
-        var drawList = ImGui.GetWindowDrawList();
-        var pos = origin + new Vector2(Layout.Scaled(8f), size.Y / 2 - Layout.Scaled(8f));
-        var spacing = ImGui.GetStyle().ItemSpacing.X;
-        using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
-        {
-            var icon = FontAwesomeIcon.HandHoldingHeart.ToIconString();
-            drawList.AddText(pos, ImGui.GetColorU32(KofiRed), icon);
-            pos.X += ImGui.CalcTextSize(icon).X + spacing;
-        }
-        drawList.AddText(pos, ImGui.GetColorU32(ImGuiCol.Text), "Support me");
+        using var colors = ImRaii.PushColor(ImGuiCol.Button, bg).Push(ImGuiCol.ButtonHovered, bgHovered).Push(ImGuiCol.ButtonActive, bgHovered);
+        using var rounding = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding);
+        return IconGlyph.CenteredButton($"support_{id}", icon, ButtonSize, White);
     }
 }

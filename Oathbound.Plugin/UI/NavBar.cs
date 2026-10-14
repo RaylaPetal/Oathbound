@@ -21,14 +21,13 @@ public static class NavBar
     }
 
     /// Non-null for an id draws that tile dimmed and unclickable, with the reason as its tooltip.
-    /// supportRow appends a final row: a "Support" label followed by the Ko-fi and Patreon tiles.
     public static string? Draw((string Id, FontAwesomeIcon Icon, string Tooltip)[] items, System.Func<string, string?>? disabledReason = null,
-        System.Func<string, string?>? tutorialAnchor = null, bool supportRow = false)
+        System.Func<string, string?>? tutorialAnchor = null)
     {
         string? clicked = null;
         // The card's inner margin comes from WindowPadding; using ItemSpacing clipped the last row.
         var spacing = ImGui.GetStyle().ItemSpacing;
-        var cardHeight = RequiredHeight(items.Length) + (supportRow ? ButtonHeight + spacing.Y : 0);
+        var cardHeight = RequiredHeight(items.Length);
         using var card = Card.Begin("navBar", new Vector2(0, cardHeight), noScroll: true);
 
         var available = ImGui.GetContentRegionAvail().X;
@@ -47,24 +46,15 @@ public static class NavBar
                 ImGui.SameLine();
         }
 
-        if (supportRow)
-            SupportLinks.DrawRow(buttonSize);
-
         return clicked;
     }
 
     /// Grouped so ImGui treats the cell as one item; without it, the next SameLine anchors to the label and cells drift.
     private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason)
-        => DrawTile(item, size, disabledReason, Theme.TileBg, Theme.TileBgHover, null);
-
-    /// Colors default to the module tile look; the support tiles pass their brand colors.
-    internal static string? DrawTile((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason,
-        Vector4 bg, Vector4 bgHover, Vector4? text)
     {
         string? result = null;
-        using (ImRaii.PushColor(ImGuiCol.Button, bg))
-        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, bgHover))
-        using (ImRaii.PushColor(ImGuiCol.Text, text ?? Vector4.Zero, text is not null))
+        using (ImRaii.PushColor(ImGuiCol.Button, Theme.TileBg))
+        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.TileBgHover))
         using (ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding))
         {
             // Wraps the whole cell so icon and label dim with the button.

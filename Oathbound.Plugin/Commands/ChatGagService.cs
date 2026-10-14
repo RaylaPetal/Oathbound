@@ -58,6 +58,9 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
     /// The heaviest level among active gags; Engage stays level-free so the rule manager's reference counting is unchanged.
     public Func<GagLevel>? LevelSource { get; set; }
 
+    /// The Sub's own gag sounds, mixed into the built-in gag speech.
+    public Func<IReadOnlyList<string>>? SoundsSource { get; set; }
+
     public void Engage()
     {
         if (IsAvailable)
@@ -126,10 +129,11 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
             var original = message->ToString();
             if (!string.IsNullOrWhiteSpace(original))
             {
-                var rewritten = RewriteOutgoingChat(original, LevelSource?.Invoke() ?? GagLevel.Heavy);
-                if (!string.Equals(rewritten, original, StringComparison.Ordinal)
-                    && rewritten.Length > 0
-                    && rewritten.Length <= 500)
+                var rewritten = RewriteOutgoingChat(original, LevelSource?.Invoke() ?? GagLevel.Heavy, SoundsSource?.Invoke());
+                // Cut rather than skipped: a Sub's longer sounds can push it past the limit, and skipping would send it ungagged.
+                if (rewritten.Length > MaxChatLength)
+                    rewritten = rewritten[..MaxChatLength];
+                if (!string.Equals(rewritten, original, StringComparison.Ordinal) && rewritten.Length > 0)
                     message->SetString(rewritten);
             }
         }
@@ -141,15 +145,14 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         processChatInputHook!.Original(uiModule, message, a3);
     }
 
-    /// Each letter becomes a muffled syllable; punctuation and spacing are kept.
-    private static readonly string[] Syllables = ["mm", "mph", "hmm", "mmf", "mrph"];
+    private const int MaxChatLength = 500;
 
     /// Rewrites speech in chat channels, keeping the slash command and a tell's recipient. Other slash commands
     /// pass through unchanged.
-    internal static string RewriteOutgoingChat(string text, GagLevel level = GagLevel.Heavy)
+    internal static string RewriteOutgoingChat(string text, GagLevel level = GagLevel.Heavy, IReadOnlyList<string>? sounds = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text[0] != '/')
-            return Garble(text, level);
+            return Garble(text, level, sounds);
 
         var commandEnd = text.IndexOf(' ');
         if (commandEnd < 0)
@@ -179,7 +182,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         if (bodyStart >= text.Length || IsInternalProtocolMessage(text.AsSpan(bodyStart)))
             return text;
 
-        return text[..bodyStart] + Garble(text[bodyStart..], level);
+        return text[..bodyStart] + Garble(text[bodyStart..], level, sounds);
     }
 
     private static int FindBodyStart(string text, int searchFrom)
@@ -212,15 +215,19 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
            || body.StartsWith("collarpairack ", StringComparison.OrdinalIgnoreCase)
            || body.StartsWith("collarunpair ", StringComparison.OrdinalIgnoreCase);
 
-    /// Medium keeps each word's first letter and length, so the shape of the speech stays readable.
-    private const string MuffleLetters = "mmhmpf";
+    /// What each letter a-z sounds like through a gag: lip sounds collapse to m, tongue sounds to n, throat sounds to g.
+    /// Medium keeps the vowels and the word's rhythm so it stays half-readable; Heavy muffles the vowels too.
+    private const string MediumSounds = "amgnefgheygnmnomgrfnufwgyf";
+    private const string HeavySounds = "umnnhmghhngnmnomggnnummghn";
 
     /// Light leaves words this short alone.
     private const int LightMinWordLength = 4;
 
     /// Text between `*` pairs (inline RP emotes) passes through. A simple toggle, so an unmatched `*` exempts the rest.
-    internal static string Garble(string text, GagLevel level = GagLevel.Heavy)
+    /// The Sub's own `sounds` mix in: about half the muffled words become one of them. `random` is for a stable preview.
+    internal static string Garble(string text, GagLevel level = GagLevel.Heavy, IReadOnlyList<string>? sounds = null, Random? random = null)
     {
+        random ??= Random.Shared;
         var words = new List<(int Start, int End)>();
         var exempt = false;
         for (var i = 0; i < text.Length;)
@@ -243,9 +250,10 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
             }
         }
 
-        var garbled = level == GagLevel.Light ? PickLightWords(words) : null;
+        var garbled = level == GagLevel.Light ? PickLightWords(words, random) : null;
+        // Light muffles only a few words, but those fully.
+        var map = level == GagLevel.Medium ? MediumSounds : HeavySounds;
         var sb = new StringBuilder();
-        var syllableIndex = 0;
         var at = 0;
         for (var w = 0; w < words.Count; w++)
         {
@@ -258,29 +266,45 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
                 sb.Append(word);
                 continue;
             }
-            if (level == GagLevel.Medium)
+            if (sounds is { Count: > 0 } && random.Next(2) == 0)
             {
-                sb.Append(word[0]);
-                for (var c = 1; c < word.Length; c++)
-                    sb.Append(char.IsUpper(word[c]) ? char.ToUpperInvariant(MuffleLetters[c % MuffleLetters.Length]) : MuffleLetters[c % MuffleLetters.Length]);
+                var sound = sounds[random.Next(sounds.Count)];
+                sb.Append(char.IsUpper(word[0]) ? char.ToUpperInvariant(sound[0]) + sound[1..] : sound);
                 continue;
             }
-            var syllable = Syllables[syllableIndex++ % Syllables.Length];
-            sb.Append(char.IsUpper(word[0]) ? char.ToUpperInvariant(syllable[0]) + syllable[1..] : syllable);
+            foreach (var c in word)
+            {
+                var lower = char.ToLowerInvariant(c);
+                var muffled = lower is >= 'a' and <= 'z' ? map[lower - 'a'] : map == HeavySounds ? 'm' : lower;
+                sb.Append(char.IsUpper(c) ? char.ToUpperInvariant(muffled) : muffled);
+            }
         }
         sb.Append(text, at, text.Length - at);
         return sb.ToString();
     }
 
     /// About one longer word in three, and always at least one when there is any.
-    private static HashSet<int> PickLightWords(List<(int Start, int End)> words)
+    private static HashSet<int> PickLightWords(List<(int Start, int End)> words, Random random)
     {
         var eligible = Enumerable.Range(0, words.Count).Where(w => words[w].End - words[w].Start >= LightMinWordLength).ToList();
-        var picked = eligible.Where(_ => Random.Shared.Next(3) == 0).ToHashSet();
+        var picked = eligible.Where(_ => random.Next(3) == 0).ToHashSet();
         if (picked.Count == 0 && eligible.Count > 0)
-            picked.Add(eligible[Random.Shared.Next(eligible.Count)]);
+            picked.Add(eligible[random.Next(eligible.Count)]);
         return picked;
     }
+
+    public const int MaxGagSounds = 30;
+    public const int MaxGagSoundLength = 20;
+
+    /// Comma-separated input to the saved list: letters plus ' - ~ only, so a sound can't carry a command or a `*`.
+    public static List<string> ParseGagSounds(string input) =>
+        input.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => new string(s.Where(c => char.IsLetter(c) || c is '\'' or '-' or '~').ToArray()))
+            .Where(s => s.Length > 0 && char.IsLetter(s[0]))
+            .Select(s => s.Length > MaxGagSoundLength ? s[..MaxGagSoundLength] : s)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxGagSounds)
+            .ToList();
 
     public void Dispose()
     {

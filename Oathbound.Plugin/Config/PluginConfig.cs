@@ -257,6 +257,8 @@ public class QuickCommand
     /// Null keeps a legacy captured-device command.
     public string? RestraintCatalogId { get; set; }
     public ulong? RestraintItemId { get; set; }
+    /// Sent as a redraw request: the Sub's character is redrawn when the restraint goes on and comes off.
+    public bool RestraintRedraw { get; set; }
 
     /// Lets the Owner group and order gestures like the animation picker. Null/0 for older imports ("Ungrouped").
     public string? GestureModName { get; set; }
@@ -388,6 +390,8 @@ public class WornRestraint
     public byte Stain2 { get; set; }
     public List<RestraintRuleAssignment> Rules { get; set; } = new();
     public string? MoodleOverride { get; set; }
+    /// The Sub's own setting or the Owner's command asked for a redraw; also redraws when it comes off.
+    public bool Redraw { get; set; }
     /// Null while the restraint isn't locked.
     public WornRestraintLock? Lock { get; set; }
 }
@@ -882,6 +886,9 @@ public class PluginConfig : IPluginConfiguration
 
     /// Changing it only affects messages sent/parsed afterwards.
     public string TriggerPhrase { get; set; } = "command";
+
+    /// The Sub's own muffled sounds, mixed into gagged chat. Never sent to anyone.
+    public List<string> GagSounds { get; set; } = new();
 
     public ChatChannel OutgoingChannel { get; set; } = ChatChannel.Tell;
 

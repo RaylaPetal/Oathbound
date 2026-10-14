@@ -63,6 +63,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private string ctqLockKey = "";
     private StruggleLevel adHocStruggle;
     private int adHocStrugglePenalty;
+    private bool adHocRedraw;
     private StruggleLevel ctqStruggle;
     /// -1 = a moodle from the Sub's library by name.
     private int ctqCustomMoodleIndex = -1;
@@ -1121,7 +1122,32 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 "No restraints yet. Use + New to make one.");
         }
 
+        DrawGagSpeechSection(config);
         DrawDrawnRestraintsSection(config);
+    }
+
+    private string? gagSoundsBuffer;
+    private const string GagPreviewText = "Hello there, could you let me go please?";
+
+    /// The Sub's own setting only: it never reaches the Owner, who just sees the gag level they sent.
+    private void DrawGagSpeechSection(PluginConfig config)
+    {
+        using var box = Section.Begin("gagSpeech", "Gag speech");
+        IconGlyph.WrappedDisabled("How your chat sounds while a Gagged restraint is on.");
+
+        gagSoundsBuffer ??= string.Join(", ", config.GagSounds);
+        ItemWidth(320);
+        ImGui.InputTextWithHint("Your gag sounds##gagSounds", "mmph, nngh, hrrmf", ref gagSoundsBuffer, 400);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            config.GagSounds = ChatGagService.ParseGagSounds(gagSoundsBuffer);
+            gagSoundsBuffer = string.Join(", ", config.GagSounds);
+            config.Save();
+        }
+        IconGlyph.HelpMarker($"Separate them with commas, up to {ChatGagService.MaxGagSounds}. They mix into your gag speech: about half your muffled words become one of these, the rest are sounded out through the gag. Letters only, plus ' - and ~.");
+
+        foreach (var level in new[] { GagLevel.Medium, GagLevel.Heavy })
+            IconGlyph.WrappedDisabled($"{level}: {ChatGagService.Garble(GagPreviewText, level, config.GagSounds, new Random(1))}");
     }
 
     private List<ListDetailItem> BuildSubRestraintItems(PluginConfig config)
@@ -1361,8 +1387,26 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static bool DrawRedrawOnApply(string id, ref bool redraw)
     {
         var changed = ImGui.Checkbox($"Redraw on apply##redraw_{id}", ref redraw);
-        IconGlyph.HelpMarker("Redraws your character when this restraint goes on, even with \"Redraw after a mod change\" off in Settings. Turn it on if the restraint's mod or animation doesn't show until you redraw. Sync plugins re-send your character on every redraw.");
+        IconGlyph.HelpMarker("Redraws your character when this restraint goes on and when it comes off, even with \"Redraw after a mod change\" off in Settings. Turn it on if the restraint's mod or animation doesn't show until you redraw. Sync plugins re-send your character on every redraw.");
         return changed;
+    }
+
+    private const string OwnerRedrawHelp = "Redraws your Sub's character when this restraint goes on and when it comes off. Turn it on if the restraint's mod or animation doesn't show until they redraw. Sync plugins re-send their character on every redraw. Older versions of the plugin ignore it.";
+
+    /// The saved command carries the request, so it's rebuilt as soon as the box changes.
+    private void DrawOwnerRedraw(QuickCommand cmd)
+    {
+        var redraw = cmd.RestraintRedraw;
+        var changed = ImGui.Checkbox($"Redraw on apply##ownerRedraw_{cmd.Label}", ref redraw);
+        IconGlyph.HelpMarker(OwnerRedrawHelp);
+        if (!changed)
+            return;
+        cmd.RestraintRedraw = redraw;
+        if (cmd.RestraintRules is { Count: > 0 } rules)
+            cmd.Command = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
+                ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules, redraw)
+                : RestraintCommand.BuildLockCommand(cmd.Label, rules, redraw);
+        plugin.Configuration.Save();
     }
 
     /// `device` null = the new rules-only restraint being drafted.
@@ -3150,6 +3194,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         {
             DrawDetailHeader(cmd.Label, "Rules-only restraint from your Sub", null, FontAwesomeIcon.Handcuffs, null, () => { });
             DrawSavedQuickRow(cmd, quick, canSend);
+            if (cmd.RestraintRules is { Count: > 0 })
+                DrawOwnerRedraw(cmd);
             return;
         }
         DrawOwnerModRestraintDetail(cmd, quick, canSend);
@@ -3248,6 +3294,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             cmd.MoodleOverride = restraintMoodle;
             plugin.Configuration.Save();
         }
+        DrawOwnerRedraw(cmd);
 
         var hasAnyRule = HasAnyRule(edit);
         var boundAnimationsConfigured = BoundAnimationsConfigured(edit);
@@ -3263,8 +3310,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 var rules = ToRules(edit);
                 cmd.RestraintRules = rules;
                 cmd.Command = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
-                    ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules)
-                    : RestraintCommand.BuildLockCommand(cmd.Label, rules);
+                    ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules, cmd.RestraintRedraw)
+                    : RestraintCommand.BuildLockCommand(cmd.Label, rules, cmd.RestraintRedraw);
                 plugin.Configuration.Save();
                 restraintRuleEdits[cmd.Label] = FromRules(rules);
             }
@@ -3285,6 +3332,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
         OwnerLockOption.Draw("adHocRestraint", ref adHocLockSeconds);
         OwnerLockOption.DrawKey("adHocRestraint", ref adHocLockKey);
         OwnerLockOption.DrawStruggle("adHocRestraint", ref adHocStruggle, ref adHocStrugglePenalty, adHocLockSeconds is not null);
+        ImGui.Checkbox("Redraw on apply##adHocRedraw", ref adHocRedraw);
+        IconGlyph.HelpMarker(OwnerRedrawHelp);
 
         Section.SubHeading("Restrictions");
         DrawRestraintRuleCheckboxes(newAdHocRuleEdit, "adHocRestraint", rulesOnly: true);
@@ -3298,7 +3347,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ImGui.Separator();
         if (newAdHocLabel.Trim().Length > 0 && hasAnyRule && boundAnimationsConfigured)
         {
-            var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit, rulesOnly: true));
+            var command = RestraintCommand.BuildWearCommand(null, null, newAdHocLabel.Trim(), ToRules(newAdHocRuleEdit, rulesOnly: true), adHocRedraw);
             ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted("Send this restraint:");
             ContinueRowOrWrap(ButtonWidth("Send"));

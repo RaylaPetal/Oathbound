@@ -9,7 +9,8 @@ namespace Oathbound.Plugin.UI;
 /// The active Sub's estimated state with its caveat and a Clear button.
 public static class OwnerStatusView
 {
-    public static void Draw(Plugin plugin)
+    /// `includeRestraints` false leaves the per-restraint Unlock rows to the caller (Sub Control lists them itself).
+    public static void Draw(Plugin plugin, bool includeRestraints = true)
     {
         if (plugin.Configuration.GetActivePairing() is not { Direction: PairingDirection.OwnerSide } pairing)
             return;
@@ -28,7 +29,8 @@ public static class OwnerStatusView
             Layout.TextWithActions($"Estimated state: {string.Join(", ", parts)}", Layout.ActionsWidth("Clear estimate"), t => ImGui.TextColored(Theme.Success, t));
             if (ImGui.Button("Clear estimate##ownerStatusClear"))
                 plugin.OwnerStatusEstimates.Clear(pairing.Id);
-            DrawRestraints(plugin, estimate);
+            if (includeRestraints)
+                DrawRestraints(plugin, estimate);
         }
         if (plugin.OwnerStatusEstimates.ForBanner(pairing) is { } sent)
             DrawTimedLocks(plugin, sent);

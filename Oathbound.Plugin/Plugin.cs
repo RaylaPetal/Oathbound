@@ -208,6 +208,7 @@ public sealed class Plugin : IDalamudPlugin
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
         ChatGagService.LevelSource = () => RestraintCommand.ActiveGagLevel;
+        ChatGagService.SoundsSource = () => Configuration.GagSounds;
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
         ToyTriggerEvaluator = new ToyTriggerEvaluator(Configuration, ToyControlCommand, RuntimeState, RestrictionRuleManager, EmoteWatcher);
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
@@ -663,8 +664,8 @@ public sealed class Plugin : IDalamudPlugin
                 if (Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(rule.AnimationId!, out var entry))
                     rule.AnimationLabel = CommandSelector.GestureSelector(entry, Configuration.GestureMapping.ImportedPeerCatalog.Values);
             var readable = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
-                ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, cmd.RestraintRules!)
-                : RestraintCommand.BuildLockCommand(cmd.Label, cmd.RestraintRules!);
+                ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, cmd.RestraintRules!, cmd.RestraintRedraw)
+                : RestraintCommand.BuildLockCommand(cmd.Label, cmd.RestraintRules!, cmd.RestraintRedraw);
             if (cmd.Command == readable) continue;
             cmd.Command = readable;
             changed = true;

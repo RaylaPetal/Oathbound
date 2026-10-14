@@ -4,7 +4,9 @@ using System.Linq;
 using System.Numerics;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.Relay;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
@@ -57,11 +59,22 @@ public sealed class SubControlWindow : Window, IDisposable
             return;
         }
 
+        using var colors = ImRaii.PushColor(ImGuiCol.Header, Theme.TileBg)
+            .Push(ImGuiCol.HeaderHovered, Theme.TileBgHover)
+            .Push(ImGuiCol.HeaderActive, Theme.TileBgHover)
+            .Push(ImGuiCol.FrameBg, Theme.TileBg)
+            .Push(ImGuiCol.FrameBgHovered, Theme.TileBgHover);
+        using var rounding = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding);
+
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
+        var pairing = plugin.Configuration.GetActivePairing();
+        estimate = pairing is { Direction: PairingDirection.OwnerSide } ? plugin.OwnerStatusEstimates.ForBanner(pairing) : null;
+        collarLocked = pairing is null || plugin.OwnerCollarStatus.For(pairing) is not { } collar || collar.State != CollarStatusReporter.Unlocked;
         if (!canSend)
             IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - every Send below is disabled until an Owner-side pairing is active.");
         else
-            OwnerStatusView.Draw(plugin);
+            OwnerStatusView.Draw(plugin, includeRestraints: false);
+        ImGui.Spacing();
 
         var categorized = QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands);
         foreach (var (label, commands) in categorized)
@@ -89,46 +102,103 @@ public sealed class SubControlWindow : Window, IDisposable
         DrawTeleportRow(canSend);
     }
 
+    /// This frame's estimate of what's on the Sub; null when nothing was sent.
+    private OwnerStatusEstimate? estimate;
+    /// Unknown counts as locked, so collar unlock is never hidden when it might be needed.
+    private bool collarLocked;
+
+    /// The unlock-style commands, each shown only while the estimate says its category has something on.
+    private static readonly Dictionary<string, Func<OwnerStatusEstimate, bool>> Releases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["title clear"] = e => e.LastTitle is not null,
+        ["outfit unlock"] = e => e.LastOutfit is not null && e.LastOutfitLocked,
+        [$"gesture {ChatComposer.StopGestureWord}"] = e => e.LastAnimation is not null,
+        [ControlWords.Unleash] = e => e.Leashed,
+        ["moodle clear"] = e => e.Moodles.Count > 0,
+        ["restraint unlock"] = e => e.Restraints.Count > 0,
+    };
+
+    private static readonly Vector4 ReleaseTint = Theme.Warning;
+
+    /// Releases that apply right now, and everything else.
+    private (List<QuickCommand> Releases, List<QuickCommand> Others) SplitReleases(List<QuickCommand> commands)
+    {
+        var releases = commands.Where(c => Releases.ContainsKey(c.Command)).ToList();
+        var active = releases.Where(c => estimate is { } e && Releases[c.Command](e)).ToList();
+        return (active, commands.Except(releases).ToList());
+    }
+
+    private void DrawReleaseRow(string label, string command, bool canSend) =>
+        DrawSendRow(label, command, canSend, tint: ReleaseTint);
+
+    /// A collapsing header with the count as a small badge on its right edge instead of "(n)" in the title.
+    private static bool CategoryHeader(string label, int? count = null)
+    {
+        var open = ImGui.CollapsingHeader($"{label}###subControlCategory_{label}");
+        if (count is { } n)
+        {
+            var text = n.ToString();
+            var textSize = ImGui.CalcTextSize(text);
+            var padding = new Vector2(Layout.Scaled(7f), Layout.Scaled(1f));
+            var max = ImGui.GetItemRectMax();
+            var min = ImGui.GetItemRectMin();
+            var pillMax = new Vector2(max.X - Layout.Scaled(8f), min.Y + (max.Y - min.Y + textSize.Y) / 2 + padding.Y);
+            var pillMin = pillMax - textSize - padding * 2;
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddRectFilled(pillMin, pillMax, ImGui.GetColorU32(Theme.Accent with { W = 0.45f }), (pillMax.Y - pillMin.Y) / 2);
+            draw.AddText(pillMin + padding, ImGui.GetColorU32(ImGuiCol.Text), text);
+        }
+        if (open)
+            ImGui.Spacing();
+        return open;
+    }
+
     /// Only does anything once the Sub has accepted a rulebook; their client ignores it otherwise.
     private void DrawRulebookSection(bool canSend)
     {
-        if (!ImGui.CollapsingHeader("Rulebook###subControlCategory_Rulebook"))
+        if (!CategoryHeader("Rulebook"))
             return;
 
-        ImGui.Indent();
         DrawSendRow("Draw a reward", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Reward), canSend);
         DrawSendRow("Draw a punishment", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Punishment), canSend);
         DrawSendRow("Merit +1", $"{Rulebook.ConsequenceValidator.LedgerWord} +1", canSend);
         DrawSendRow("Demerit -1", $"{Rulebook.ConsequenceValidator.LedgerWord} -1", canSend);
-        ImGui.Unindent();
     }
 
     private static bool MatchesGestureFilter(QuickCommand cmd, string filter) =>
         (cmd.GestureModName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false)
         || (cmd.GestureGroupName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
 
-    private void DrawCategory(string label, List<QuickCommand> commands, bool canSend, Func<string, string>? displayLabel)
+    private void DrawCategory(string label, List<QuickCommand> all, bool canSend, Func<string, string>? displayLabel)
     {
-        if (commands.Count == 0)
+        var (releases, commands) = SplitReleases(all);
+        if (releases.Count + commands.Count == 0)
             return;
-        if (!ImGui.CollapsingHeader($"{label} ({commands.Count})###subControlCategory_{label}"))
+        if (!CategoryHeader(label, releases.Count + commands.Count))
             return;
 
-        ImGui.Indent();
+        foreach (var cmd in releases)
+            DrawReleaseRow(cmd.Label, cmd.Command, canSend);
         foreach (var cmd in commands)
             DrawSendRow(displayLabel?.Invoke(cmd.Label) ?? cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend);
-        ImGui.Unindent();
     }
 
     /// Animation and Restraints get their own search, separate from the module windows'.
-    private void DrawSearchableCategory(string label, List<QuickCommand> commands, bool canSend, ref string search, Func<QuickCommand, string, bool>? extraMatch)
+    private void DrawSearchableCategory(string label, List<QuickCommand> all, bool canSend, ref string search, Func<QuickCommand, string, bool>? extraMatch)
     {
-        if (commands.Count == 0)
+        var (releases, commands) = SplitReleases(all);
+        if (releases.Count + commands.Count == 0)
             return;
-        if (!ImGui.CollapsingHeader($"{label} ({commands.Count})###subControlCategory_{label}"))
+        if (!CategoryHeader(label, releases.Count + commands.Count))
             return;
 
-        ImGui.Indent();
+        // Each restraint the estimate has on, then unlock-all, above the search.
+        if (label == "Restraints" && estimate is { } current)
+            foreach (var restraint in current.Restraints.ToList())
+                DrawReleaseRow($"Unlock {restraint.Reference} ({LockText(restraint)})", $"restraint unlock {restraint.Reference}", canSend);
+        foreach (var cmd in releases)
+            DrawReleaseRow(cmd.Label, cmd.Command, canSend);
+
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint($"##subControlSearch_{label}", $"Search {label}...", ref search, 128);
 
@@ -145,15 +215,17 @@ public sealed class SubControlWindow : Window, IDisposable
         {
             foreach (var cmd in visible)
             {
-                // Shares QuickCommand.LockSeconds with the module row. Its width is reserved so a long label gets shortened.
+                // Shares QuickCommand.LockSeconds with the module row.
                 var hasLock = OwnerLockOption.Accepts(cmd.Command);
-                DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, hasLock ? OwnerLockOption.InlineWidth(cmd) : 0f);
-                if (hasLock)
-                    OwnerLockOption.DrawInline($"subControl_{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
+                DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend,
+                    trailing: hasLock ? () => OwnerLockOption.DrawStacked($"subControl_{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration) : null);
             }
         }
-        ImGui.Unindent();
     }
+
+    private static string LockText(EstimatedRestraint restraint) =>
+        (restraint.ExpiresAtUtc is { } until ? $"unlocks in {RestraintLock.Format(until - DateTime.UtcNow)}" : "locked")
+        + (restraint.HasKey ? ", key" : "");
 
     /// Grouped per mod like the Animation module, in the Sub's manifest order. Searching opens every matching mod.
     private void DrawAnimationRows(List<QuickCommand> visible, bool searching, bool canSend)
@@ -161,7 +233,7 @@ public sealed class SubControlWindow : Window, IDisposable
         // Fixed actions (Stop animation) aren't animations, so they go above the per-mod groups.
         var fixedCommands = QuickAccessMenu.FixedActions.Where(a => a.Category == "Animation").Select(a => a.Command).ToHashSet();
         foreach (var cmd in visible.Where(c => fixedCommands.Contains(c.Command)))
-            DrawSendRow(cmd.Label, cmd.Command, canSend, 0f);
+            DrawSendRow(cmd.Label, cmd.Command, canSend);
 
         foreach (var mod in visible.Where(c => !fixedCommands.Contains(c.Command)).GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
         {
@@ -221,33 +293,31 @@ public sealed class SubControlWindow : Window, IDisposable
 
     private void DrawCollarSection(bool canSend)
     {
-        if (!ImGui.CollapsingHeader("Collar###subControlCategory_Collar"))
+        if (!CategoryHeader("Collar"))
             return;
 
-        ImGui.Indent();
+        if (collarLocked)
+            DrawReleaseRow("Collar unlock", "collar unlock", canSend);
         DrawSendRow("Collar lock", "collar lock", canSend);
-        DrawSendRow("Collar unlock", "collar unlock", canSend);
-        ImGui.Unindent();
     }
 
     /// Discrete, one-shot commands only - no intensity/duration control.
     private void DrawToyControlSection(bool canSend)
     {
-        if (!ImGui.CollapsingHeader("Toy Control###subControlCategory_ToyControl"))
+        if (!CategoryHeader("Toy Control"))
             return;
 
-        ImGui.Indent();
         ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
+        if (estimate?.LastToy is not null)
+            DrawReleaseRow("Stop", ToyControlCommand.BuildStopCommand(), canSend);
         foreach (var (label, command) in ToyControlQuickRows())
             DrawSendRow(label, command, canSend);
-        ImGui.Unindent();
     }
 
     private IEnumerable<(string Label, string Command)> ToyControlQuickRows()
     {
         foreach (var name in ToyControlCommand.BuiltInPatternNames)
             yield return (char.ToUpperInvariant(name[0]) + name[1..], ToyControlCommand.BuildPatternCommand(name));
-        yield return ("Stop", ToyControlCommand.BuildStopCommand());
         foreach (var pattern in plugin.Configuration.ToyPatterns)
             yield return (pattern.Name, ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop));
     }
@@ -255,51 +325,96 @@ public sealed class SubControlWindow : Window, IDisposable
     /// Teleport has no static command text; resolved live via TeleportSendAction.
     private void DrawTeleportRow(bool canSend)
     {
-        if (!ImGui.CollapsingHeader("Teleport###subControlCategory_Teleport"))
+        if (!CategoryHeader("Teleport"))
             return;
 
-        ImGui.Indent();
-        using (ImRaii.Disabled(!canSend))
-        {
-            if (ImGui.Button("Send##subControlTeleport"))
+        var tooltip = canSend ? "Teleport your paired Sub to your current position." : "No /tell target yet - pairing hasn't captured your Sub's name.";
+        if (!DrawRow("subControlTeleport", "Teleport Sub to me", tooltip, canSend))
+            return;
+        var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
+        if (!success)
+            Plugin.NotificationManager.AddNotification(new Notification
             {
-                var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
-                if (!success)
-                    Plugin.NotificationManager.AddNotification(new Notification
-                    {
-                        Title = "Oathbound",
-                        Content = error ?? "Teleport failed.",
-                        Type = NotificationType.Warning,
-                        InitialDuration = TimeSpan.FromSeconds(5),
-                    });
-            }
-        }
-        ImGui.SameLine();
-        ImGui.TextUnformatted("Teleport Sub to me");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "No /tell target yet - pairing hasn't captured your Sub's name.");
-        ImGui.Unindent();
+                Title = "Oathbound",
+                Content = error ?? "Teleport failed.",
+                Type = NotificationType.Warning,
+                InitialDuration = TimeSpan.FromSeconds(5),
+            });
     }
 
     /// The label is shortened to fit; hovering shows the full label and the exact text that would be sent.
-    private void DrawSendRow(string label, string command, bool canSend, float reservedWidth = 0f, string? fullLabel = null)
+    /// `trailing` draws extra controls (the lock settings) on the lines below the label, inside the tile.
+    private void DrawSendRow(string label, string command, bool canSend, string? fullLabel = null, Action? trailing = null, Vector4? tint = null)
     {
         var messages = plugin.ChatComposer.ComposeAll(command);
         var fits = ChatComposer.AllFit(messages);
-        using (ImRaii.Disabled(!canSend || !fits))
-        {
-            if (ImGui.Button($"Send##subControl_{label}_{command}"))
-                plugin.ChatSender.SendAll(messages);
-        }
-        ImGui.SameLine();
-        var available = ImGui.GetContentRegionAvail().X - reservedWidth;
-        var shown = FitWithEllipsis(label, available);
-        ImGui.TextUnformatted(shown);
+        var status = !fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.";
+        if (DrawRow($"subControl_{label}_{command}", label, $"{fullLabel ?? label}\n\n{status}", canSend && fits, trailing, tint))
+            plugin.ChatSender.SendAll(messages);
+    }
+
+    private static float SendButtonSize => ImGui.GetFrameHeight();
+
+    /// One command as a rounded tile: label on the left, `trailing` below it, Send on the right. Returns true
+    /// when Send was clicked. The background goes on a lower draw channel so it can be sized after the contents.
+    /// `tint` colors the tile and its Send button, for the unlock rows.
+    private static bool DrawRow(string id, string label, string tooltip, bool enabled, Action? trailing = null, Vector4? tint = null)
+    {
+        var pad = Layout.Scaled(8f);
+        var margin = Layout.Scaled(4f);
+        var start = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var draw = ImGui.GetWindowDrawList();
+        draw.ChannelsSplit(2);
+        draw.ChannelsSetCurrent(1);
+
+        ImGui.PushID(id);
+        ImGui.BeginGroup();
+        ImGui.SetCursorScreenPos(start + new Vector2(pad, margin));
+        ImGui.AlignTextToFramePadding();
+        var labelRoom = width - pad * 2 - SendButtonSize - ImGui.GetStyle().ItemSpacing.X;
+        ImGui.TextUnformatted(FitWithEllipsis(label, labelRoom));
         if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        if (trailing is not null)
         {
-            var status = !fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.";
-            ImGui.SetTooltip($"{fullLabel ?? label}\n\n{status}");
+            // Darker than the tile, so the fields don't vanish into it.
+            using var fields = ImRaii.PushColor(ImGuiCol.FrameBg, Theme.CardBg)
+                .Push(ImGuiCol.FrameBgHovered, Theme.SectionBg)
+                .Push(ImGuiCol.FrameBgActive, Theme.SectionBg)
+                .Push(ImGuiCol.Button, Theme.Accent with { W = 0.35f })
+                .Push(ImGuiCol.ButtonHovered, Theme.Accent with { W = 0.6f })
+                .Push(ImGuiCol.ButtonActive, Theme.Accent with { W = 0.8f });
+            ImGui.Indent(pad);
+            trailing();
+            ImGui.Unindent(pad);
         }
+        ImGui.EndGroup();
+
+        var min = start;
+        var max = new Vector2(start.X + width, ImGui.GetItemRectMax().Y + margin);
+
+        // Drawn after the contents so it can sit in the middle of the tile, however many lines they took.
+        ImGui.SetCursorScreenPos(new Vector2(max.X - pad - SendButtonSize, (min.Y + max.Y - SendButtonSize) / 2));
+        bool clicked;
+        var accent = tint ?? Theme.Accent;
+        using (ImRaii.Disabled(!enabled))
+        using (ImRaii.PushColor(ImGuiCol.Button, accent with { W = 0.8f }).Push(ImGuiCol.ButtonHovered, tint ?? Theme.AccentHover).Push(ImGuiCol.ButtonActive, accent))
+            clicked = IconGlyph.CenteredButton("send", FontAwesomeIcon.PaperPlane, SendButtonSize, new Vector4(1f, 1f, 1f, 1f));
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(tooltip);
+        ImGui.PopID();
+
+        draw.ChannelsSetCurrent(0);
+        var hovered = ImGui.IsMouseHoveringRect(min, max) && ImGui.IsWindowHovered(ImGuiHoveredFlags.ChildWindows);
+        var background = tint is { } t ? t with { W = hovered ? 0.3f : 0.18f } : hovered ? Theme.TileBgHover : Theme.TileBg;
+        draw.AddRectFilled(min, max, ImGui.GetColorU32(background), Theme.TileRounding);
+        draw.ChannelsMerge();
+        // Moves past the bottom margin, leaving the usual item spacing as the gap to the next tile.
+        ImGui.SetCursorScreenPos(new Vector2(start.X, max.Y));
+        ImGui.Dummy(Vector2.Zero);
+        return clicked;
     }
 
     private const string Ellipsis = "...";

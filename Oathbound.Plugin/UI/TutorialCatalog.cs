@@ -249,6 +249,7 @@ public static class TutorialCatalog
             Help("restraints", "Restraints your Owner can put on you."),
             new("Active now", "What you're wearing now, and each one's lock. You can take off an unlocked one, struggle if allowed, or use a key your Owner gave you.", S("activeBanner"), n => n.Module("restraints")),
             new("Your restraints", "Every restraint you've set up, mod or rules-only. Pick one to edit it beside the list, or use + New to add a restraint mod from Penumbra or a rules-only one.", S("configuredRestraintMods"), n => n.Module("restraints")),
+            new("Gag speech", "How your chat sounds while gagged. Each word is sounded out through the gag, and any gag sounds you list here get mixed in.", S("gagSpeech"), n => n.Module("restraints")),
             new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
         ],
         ["toycontrol"] =

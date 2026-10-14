@@ -841,7 +841,15 @@ public sealed class ChatCommandListener : IDisposable
         return NotUnderstood($"Unrecognized \"moodle\" override \"{rest}\" - expected \"apply <status name>\", \"remove <status name>\" or \"clear\".");
     }
 
+    /// A refused apply never uses the redraw request, so it's cleared here rather than left for the next apply.
     private LocalTestResult HandleForceRestraint(string rest, string? moodleOverride, RestraintLock restraintLock)
+    {
+        restraints.PendingRedraw = RestraintCommand.HasRedrawToken(rest);
+        try { return HandleForceRestraintCore(rest, moodleOverride, restraintLock); }
+        finally { restraints.PendingRedraw = false; }
+    }
+
+    private LocalTestResult HandleForceRestraintCore(string rest, string? moodleOverride, RestraintLock restraintLock)
     {
         restraints.PendingStruggle = RestraintStruggle.FromCommand(rest);
         if (rest.Equals("unlock", StringComparison.OrdinalIgnoreCase))

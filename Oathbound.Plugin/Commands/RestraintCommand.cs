@@ -214,6 +214,7 @@ public sealed class RestraintCommand
     /// Re-applying an already worn restraint keeps its lock until SetLock replaces it.
     private void Track(WornRestraint entry)
     {
+        entry.Redraw |= SubRedraws(entry);
         var index = config.WornRestraints.FindIndex(w => w.RuntimeId == entry.RuntimeId);
         if (index >= 0)
         {
@@ -225,7 +226,24 @@ public sealed class RestraintCommand
         config.Save();
     }
 
-    private static WornRestraint DeviceRecord(RestraintDeviceDefinition device, WornRestraintKind kind, string reference, string? moodleOverride) => new()
+    private bool SubRedraws(WornRestraint worn) => worn.Kind switch
+    {
+        WornRestraintKind.Device => worn.DeviceId is { } id && config.RestraintMapping.Devices.TryGetValue(id, out var device) && device.RedrawOnApply,
+        WornRestraintKind.Catalog => config.RestraintMapping.ConfiguredMods.Any(m => m.CatalogId == worn.CatalogId && m.ItemId == worn.ItemId && m.RedrawOnApply),
+        _ => false,
+    };
+
+    /// Set by the Owner command's dispatch just before it applies, and used up by that apply.
+    public bool PendingRedraw { get; set; }
+
+    private bool TakePendingRedraw()
+    {
+        var redraw = PendingRedraw;
+        PendingRedraw = false;
+        return redraw;
+    }
+
+    private static WornRestraint DeviceRecord(RestraintDeviceDefinition device, WornRestraintKind kind, string reference, string? moodleOverride, bool redraw = false) => new()
     {
         RuntimeId = device.Id,
         Kind = kind,
@@ -237,9 +255,10 @@ public sealed class RestraintCommand
         Stain2 = device.Stain2,
         Rules = device.Rules.ToList(),
         MoodleOverride = moodleOverride,
+        Redraw = redraw,
     };
 
-    private static WornRestraint CatalogRecord(string catalogId, ulong itemId, string reference, List<RestraintRuleAssignment> rules, string? moodleOverride) => new()
+    private static WornRestraint CatalogRecord(string catalogId, ulong itemId, string reference, List<RestraintRuleAssignment> rules, string? moodleOverride, bool redraw = false) => new()
     {
         RuntimeId = CatalogRuntimeId(catalogId),
         Kind = WornRestraintKind.Catalog,
@@ -249,6 +268,7 @@ public sealed class RestraintCommand
         ItemId = itemId,
         Rules = rules.ToList(),
         MoodleOverride = moodleOverride,
+        Redraw = redraw,
     };
 
     /// Always locks. `moodleOverride` (here and below) replaces the device's default moodle.
@@ -321,11 +341,12 @@ public sealed class RestraintCommand
     /// Re-sending a worn restraint replays its pose and still (re)sets its lock.
     private bool ApplyAndLock(RestraintDeviceDefinition device, WornRestraintKind kind, string reference, string? moodleOverride, RestraintLock restraintLock)
     {
+        var redraw = TakePendingRedraw();
         if (activeDeviceIds.Contains(device.Id))
             Replay(device.Id, device.Rules);
-        else if (!ApplyDevice(device.Id, device, moodleOverride))
+        else if (!ApplyDevice(device.Id, device, moodleOverride, redraw: redraw))
             return false;
-        Track(DeviceRecord(device, kind, reference, moodleOverride));
+        Track(DeviceRecord(device, kind, reference, moodleOverride, redraw));
         SetLock(device.Id, restraintLock);
         return true;
     }
@@ -334,13 +355,14 @@ public sealed class RestraintCommand
     public bool ForceApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default, string? reference = null)
     {
         var runtimeId = CatalogRuntimeId(catalogId);
+        var redraw = TakePendingRedraw();
         if (activeCatalogOverrides.ContainsKey(runtimeId))
             Replay(runtimeId, rules);
-        else if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride))
+        else if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride, redraw: redraw))
             return false;
         reference ??= config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId)?.Name
             ?? config.RestraintMapping.LocalCatalog.GetValueOrDefault(catalogId)?.ModName ?? catalogId;
-        Track(CatalogRecord(catalogId, itemId, reference, rules, moodleOverride));
+        Track(CatalogRecord(catalogId, itemId, reference, rules, moodleOverride, redraw));
         SetLock(runtimeId, restraintLock);
         return true;
     }
@@ -373,7 +395,7 @@ public sealed class RestraintCommand
     }
 
     /// No force-lock here; ForceApplyCatalog adds it for Owner commands.
-    private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride, bool allowSharedSlot = false)
+    private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride, bool allowSharedSlot = false, bool redraw = false)
     {
         LastFailureReason = null;
         if (!config.RestraintMapping.LocalCatalog.TryGetValue(catalogId, out var entry))
@@ -420,7 +442,7 @@ public sealed class RestraintCommand
         var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
         if (!temporarySettings.Acquire(runtimeId, collection.Value, entry.ModDirectory, selections))
         { LastFailureReason = "Penumbra could not apply the restraint option"; return false; }
-        var forceRedraw = config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId)?.RedrawOnApply == true;
+        var forceRedraw = redraw || config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId)?.RedrawOnApply == true;
         if (!penumbra.TryRedrawLocalPlayer(forceRedraw))
         {
             temporarySettings.Release(runtimeId, collection.Value, entry.ModDirectory);
@@ -613,12 +635,15 @@ public sealed class RestraintCommand
         // Slot locks survive reloads but device/claim bookkeeping doesn't, so release every layer unconditionally.
         var hadRestraints = activeDeviceIds.Count > 0 || boundAnimations.Count > 0 || activeCatalogOverrides.Count > 0
             || config.WornRestraints.Count > 0 || config.RestraintsForceLocked;
+        var redraw = config.WornRestraints.Any(w => w.Redraw);
         restrictionRules.ReleaseAllForPanic();
         ReleaseAllBoundAnimationsForPanic();
         ReleaseAllCatalogOverrides();
         var gearReleased = slotLocks.Release(Owner);
         ClearSaved();
         moodles.Ledger.ReleaseAllWithPrefix(AttachedMoodleLedger.RestraintPrefix);
+        if (redraw)
+            penumbra.TryRedrawLocalPlayer(force: true);
         return gearReleased || hadRestraints;
     }
 
@@ -740,7 +765,7 @@ public sealed class RestraintCommand
                 {
                     Id = saved.Id, Slot = saved.Slot, ItemId = saved.ItemId, Stain = saved.Stain, Stain2 = saved.Stain2,
                     Name = saved.Name, Rules = worn.Rules, AttachedMoodle = saved.AttachedMoodle,
-                }, worn.MoodleOverride, allowSharedSlot: true);
+                }, worn.MoodleOverride, allowSharedSlot: true, redraw: worn.Redraw);
                 break;
             case WornRestraintKind.Catalog:
                 if (worn.CatalogId is null || worn.ItemId is not { } itemId || !config.RestraintMapping.LocalCatalog.ContainsKey(worn.CatalogId))
@@ -749,13 +774,13 @@ public sealed class RestraintCommand
                     permanent = true;
                     return false;
                 }
-                applied = ApplyCatalog(worn.CatalogId, itemId, worn.Rules, worn.MoodleOverride, allowSharedSlot: true);
+                applied = ApplyCatalog(worn.CatalogId, itemId, worn.Rules, worn.MoodleOverride, allowSharedSlot: true, redraw: worn.Redraw);
                 break;
             default:
                 applied = ApplyDevice(worn.RuntimeId, new RestraintDeviceDefinition
                 {
                     Id = worn.RuntimeId, Slot = worn.Slot, ItemId = worn.ItemId, Name = worn.Reference, Rules = worn.Rules,
-                }, worn.MoodleOverride, allowSharedSlot: true);
+                }, worn.MoodleOverride, allowSharedSlot: true, redraw: worn.Redraw);
                 break;
         }
         reason = LastFailureReason ?? "it couldn't be applied";
@@ -786,7 +811,7 @@ public sealed class RestraintCommand
     }
 
     /// Both the slot and rule checks run before anything applies, so a refused apply leaves nothing partial.
-    private unsafe bool ApplyDevice(string deviceId, RestraintDeviceDefinition device, string? moodleOverride = null, bool allowSharedSlot = false)
+    private unsafe bool ApplyDevice(string deviceId, RestraintDeviceDefinition device, string? moodleOverride = null, bool allowSharedSlot = false, bool redraw = false)
     {
         var hasGear = device.Slot is not null && device.ItemId is not null;
         if (hasGear && RefuseTakenSlot(device.Slot!.Value, deviceId, allowSharedSlot))
@@ -852,7 +877,7 @@ public sealed class RestraintCommand
             ApplyPose(pose.PoseModeId);
 
         // A saved device's setting applies to the Owner's copies of it too, which share its id.
-        var forceRedraw = device.RedrawOnApply || (config.RestraintMapping.Devices.TryGetValue(deviceId, out var saved) && saved.RedrawOnApply);
+        var forceRedraw = redraw || device.RedrawOnApply || (config.RestraintMapping.Devices.TryGetValue(deviceId, out var saved) && saved.RedrawOnApply);
         foreach (var rule in boundRules)
         {
             if (EngageBoundAnimation(deviceId, rule, forceRedraw)) continue;
@@ -957,7 +982,8 @@ public sealed class RestraintCommand
         return true;
     }
 
-    private void ReleaseBoundAnimations(string deviceId)
+    /// True when it redrew.
+    private bool ReleaseBoundAnimations(string deviceId, bool forceRedraw = false)
     {
         var removedAny = false;
         foreach (var key in boundAnimations.Keys.Where(k => k.DeviceId == deviceId).ToList())
@@ -967,8 +993,9 @@ public sealed class RestraintCommand
             removedAny |= temporarySettings.Release($"bound:{deviceId}:{key.Kind}", collection, modDirectory);
             boundAnimations.Remove(key);
         }
-        if (removedAny && !penumbra.TryRedrawLocalPlayer())
+        if (removedAny && !penumbra.TryRedrawLocalPlayer(forceRedraw))
             Plugin.Log.Warning($"Restraint release for '{deviceId}' removed temporary animation settings, but the Penumbra redraw failed; a manual redraw may be required.");
+        return removedAny;
     }
 
     /// Drops the device bookkeeping too; panic's other steps tear down slots and rules.
@@ -1016,18 +1043,24 @@ public sealed class RestraintCommand
             config.Save();
         }
 
+        var forceRedraw = worn?.Redraw == true;
         restrictionRules.Release(deviceId);
         activeDeviceIds.Remove(deviceId);
         engaged.RemoveAll(e => e.Id == deviceId);
-        ReleaseBoundAnimations(deviceId);
+        var redrawn = ReleaseBoundAnimations(deviceId, forceRedraw);
         chatGagService.RevertCustomizePreset(deviceId);
         moodles.Ledger.Release(AttachedMoodleLedger.RestraintSource(deviceId));
 
         if (activeCatalogOverrides.Remove(deviceId, out var catalogOverride)
             && temporarySettings.Release(deviceId, catalogOverride.Collection, catalogOverride.ModDirectory))
-            penumbra.TryRedrawLocalPlayer();
+        {
+            penumbra.TryRedrawLocalPlayer(forceRedraw);
+            redrawn = true;
+        }
 
         ReleaseSlotOf(worn);
+        if (forceRedraw && !redrawn)
+            penumbra.TryRedrawLocalPlayer(force: true);
     }
 
     private void ReleaseSlotOf(WornRestraint? worn)
@@ -1072,10 +1105,32 @@ public sealed class RestraintCommand
 
     private const string RulesToken = "rules:";
 
+    /// Rides in the rule list so an older Sub skips it like any token it doesn't know.
+    private const string RedrawToken = "redraw";
+
     /// The name is always quoted so the parser finds where it ends; an older Sub fails closed on it.
-    public static string BuildLockCommand(string deviceName, List<RestraintRuleAssignment> rules)
+    public static string BuildLockCommand(string deviceName, List<RestraintRuleAssignment> rules, bool redraw = false)
     {
-        return $"restraint lock \"{deviceName}\" {RulesToken}{EncodeRuleTokens(rules)}";
+        return $"restraint lock \"{deviceName}\" {RulesToken}{EncodeRuleTokens(rules, redraw)}";
+    }
+
+    private static string EncodeRuleTokens(List<RestraintRuleAssignment> rules, bool redraw)
+    {
+        var tokens = EncodeRuleTokens(rules);
+        return redraw ? (tokens.Length > 0 ? $"{tokens},{RedrawToken}" : RedrawToken) : tokens;
+    }
+
+    /// Whether an Owner's restraint command asks for a redraw when it goes on and comes off.
+    public static bool HasRedrawToken(string command)
+    {
+        // After the quoted name, so a name containing "rules:" can't be mistaken for it.
+        var open = command.IndexOf('"');
+        var close = open < 0 ? -1 : command.IndexOf('"', open + 1);
+        if (close < 0)
+            return false;
+        var start = command.IndexOf(RulesToken, close, StringComparison.OrdinalIgnoreCase);
+        return start >= 0 && command[(start + RulesToken.Length)..].Split(' ', 2)[0]
+            .Split(',', StringSplitOptions.TrimEntries).Any(t => t.Equals(RedrawToken, StringComparison.OrdinalIgnoreCase));
     }
 
     /// Gagged may emit a second `gagcplus` token, always right after `gagged`.
@@ -1130,11 +1185,11 @@ public sealed class RestraintCommand
     public static string EncodeRuleTokens(List<RestraintRuleAssignment> rules) => string.Join(',', rules.SelectMany(RuleTokens));
     public static List<RestraintRuleAssignment> DecodeRuleTokens(string tokens) => ParseRuleTokens(tokens);
 
-    public static string BuildCatalogLockCommand(string catalogId, string label, ulong itemId, List<RestraintRuleAssignment> rules)
+    public static string BuildCatalogLockCommand(string catalogId, string label, ulong itemId, List<RestraintRuleAssignment> rules, bool redraw = false)
     {
         if (catalogId.Length is < 8 or > 64 || catalogId.Any(c => !char.IsAsciiLetterOrDigit(c)))
             throw new ArgumentException("Invalid restraint catalog identity.", nameof(catalogId));
-        var ruleText = BuildLockCommand(label.Replace('"', '\''), rules);
+        var ruleText = BuildLockCommand(label.Replace('"', '\''), rules, redraw);
         var suffix = ruleText[(ruleText.IndexOf(RulesToken, StringComparison.Ordinal) + RulesToken.Length)..];
         return $"restraint catalog {catalogId} \"{label.Replace('"', '\'')}\" item:{itemId} {RulesToken}{suffix}";
     }
@@ -1195,11 +1250,11 @@ public sealed class RestraintCommand
     private const string NoGearToken = "-";
 
     /// Carries the full definition inline, since there's no Sub-side name to look up.
-    public static string BuildWearCommand(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules)
+    public static string BuildWearCommand(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules, bool redraw = false)
     {
         var slotText = slot is null ? NoGearToken : slot.Value.ToString();
         var itemText = itemId is null ? NoGearToken : itemId.Value.ToString();
-        return $"restraint wear {slotText} {itemText} \"{label}\" {RulesToken}{EncodeRuleTokens(rules)}";
+        return $"restraint wear {slotText} {itemText} \"{label}\" {RulesToken}{EncodeRuleTokens(rules, redraw)}";
     }
 
     /// Fails closed on any malformed segment, and on a device with neither gear nor rules.

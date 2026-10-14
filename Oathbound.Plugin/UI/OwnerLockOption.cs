@@ -117,12 +117,63 @@ public static class OwnerLockOption
     /// Saves straight onto `cmd.LockSeconds`, and for a restraint its key and struggle setting.
     public static void DrawInline(string id, QuickCommand cmd, PluginConfig config)
     {
-        DrawLockInline(id, cmd, config);
+        DrawLockInline(id, cmd, config, Layout.ContinueRowOrWrap);
         if (IsGesture(cmd.Command) || IsOwnerLock(cmd.Command))
             return;
-        var key = cmd.LockKey ?? "";
         Layout.ContinueRowOrWrap(InlineFieldWidth);
-        ImGui.SetNextItemWidth(InlineFieldWidth);
+        DrawKeyField(id, cmd, config, InlineFieldWidth);
+        if (RestraintStruggle.Accepts(cmd.Command))
+            DrawStruggleFields(id, cmd, config, Layout.ContinueRowOrWrap);
+    }
+
+    /// The same settings as DrawInline, one labeled line each: the lock, then a restraint's key, then its struggle.
+    public static void DrawStacked(string id, QuickCommand cmd, PluginConfig config)
+    {
+        var gesture = IsGesture(cmd.Command);
+        var restraint = !gesture && !IsOwnerLock(cmd.Command);
+        var struggle = restraint && RestraintStruggle.Accepts(cmd.Command);
+        string[] labels = [gesture ? "Hold" : "Lock", "Key", "Struggle"];
+        var shown = restraint ? struggle ? 3 : 2 : 1;
+        var labelWidth = labels.Take(shown).Max(l => ImGui.CalcTextSize(l).X) + ImGui.GetStyle().ItemSpacing.X * 2;
+
+        StackedLabel(labels[0], labelWidth);
+        DrawLockInline(id, cmd, config, FirstThenSameLine());
+        if (!restraint)
+            return;
+        StackedLabel("Key", labelWidth);
+        DrawKeyField(id, cmd, config, Layout.Scaled(160f));
+        if (!struggle)
+            return;
+        StackedLabel("Struggle", labelWidth);
+        DrawStruggleFields(id, cmd, config, FirstThenSameLine(), "min per failed try");
+    }
+
+    private static void StackedLabel(string text, float width)
+    {
+        var x = ImGui.GetCursorPosX();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(text);
+        ImGui.SameLine();
+        ImGui.SetCursorPosX(x + width);
+    }
+
+    /// The first control stays where the label left the cursor; the rest follow on the same line.
+    private static Action<float> FirstThenSameLine()
+    {
+        var first = true;
+        return _ =>
+        {
+            if (first)
+                first = false;
+            else
+                ImGui.SameLine();
+        };
+    }
+
+    private static void DrawKeyField(string id, QuickCommand cmd, PluginConfig config, float width)
+    {
+        var key = cmd.LockKey ?? "";
+        ImGui.SetNextItemWidth(width);
         if (ImGui.InputTextWithHint($"##ownerKeyInline_{id}", "Key (optional)", ref key, RestraintKey.MaxLength))
         {
             cmd.LockKey = key.Trim().Length == 0 ? null : key;
@@ -130,10 +181,13 @@ public static class OwnerLockOption
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(cmd.LockKey is { } k && !RestraintKey.IsValidPassword(k) ? $"Too short - not sent. {KeyHelpText}" : KeyHelpText);
-        if (!RestraintStruggle.Accepts(cmd.Command))
-            return;
+    }
+
+    /// `place` positions each control before it's drawn; `penaltyUnit` labels the penalty field when given.
+    private static void DrawStruggleFields(string id, QuickCommand cmd, PluginConfig config, Action<float> place, string? penaltyUnit = null)
+    {
         var level = (int)cmd.Struggle;
-        Layout.ContinueRowOrWrap(InlineFieldWidth);
+        place(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
         if (ImGui.Combo($"##ownerStruggleInline_{id}", ref level, RestraintStruggle.LevelNames, RestraintStruggle.LevelNames.Length))
         {
@@ -145,7 +199,7 @@ public static class OwnerLockOption
         if (cmd.Struggle == StruggleLevel.None || cmd.LockSeconds is null)
             return;
         var penalty = cmd.StrugglePenaltyMinutes;
-        Layout.ContinueRowOrWrap(InlineFieldWidth);
+        place(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
         if (ImGui.InputInt($"##ownerStrugglePenalty_{id}", ref penalty, 1, 5))
         {
@@ -154,6 +208,10 @@ public static class OwnerLockOption
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Minutes added to the timer for each failed try (0 for none).");
+        if (penaltyUnit is null)
+            return;
+        ImGui.SameLine();
+        ImGui.TextDisabled(penaltyUnit);
     }
 
     /// For editors that keep the setting themselves. Returns true when it changed.
@@ -174,14 +232,14 @@ public static class OwnerLockOption
         return (level, penaltyMinutes) != before;
     }
 
-    private static void DrawLockInline(string id, QuickCommand cmd, PluginConfig config)
+    private static void DrawLockInline(string id, QuickCommand cmd, PluginConfig config, Action<float> place)
     {
         var gesture = IsGesture(cmd.Command);
         var ownerLock = IsOwnerLock(cmd.Command);
         var names = gesture ? GestureModeNames : ownerLock ? OwnerLockModeNames : ModeNames;
         var mode = cmd.LockSeconds is null ? 0 : 1;
         var comboWidth = ModeComboWidth(names);
-        Layout.ContinueRowOrWrap(comboWidth);
+        place(comboWidth);
         ImGui.SetNextItemWidth(comboWidth);
         if (ImGui.Combo($"##ownerLockInline_{id}", ref mode, names, names.Length))
         {
@@ -197,7 +255,7 @@ public static class OwnerLockOption
         if (gesture)
         {
             var hold = ClampHold(seconds);
-            Layout.ContinueRowOrWrap(InlineFieldWidth);
+            place(InlineFieldWidth);
             ImGui.SetNextItemWidth(InlineFieldWidth);
             if (ImGui.InputInt($"##ownerHoldInlineSeconds_{id}", ref hold, 5, 30))
             {
@@ -211,7 +269,7 @@ public static class OwnerLockOption
             return;
         }
         var minutes = Math.Max(1, seconds / 60);
-        Layout.ContinueRowOrWrap(InlineFieldWidth);
+        place(InlineFieldWidth);
         ImGui.SetNextItemWidth(InlineFieldWidth);
         if (ImGui.InputInt($"##ownerLockInlineMinutes_{id}", ref minutes, 15, 60))
         {
