@@ -43,12 +43,15 @@ jobs:
         $manifest = Get-Content "Oathbound.Plugin/bin/x64/Release/Oathbound.Plugin/Oathbound.Plugin.json" | ConvertFrom-Json
         "version=$($manifest.AssemblyVersion)" >> $env:GITHUB_OUTPUT
         "apilevel=$($manifest.DalamudApiLevel)" >> $env:GITHUB_OUTPUT
+        # A `-testing` tag only reaches users who opted into testing builds; stable stays where it is.
+        "testing=$('${{ github.ref_name }}'.EndsWith('-testing'))".ToLower() >> $env:GITHUB_OUTPUT
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name }}
         name: ${{ github.ref_name }}
+        prerelease: ${{ steps.manifest.outputs.testing == 'true' }}
         files: Oathbound.Plugin/bin/x64/Release/Oathbound.Plugin/latest.zip
 
     # Build/package must come from the immutable tag above. Switch back to master only for the mutable
@@ -64,10 +67,15 @@ jobs:
       run: |
         $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.zip"
         $repo = Get-Content repo.json | ConvertFrom-Json
-        $repo[0].AssemblyVersion = "${{ steps.manifest.outputs.version }}"
+        if ("${{ steps.manifest.outputs.testing }}" -eq "true") {
+          $repo[0].TestingAssemblyVersion = "${{ steps.manifest.outputs.version }}"
+        } else {
+          $repo[0].AssemblyVersion = "${{ steps.manifest.outputs.version }}"
+          $repo[0].TestingAssemblyVersion = $null
+          $repo[0].DownloadLinkInstall = $downloadUrl
+          $repo[0].DownloadLinkUpdate = $downloadUrl
+        }
         $repo[0].DalamudApiLevel = [int]"${{ steps.manifest.outputs.apilevel }}"
-        $repo[0].DownloadLinkInstall = $downloadUrl
-        $repo[0].DownloadLinkUpdate = $downloadUrl
         $repo[0].DownloadLinkTesting = $downloadUrl
         $repo[0].LastUpdate = [string]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
         # -AsArray is required here: piping a single-element collection through ConvertTo-Json otherwise
