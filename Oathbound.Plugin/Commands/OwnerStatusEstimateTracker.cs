@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Glamourer.Api.Enums;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.Ipc;
 
 namespace Oathbound.Plugin.Commands;
 
@@ -183,6 +185,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         rest = MoodleOption.Strip(LockTimerOption.Strip(rest, out var restraintLock), out _).Trim();
         var (verb, remainder) = SplitFirst(rest);
         List<RestraintRuleAssignment>? rules = null;
+        ApiEquipSlot? slot = null;
         string reference;
         switch (verb.ToLowerInvariant())
         {
@@ -199,17 +202,20 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
             case "lock":
                 if (!RestraintCommand.TryParseLockCommand(remainder, out reference, out rules)) return;
                 rules ??= KnownRulesFor(reference);
+                slot = KnownSlotFor(reference);
                 break;
             case "catalog":
-                if (!RestraintCommand.TryParseCatalogCommand(remainder, out _, out reference, out _, out rules)) return;
+                if (!RestraintCommand.TryParseCatalogCommand(remainder, out _, out reference, out var catalogItemId, out rules)) return;
+                slot = catalogItemId == 0 ? null : GlamourerIpc.GetItemSlot((uint)catalogItemId);
                 break;
             case "wear":
-                if (!RestraintCommand.TryParseWearCommand(remainder, out _, out _, out reference, out rules)) return;
+                if (!RestraintCommand.TryParseWearCommand(remainder, out var wearSlot, out var wearItemId, out reference, out rules)) return;
+                slot = wearSlot ?? (wearItemId is { } id ? GlamourerIpc.GetItemSlot((uint)id) : null);
                 break;
             default:
                 return;
         }
-        estimate.MarkRestrained(reference, rules, restraintLock);
+        estimate.MarkRestrained(reference, rules, restraintLock, slot);
     }
 
     /// When a `lockfor:` command's lock ends on the Sub, counted from now like the Sub counts it.
@@ -282,8 +288,14 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         if (!CustomTriggerCommand.TryParseCastCommand(remainder, out _, out var actions)) return;
 
         foreach (var action in actions.Where(a => a.Kind == CustomTriggerActionKind.Restraint))
-            estimate.MarkRestrained(action.RestraintDeviceName, action.RestraintRules ?? KnownRulesFor(action.RestraintDeviceName), restraintLock);
+            estimate.MarkRestrained(action.RestraintDeviceName, action.RestraintRules ?? KnownRulesFor(action.RestraintDeviceName), restraintLock, KnownSlotFor(action.RestraintDeviceName));
     }
+
+    /// Only known when a saved quick command of that name carries its item.
+    private ApiEquipSlot? KnownSlotFor(string? deviceName) =>
+        deviceName is null ? null : config.QuickCommands.Restraints
+            .FirstOrDefault(c => c.RestraintItemId is > 0 && string.Equals(c.Label, deviceName, StringComparison.OrdinalIgnoreCase))
+            ?.RestraintItemId is { } itemId ? GlamourerIpc.GetItemSlot((uint)itemId) : null;
 
     /// The Owner only knows the rules if a saved quick command of that name carries them.
     private List<RestraintRuleAssignment>? KnownRulesFor(string? deviceName) =>
@@ -305,6 +317,8 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
 public sealed class EstimatedRestraint
 {
     public string Reference { get; internal set; } = "";
+    /// Null when the Owner's client doesn't know which gear slot it uses.
+    public ApiEquipSlot? Slot { get; internal set; }
     public bool Gagged { get; internal set; }
     /// What its rules draw; None when the rules aren't known.
     public CuffSet Cuffs { get; internal set; }
@@ -388,12 +402,16 @@ public sealed class OwnerStatusEstimate
 
     public bool Any => Gagged || Restrained || Leashed;
 
-    internal void MarkRestrained(string reference, List<RestraintRuleAssignment>? rules, RestraintLock restraintLock)
+    /// The Sub's client refuses a second restraint on a taken slot, so one sent for a known taken slot isn't added.
+    internal void MarkRestrained(string reference, List<RestraintRuleAssignment>? rules, RestraintLock restraintLock, ApiEquipSlot? slot = null)
     {
+        if (slot is not null && restraints.Any(r => r.Slot == slot && !string.Equals(r.Reference, reference.Trim(), StringComparison.OrdinalIgnoreCase)))
+            return;
         RemoveRestraint(reference);
         restraints.Add(new EstimatedRestraint
         {
             Reference = reference.Trim(),
+            Slot = slot,
             Gagged = rules?.Any(r => r.Kind == RestraintRuleKind.Gagged) == true,
             Cuffs = CuffSets.Drawn(rules),
             Locked = true,

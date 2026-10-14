@@ -345,8 +345,35 @@ public sealed class RestraintCommand
         return true;
     }
 
+    private static string SlotHolder(string runtimeId) => $"{Owner}:{runtimeId}";
+
+    /// Only restraints saved by an older version can share a slot; every new apply gets the slot to itself.
+    private WornRestraint? OtherRestraintOn(ApiEquipSlot slot, string runtimeId) =>
+        config.WornRestraints.LastOrDefault(w => w.RuntimeId != runtimeId && w.Slot == slot && w.ItemId is not null);
+
+    private bool RefuseTakenSlot(ApiEquipSlot slot, string runtimeId, bool allowSharedSlot)
+    {
+        if (allowSharedSlot || OtherRestraintOn(slot, runtimeId) is not { } other)
+            return false;
+        LastFailureReason = $"equipment slot {slot} already has \"{other.Reference}\"; take it off first";
+        Plugin.Log.Warning($"Restraint apply refused: slot {slot} already holds a different restraint.");
+        return true;
+    }
+
+    /// Another restraint still on the slot keeps it locked, the newest showing; otherwise it gets its earlier piece back.
+    private void ReleaseRestraintSlot(string runtimeId, ApiEquipSlot slot)
+    {
+        if (OtherRestraintOn(slot, runtimeId) is { } other)
+        {
+            slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [slot] = new(other.ItemId!.Value, other.Stain, other.Stain2) }, TakesOverFrom, SlotHolder(other.RuntimeId));
+            slotLocks.ReleaseClaim(SlotHolder(runtimeId), [slot]);
+        }
+        else
+            slotLocks.ReleaseSlots(Owner, [slot]);
+    }
+
     /// No force-lock here; ForceApplyCatalog adds it for Owner commands.
-    private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride)
+    private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride, bool allowSharedSlot = false)
     {
         LastFailureReason = null;
         if (!config.RestraintMapping.LocalCatalog.TryGetValue(catalogId, out var entry))
@@ -358,6 +385,8 @@ public sealed class RestraintCommand
         if (activeCatalogOverrides.ContainsKey(runtimeId))
             return true;
         var slot = itemId == 0 ? null : GlamourerIpc.GetItemSlot((uint)itemId);
+        if (slot is not null && RefuseTakenSlot(slot.Value, runtimeId, allowSharedSlot))
+            return false;
         if (itemId == 0 || slot is null || slotLocks.WouldOverlap([slot.Value], Owner, TakesOverFrom))
         {
             LastFailureReason = itemId == 0 || slot is null ? "the restraint item is not valid for an equipment slot" : $"equipment slot {slot} is locked by another feature";
@@ -398,16 +427,16 @@ public sealed class RestraintCommand
             LastFailureReason = "Penumbra could not redraw after applying the restraint";
             return false;
         }
-        if (!slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [slot.Value] = new(itemId, 0, 0) }, TakesOverFrom))
+        if (!slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [slot.Value] = new(itemId, 0, 0) }, TakesOverFrom, SlotHolder(runtimeId)))
         {
             temporarySettings.Release(runtimeId, collection.Value, entry.ModDirectory);
             penumbra.TryRedrawLocalPlayer();
-            LastFailureReason = $"Glamourer could not equip or lock {slot}";
+            LastFailureReason = $"Glamourer could not read, equip or lock {slot}";
             return false;
         }
         if (rules.Count > 0 && !restrictionRules.TryActivate(runtimeId, rules))
         {
-            slotLocks.Release(Owner);
+            ReleaseRestraintSlot(runtimeId, slot.Value);
             temporarySettings.Release(runtimeId, collection.Value, entry.ModDirectory);
             penumbra.TryRedrawLocalPlayer();
             LastFailureReason = "restriction enforcement could not be activated";
@@ -421,7 +450,7 @@ public sealed class RestraintCommand
             if (EngageBoundAnimation(runtimeId, rule)) continue;
             ReleaseBoundAnimations(runtimeId);
             restrictionRules.Release(runtimeId);
-            slotLocks.Release(Owner);
+            ReleaseRestraintSlot(runtimeId, slot.Value);
             temporarySettings.Release(runtimeId, collection.Value, entry.ModDirectory);
             activeCatalogOverrides.Remove(runtimeId);
             penumbra.TryRedrawLocalPlayer();
@@ -711,7 +740,7 @@ public sealed class RestraintCommand
                 {
                     Id = saved.Id, Slot = saved.Slot, ItemId = saved.ItemId, Stain = saved.Stain, Stain2 = saved.Stain2,
                     Name = saved.Name, Rules = worn.Rules, AttachedMoodle = saved.AttachedMoodle,
-                }, worn.MoodleOverride);
+                }, worn.MoodleOverride, allowSharedSlot: true);
                 break;
             case WornRestraintKind.Catalog:
                 if (worn.CatalogId is null || worn.ItemId is not { } itemId || !config.RestraintMapping.LocalCatalog.ContainsKey(worn.CatalogId))
@@ -720,13 +749,13 @@ public sealed class RestraintCommand
                     permanent = true;
                     return false;
                 }
-                applied = ApplyCatalog(worn.CatalogId, itemId, worn.Rules, worn.MoodleOverride);
+                applied = ApplyCatalog(worn.CatalogId, itemId, worn.Rules, worn.MoodleOverride, allowSharedSlot: true);
                 break;
             default:
                 applied = ApplyDevice(worn.RuntimeId, new RestraintDeviceDefinition
                 {
                     Id = worn.RuntimeId, Slot = worn.Slot, ItemId = worn.ItemId, Name = worn.Reference, Rules = worn.Rules,
-                }, worn.MoodleOverride);
+                }, worn.MoodleOverride, allowSharedSlot: true);
                 break;
         }
         reason = LastFailureReason ?? "it couldn't be applied";
@@ -757,9 +786,11 @@ public sealed class RestraintCommand
     }
 
     /// Both the slot and rule checks run before anything applies, so a refused apply leaves nothing partial.
-    private unsafe bool ApplyDevice(string deviceId, RestraintDeviceDefinition device, string? moodleOverride = null)
+    private unsafe bool ApplyDevice(string deviceId, RestraintDeviceDefinition device, string? moodleOverride = null, bool allowSharedSlot = false)
     {
         var hasGear = device.Slot is not null && device.ItemId is not null;
+        if (hasGear && RefuseTakenSlot(device.Slot!.Value, deviceId, allowSharedSlot))
+            return false;
         if (hasGear && slotLocks.WouldOverlap([device.Slot!.Value], Owner, TakesOverFrom))
         {
             var conflicts = slotLocks.ConflictingLocks([device.Slot!.Value], Owner);
@@ -800,9 +831,9 @@ public sealed class RestraintCommand
         if (hasGear)
         {
             var value = new SlotLockValue(device.ItemId!.Value, device.Stain, device.Stain2);
-            if (!slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [device.Slot!.Value] = value }, TakesOverFrom))
+            if (!slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [device.Slot!.Value] = value }, TakesOverFrom, SlotHolder(deviceId)))
             {
-                LastFailureReason = $"Glamourer could not apply or lock equipment slot {device.Slot}";
+                LastFailureReason = $"Glamourer could not read, apply or lock equipment slot {device.Slot}";
                 Plugin.Log.Warning($"Restraint apply failed for \"{device.Name}\": could not apply/lock its slot.");
                 return false;
             }
@@ -811,7 +842,8 @@ public sealed class RestraintCommand
         if (device.Rules.Count > 0 && !restrictionRules.TryActivate(deviceId, device.Rules))
         {
             LastFailureReason = "restriction enforcement could not be activated";
-            slotLocks.Release(Owner);
+            if (hasGear)
+                ReleaseRestraintSlot(deviceId, device.Slot!.Value);
             return false;
         }
 
@@ -826,7 +858,8 @@ public sealed class RestraintCommand
             if (EngageBoundAnimation(deviceId, rule, forceRedraw)) continue;
             ReleaseBoundAnimations(deviceId);
             restrictionRules.Release(deviceId);
-            slotLocks.Release(Owner);
+            if (hasGear)
+                ReleaseRestraintSlot(deviceId, device.Slot!.Value);
             Plugin.Log.Warning($"Restraint apply rolled back for '{device.Name}': bound animation activation failed.");
             LastFailureReason = "Penumbra could not activate the selected cuff animation; the restraint was rolled back";
             return false;
@@ -997,7 +1030,6 @@ public sealed class RestraintCommand
         ReleaseSlotOf(worn);
     }
 
-    /// Another worn restraint on the same slot keeps it locked, showing its own piece.
     private void ReleaseSlotOf(WornRestraint? worn)
     {
         if (worn?.Slot is not { } slot)
@@ -1006,10 +1038,7 @@ public sealed class RestraintCommand
                 slotLocks.Release(Owner);
             return;
         }
-        if (config.WornRestraints.FirstOrDefault(w => w.Slot == slot && w.ItemId is not null) is { } other)
-            slotLocks.TryLock(Owner, new Dictionary<ApiEquipSlot, SlotLockValue> { [slot] = new(other.ItemId!.Value, other.Stain, other.Stain2) }, TakesOverFrom);
-        else
-            slotLocks.ReleaseSlots(Owner, [slot]);
+        ReleaseRestraintSlot(worn.RuntimeId, slot);
     }
 
     /// Undyed. Refuses a device with neither gear nor a rule.

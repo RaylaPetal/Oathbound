@@ -17,8 +17,6 @@ public sealed class OutfitCommand
     /// Restraints may take over slots this owner holds.
     public const string SlotLockOwner = Owner;
 
-    private const string RestraintsSlotLockOwner = "Restraints";
-
     private readonly PluginConfig config;
     private readonly GlamourerIpc glamourer;
     private readonly SlotLockManager slotLocks;
@@ -66,9 +64,7 @@ public sealed class OutfitCommand
         if (runtimeState.OutfitForceLocked)
             return false;
 
-        var hadLock = slotLocks.HasLock(Owner);
-        if (hadLock)
-            slotLocks.Release(Owner);
+        var hadLock = slotLocks.DropLock(Owner);
         var hadMoodle = moodles.Ledger.Release(AttachedMoodleLedger.OutfitSource);
         return hadLock || hadMoodle;
     }
@@ -97,14 +93,14 @@ public sealed class OutfitCommand
         return (true, null);
     }
 
-    /// The Owner's `revert all`. The collar's slot lock is kept, so enforcement (and VerifySoon) puts its piece back.
-    /// The caller releases restraints first so only the collar is left to reassert.
+    /// The Owner's `revert all`: every slot an outfit changed gets back what it showed before the first outfit, slot by
+    /// slot; a slot a restraint or the collar still locks keeps its piece. The caller releases restraints first.
     public bool RevertToBase()
     {
         RevertedToBase?.Invoke();
         ForceUnlock();
         runtimeState.OutfitName = null;
-        var reverted = glamourer.RevertToAutomationFull() == GlamourerApiEc.Success;
+        var reverted = slotLocks.Release(Owner);
         slotLocks.VerifySoon();
         return reverted;
     }
@@ -119,11 +115,10 @@ public sealed class OutfitCommand
         return true;
     }
 
+    /// Ends the lock only; the outfit stays on.
     public bool ForceUnlock()
     {
-        var hadLock = slotLocks.HasLock(Owner);
-        if (hadLock)
-            slotLocks.Release(Owner);
+        var hadLock = slotLocks.DropLock(Owner);
         runtimeState.OutfitForceLocked = false;
         if (config.OwnerLocks.Outfit is not null)
         {
@@ -146,15 +141,20 @@ public sealed class OutfitCommand
     private (bool Success, string? Reason) ApplyDesign(Guid designId, string designName, bool locked, AttachedMoodleRef? defaultMoodle, string? moodleOverride)
     {
         // Drop the previous outfit's locks first, so enforcement doesn't snap back to the old pieces.
-        if (slotLocks.HasLock(Owner))
-            slotLocks.Release(Owner);
+        slotLocks.DropLock(Owner);
 
-        var slots = locked ? glamourer.GetDesignEquipSlots(designId) : new HashSet<ApiEquipSlot>();
-        var conflicts = locked ? slotLocks.ConflictingLocks(slots, Owner) : [];
+        var slots = glamourer.GetDesignEquipSlots(designId);
+        var conflicts = slotLocks.ConflictingLocks(slots, Owner);
+
+        // Before the design changes anything, so each slot remembers what the Sub wore there.
+        var newlyClaimed = slots.Except(slotLocks.ClaimedSlots(Owner)).ToHashSet();
+        if (!slotLocks.Claim(Owner, slots))
+            return (false, "Glamourer couldn't report what your gear slots show, so the outfit wasn't put on.");
 
         var ec = glamourer.ApplyDesign(designId);
         if (ec != GlamourerApiEc.Success)
         {
+            slotLocks.ReleaseClaim(Owner, newlyClaimed);
             var reason = $"Glamourer refused the apply: {ec}.";
             Plugin.Log.Warning($"Outfit apply failed for \"{designName}\": {reason}");
             return (false, reason);
@@ -165,11 +165,11 @@ public sealed class OutfitCommand
         if (CommandSourcePairingId is { } sourcePairingId)
             OwnerDesignApplied?.Invoke(sourcePairingId, designId, designName);
 
-        foreach (var (slot, conflictOwner) in conflicts)
+        foreach (var (slot, _) in conflicts)
         {
-            // A slot an active restraint covers keeps its piece; this outfit's piece is set aside for later.
-            if (conflictOwner == RestraintsSlotLockOwner && glamourer.GetEquipSlotValue(slot) is { } designPiece)
-                slotLocks.SetAsideUnder(slot, Owner, new SlotLockValue(designPiece.ItemId, designPiece.Stain, designPiece.Stain2));
+            // A slot a restraint or the collar locks keeps its piece; this outfit's piece is set aside for when it comes off.
+            if (glamourer.GetEquipSlotValue(slot) is { } designPiece)
+                slotLocks.SetAsideUnder(slot, Owner, new SlotLockValue(designPiece.ItemId, designPiece.Stain, designPiece.Stain2), relock: locked);
             if (slotLocks.GetLockedValue(slot) is { } existingLock)
                 glamourer.SetItemOnce(slot, existingLock.ItemId, [existingLock.Stain, existingLock.Stain2]);
         }

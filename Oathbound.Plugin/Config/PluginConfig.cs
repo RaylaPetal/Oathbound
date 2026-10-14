@@ -418,6 +418,23 @@ public class SlotLockEntry
     public ulong ItemId { get; set; }
     public byte Stain { get; set; }
     public byte Stain2 { get; set; }
+
+    /// Suspended entries only: the owner no longer locks it, so it's shown again on release but not re-locked.
+    public bool Unlocked { get; set; }
+}
+
+/// What a slot showed when `Holder` took it. Entries for one slot are saved oldest holder first.
+[Serializable]
+public class SlotEarlierPieceEntry
+{
+    public ApiEquipSlot Slot { get; set; }
+    public string Holder { get; set; } = "";
+    public ulong ItemId { get; set; }
+    public byte Stain { get; set; }
+    public byte Stain2 { get; set; }
+
+    /// Taken by an older version, so there's nothing recorded to put back.
+    public bool Unknown { get; set; }
 }
 
 [Serializable]
@@ -823,6 +840,8 @@ public class PluginConfig : IPluginConfiguration
 
     /// Locks a higher-priority owner took over, restored when it releases.
     public List<SlotLockEntry> SuspendedSlotLocks { get; set; } = new();
+
+    public List<SlotEarlierPieceEntry> SlotEarlierPieces { get; set; } = new();
 
     /// While true, the Sub's own alias-triggered changes for that category are refused.
     public bool OutfitForceLocked { get; set; }

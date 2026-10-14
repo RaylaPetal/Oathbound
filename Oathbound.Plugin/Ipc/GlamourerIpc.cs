@@ -106,11 +106,7 @@ public sealed class GlamourerIpc : IDisposable
     public GlamourerApiEc SetItemOnce(ApiEquipSlot slot, ulong itemId, IReadOnlyList<byte> stains) =>
         setItem.Invoke(LocalPlayerObjectIndex, slot, itemId, stains, 0, ApplyFlag.Once);
 
-    /// Equipment only, never customization.
-    public GlamourerApiEc RevertToAutomationEquipmentOnly() =>
-        revertToAutomation.Invoke(LocalPlayerObjectIndex, 0, ApplyFlag.Equipment);
-
-    /// Equipment and customization.
+    /// Equipment and customization. Panic only; everything else restores slot by slot.
     public GlamourerApiEc RevertToAutomationFull() => revertToAutomation.Invoke(LocalPlayerObjectIndex);
 
     /// Null on any failure rather than throwing.
