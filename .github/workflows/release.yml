@@ -67,11 +67,14 @@ jobs:
       run: |
         $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.zip"
         $repo = Get-Content repo.json | ConvertFrom-Json
+        # Dalamud ignores a testing version unless TestingDalamudApiLevel matches its own API level.
         if ("${{ steps.manifest.outputs.testing }}" -eq "true") {
           $repo[0].TestingAssemblyVersion = "${{ steps.manifest.outputs.version }}"
+          $repo[0] | Add-Member -Force -NotePropertyName TestingDalamudApiLevel -NotePropertyValue ([int]"${{ steps.manifest.outputs.apilevel }}")
         } else {
           $repo[0].AssemblyVersion = "${{ steps.manifest.outputs.version }}"
           $repo[0].TestingAssemblyVersion = $null
+          $repo[0] | Add-Member -Force -NotePropertyName TestingDalamudApiLevel -NotePropertyValue $null
           $repo[0].DownloadLinkInstall = $downloadUrl
           $repo[0].DownloadLinkUpdate = $downloadUrl
         }
