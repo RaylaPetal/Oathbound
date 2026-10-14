@@ -110,7 +110,7 @@ public class CollarWindow : Window, IDisposable
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
-        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id));
+        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id), supportRow: true);
         TutorialService.Anchor(TutorialAnchors.MainNav);
         if (clicked is not null)
             moduleWindow.Show(clicked);
