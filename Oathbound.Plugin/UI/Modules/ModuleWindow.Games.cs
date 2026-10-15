@@ -12,9 +12,9 @@ namespace Oathbound.Plugin.UI;
 /// Games with the other person of the active pairing: the invite, the running game, and each player's own settings.
 public sealed partial class ModuleWindow
 {
-    private static readonly GameKind[] GameKinds = Enum.GetValues<GameKind>();
-    private static readonly LossRule[] LossRules = Enum.GetValues<LossRule>();
-    private static readonly PromptRating[] PromptRatings = Enum.GetValues<PromptRating>();
+    private static readonly GameKind[] GameKinds = [GameKind.Deathroll, GameKind.HighRoll, GameKind.HigherLower, GameKind.TwentyOne, GameKind.TruthOrDare];
+    private static readonly LossRule[] LossRules = [LossRule.Strip, LossRule.Forfeit, LossRule.Both];
+    private static readonly PromptRating[] PromptRatings = [PromptRating.Mild, PromptRating.Spicy, PromptRating.Explicit];
     private static readonly ApiEquipSlot[] StrippableSlots =
     [
         ApiEquipSlot.Head, ApiEquipSlot.Body, ApiEquipSlot.Hands, ApiEquipSlot.Legs, ApiEquipSlot.Feet,
