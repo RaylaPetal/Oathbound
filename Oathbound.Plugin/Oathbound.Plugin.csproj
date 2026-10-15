@@ -8,13 +8,12 @@
          `dotnet build` on this csproj, an IDE's default build task, or the .slnx - instead of depending
          on everyone remembering to build through the solution file. -->
     <Platform>x64</Platform>
-    <Version>0.2.5.4</Version>
+    <Version>0.2.5.5</Version>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>Rayla Petal</Author>
     <Name>Oathbound</Name>
-    <Punchline>Consent-based Owner/Sub control: outfit, title, gesture, restraints and leash.</Punchline>
-    <Description>A consent-based collar control plugin. An Owner sends gameplay commands through ordinary
-in-game tells, relay-assisted pairing and encrypted catalog synchronization.</Description>
+    <Punchline>Consent-based All-in-One D/s plugin, dozens of modules. Outfit, title, gesture, restraints and leash.</Punchline>
+    <Description>A consent-based D/s control plugin. Gives full control over sub including restraints, movement, leashes and much more.</Description>
     <RepoUrl>https://github.com/RaylaPetal/Oathbound</RepoUrl>
     <Tags>roleplay;collar;glamourer;penumbra;honorific</Tags>
   </PropertyGroup>
