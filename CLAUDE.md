@@ -104,14 +104,31 @@ deploy it directly with `npm run deploy:staging` / `deploy:production`.
 
 ```
 Oathbound.Plugin/
-  Ipc/          thin wrappers around Glamourer.Api, Penumbra.Api, Honorific's IPC, and Moodles' IPC
-  Commands/     one file per command category, the chat listener, and the trigger composer/sender
+  Ipc/          thin wrappers around Glamourer.Api, Penumbra.Api, Honorific's IPC, Moodles' IPC, vnavmesh, ...
+  Commands/
+    Chat/         the chat listener, trigger composer/sender, gag rewrite, command describer/selector
+    Categories/   one handler per command category (title, outfit, gesture, moodles, collar, toys, ...)
+    Restraints/   restraint command, locks, keys, struggle
+    Movement/     movement lock hooks, walk-only, action blocking
+    Leash/        follow/leash, mounts, area travel, leash-off notice
+    Teleport/  Cage/  Catalog/  Options/ (shared command options)  Owner/ (Owner-side trackers)
   Config/       persisted plugin configuration, including the Sub's alias definitions and device identity
-  UI/           CollarWindow (Title/Wardrobe/Gesture/Moodles/Restraints/Custom Triggers/Collar/Owner/
-                Permissions tabs), SettingsWindow
+  UI/
+    Windows/      CollarWindow (main), SettingsWindow, SubControlWindow, Favorites, pickers, Quick Access
+    Modules/      ModuleWindow, one partial per module, plus module helpers
+    Views/        panels embedded in windows (pairing, recovery, status views, header pieces)
+    Widgets/      shared ImGui building blocks (Card, Section, Layout, Theme, NavBar, ...)
+    World/        drawing in the game world (leash, cuffs, cage bounds, status icons)
+    Tutorial/     guided tours
+    Owner/        the Owner's view of relay-reported collar and cage status
   Safety/       panic handler and in-memory "what's currently applied" state
   Relay/        everything that talks to the Cloudflare relay (see below)
+  Rulebook/     rulebooks, oaths, decks and the ledger
+  Games/        games between the two people of a pairing
 ```
+
+Subfolders are for finding things only: every file in `Commands/` is in namespace `Oathbound.Plugin.Commands` and every
+file in `UI/` in `Oathbound.Plugin.UI`, whatever subfolder it sits in. New files follow the same rule.
 
 Owner and Sub share one codebase, one window, and one build - there is no separate Owner/Sub project, and
 Role only changes what a client does with incoming tells and what it declares during pairing.
