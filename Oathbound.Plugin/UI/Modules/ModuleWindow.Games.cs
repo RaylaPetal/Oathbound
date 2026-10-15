@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -25,6 +26,12 @@ public sealed partial class ModuleWindow
     private string? gameInviteError;
     private string gamePromptText = "";
     private string gameForfeitText = "";
+    private GameCommand? gamePromptCommand;
+    private GameCommand? gameForfeitCommand;
+    private GameCommand? newCardCommand;
+
+    /// An Owner command to send with a dare or forfeit, composed as a favorite would be.
+    private readonly record struct GameCommand(string Label, string Command);
     private GameCardKind newCardKind;
     private GameCardFor newCardFor;
     private PromptRating newCardRating;
@@ -182,8 +189,6 @@ public sealed partial class ModuleWindow
     {
         if (GameWords.UsesDice(s.Kind))
         {
-            if (s.PendingOwnRoll is not null)
-                IconGlyph.WrappedDisabled($"Waiting for {s.PeerName}'s client to confirm your roll...");
             var command = games.RollCommand();
             using (ImRaii.Disabled(command is null))
             {
@@ -233,17 +238,22 @@ public sealed partial class ModuleWindow
             Layout.ItemWidth(320);
             ImGui.InputTextWithHint("##gamePrompt", tod.Dare ? "Write a dare" : "Write a question", ref gamePromptText, GameDecks.MaxTextLength);
             ImGui.SameLine();
-            if (ImGui.Button("Draw##gamePromptDraw"))
-                gamePromptText = games.DrawPrompt()?.Text ?? gamePromptText;
+            if (ImGui.Button("Draw##gamePromptDraw") && games.DrawPrompt() is { } card)
+            {
+                gamePromptText = card.Text;
+                gamePromptCommand = CardCommand(card);
+            }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"Fills in a random {(tod.Dare ? "dare" : "truth")} from your cards, up to this game's rating.");
             ImGui.SameLine();
-            using (ImRaii.Disabled(GameDecks.Clean(gamePromptText).Length == 0))
+            var command = tod.Dare ? DrawSendWithCommand(games, s, "gamePromptCommand", ref gamePromptCommand) : null;
+            using (ImRaii.Disabled(GameDecks.Clean(gamePromptText).Length == 0 || command is { Fits: false }))
             {
                 if (ImGui.Button("Send##gamePromptSend"))
                 {
-                    games.SendPrompt(gamePromptText);
+                    games.SendPrompt(gamePromptText, command?.Messages, gamePromptCommand?.Label);
                     gamePromptText = "";
+                    gamePromptCommand = null;
                 }
             }
         }
@@ -269,19 +279,77 @@ public sealed partial class ModuleWindow
         Layout.ItemWidth(320);
         ImGui.InputTextWithHint("##gameForfeit", "Write a forfeit", ref gameForfeitText, GameDecks.MaxTextLength);
         ImGui.SameLine();
-        if (ImGui.Button("Draw##gameForfeitDraw"))
-            gameForfeitText = games.DrawForfeit()?.Text ?? gameForfeitText;
+        if (ImGui.Button("Draw##gameForfeitDraw") && games.DrawForfeit() is { } card)
+        {
+            gameForfeitText = card.Text;
+            gameForfeitCommand = CardCommand(card);
+        }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Fills in a random forfeit from your cards, up to this game's rating.");
         ImGui.SameLine();
-        using (ImRaii.Disabled(GameDecks.Clean(gameForfeitText).Length == 0))
+        var command = DrawSendWithCommand(games, s, "gameForfeitCommand", ref gameForfeitCommand);
+        using (ImRaii.Disabled(GameDecks.Clean(gameForfeitText).Length == 0 || command is { Fits: false }))
         {
             if (ImGui.Button("Send##gameForfeitSend"))
             {
-                games.SendForfeit(gameForfeitText);
+                games.SendForfeit(gameForfeitText, command?.Messages, gameForfeitCommand?.Label);
                 gameForfeitText = "";
+                gameForfeitCommand = null;
             }
         }
+    }
+
+    private static GameCommand? CardCommand(GameCard card) =>
+        card.Command is { Length: > 0 } command ? new GameCommand(card.CommandLabel ?? command, command) : null;
+
+    /// The Owner's command picker beside Send, and the composed messages to send. Null for a Sub, or with no command
+    /// picked; not fitting when this pairing isn't the active one, since commands go to the active pairing.
+    private (IReadOnlyList<string> Messages, bool Fits)? DrawSendWithCommand(GamesService games, GameSession s, string id, ref GameCommand? attached)
+    {
+        if (!games.IsOwnerOfPeer(s))
+        {
+            attached = null;
+            return null;
+        }
+        Layout.ItemWidth(180);
+        DrawGameCommandPicker(id, ref attached);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"A saved command sent to {s.PeerName} with it. It only applies within their permissions.");
+        ImGui.SameLine();
+        if (attached is not { } picked)
+            return null;
+        if (plugin.Configuration.ActivePairing?.Id != s.PairingId)
+            return (Array.Empty<string>(), false);
+        var messages = plugin.ChatComposer.ComposeAll(picked.Command);
+        return (messages, Commands.ChatComposer.AllFit(messages));
+    }
+
+    /// Returns whether the pick changed.
+    private bool DrawGameCommandPicker(string id, ref GameCommand? value)
+    {
+        var changed = false;
+        using var combo = ImRaii.Combo($"##{id}", value is { } current ? current.Label : "No command");
+        if (!combo)
+            return false;
+        if (ImGui.Selectable("No command", value is null))
+        {
+            value = null;
+            changed = true;
+        }
+        foreach (var (category, commands) in QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands))
+        {
+            if (commands.Count == 0)
+                continue;
+            ImGui.TextDisabled(category);
+            foreach (var cmd in commands)
+            {
+                if (!ImGui.Selectable($"{cmd.Label}##{id}{category}{cmd.Command}"))
+                    continue;
+                value = new GameCommand(cmd.Label, OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /// The Owner's favorites after their Sub loses, applied like from any other module: only within permissions.
@@ -374,7 +442,7 @@ public sealed partial class ModuleWindow
     private void DrawGameCards()
     {
         var games = plugin.Configuration.Games;
-        IconGlyph.WrappedDisabled("Truths, dares and forfeits you can draw in a game. Only yours: a card's text is sent only when you draw and send it.");
+        IconGlyph.WrappedDisabled("Truths, dares and forfeits you can draw in a game. Only yours: a card's text is sent only when you draw and send it. As an Owner, a dare or forfeit can also carry one of your saved commands.");
         var changed = false;
 
         if (ImGui.CollapsingHeader($"Your own ({games.Cards.Count})##gameOwnCards"))
@@ -395,13 +463,28 @@ public sealed partial class ModuleWindow
                 newCardRating = (PromptRating)rating;
             Layout.ItemWidth(320);
             ImGui.InputTextWithHint("##newCardText", "Card text", ref newCardText, GameDecks.MaxTextLength);
+            var takesCommand = newCardKind != GameCardKind.Truth;
+            if (takesCommand)
+            {
+                ImGui.SameLine();
+                Layout.ItemWidth(160);
+                DrawGameCommandPicker("newCardCommand", ref newCardCommand);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("A saved command sent with this card when you draw it as the other player's Owner. It only applies within their permissions.");
+            }
             ImGui.SameLine();
             using (ImRaii.Disabled(GameDecks.Clean(newCardText).Length == 0))
             {
                 if (ImGui.Button("Add##newCard"))
                 {
-                    games.Cards.Add(new GameCard { Kind = newCardKind, For = newCardFor, Rating = newCardRating, Text = GameDecks.Clean(newCardText) });
+                    var attached = takesCommand ? newCardCommand : null;
+                    games.Cards.Add(new GameCard
+                    {
+                        Kind = newCardKind, For = newCardFor, Rating = newCardRating, Text = GameDecks.Clean(newCardText),
+                        Command = attached?.Command, CommandLabel = attached?.Label,
+                    });
                     newCardText = "";
+                    newCardCommand = null;
                     changed = true;
                 }
             }
@@ -417,6 +500,18 @@ public sealed partial class ModuleWindow
                 {
                     card.Text = GameDecks.Clean(text);
                     changed = true;
+                }
+                if (card.Kind != GameCardKind.Truth)
+                {
+                    ImGui.SameLine();
+                    var attached = CardCommand(card);
+                    Layout.ItemWidth(160);
+                    if (DrawGameCommandPicker("cardCommand", ref attached))
+                    {
+                        card.Command = attached?.Command;
+                        card.CommandLabel = attached?.Label;
+                        changed = true;
+                    }
                 }
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Delete"))

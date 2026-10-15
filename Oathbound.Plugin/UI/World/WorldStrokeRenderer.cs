@@ -9,7 +9,7 @@ using Pictomancy;
 
 namespace Oathbound.Plugin.UI;
 
-/// World-space strokes for the leash line and drawn restraints, drawn from UiBuilder.Draw so Dalamud's UI hiding covers
+/// World-space strokes for the leash line, drawn restraints and cage bounds, drawn from UiBuilder.Draw so Dalamud's UI hiding covers
 /// cutscenes and GPose. Depth-aware via Pictomancy when available, else flat projected lines.
 public sealed class WorldStrokeRenderer : IDisposable
 {
@@ -30,6 +30,8 @@ public sealed class WorldStrokeRenderer : IDisposable
     private readonly List<(Vector2 Min, Vector2 Max)> uiRects = new();
     private int uiRectsFrame = -1;
     private bool warnedUiRects;
+    /// Pictomancy keeps only the last draw list opened in a frame, so every renderer shares this one; EndFrame submits it.
+    private PctDrawList? frameDrawList;
 
     public WorldStrokeRenderer()
     {
@@ -45,18 +47,29 @@ public sealed class WorldStrokeRenderer : IDisposable
         }
     }
 
-    /// Null while nothing may be drawn (cutscenes, faded screen). Dispose the batch to submit it.
+    /// Null while nothing may be drawn (cutscenes, faded screen). Every call in a frame shares one batch.
     public Batch? Begin()
     {
         if (pictomancy is null) return new Batch(null);
+        if (frameDrawList is not null) return new Batch(frameDrawList);
         CollectUiRects();
         var drawList = PctService.Draw(hints: Hints);
         if (drawList is null) return null;
         foreach (var (min, max) in uiRects)
             drawList.AddClipZone(min, max);
+        frameDrawList = drawList;
         return new Batch(drawList);
     }
 
+    /// Subscribed to UiBuilder.Draw after every renderer, so all of a frame's strokes are submitted together.
+    public void EndFrame()
+    {
+        var drawList = frameDrawList;
+        frameDrawList = null;
+        drawList?.Dispose();
+    }
+
+    /// Disposing it is harmless; the frame's strokes are submitted by EndFrame.
     public readonly struct Batch : IDisposable
     {
         private readonly PctDrawList? drawList;
@@ -85,7 +98,7 @@ public sealed class WorldStrokeRenderer : IDisposable
             }
         }
 
-        public void Dispose() => drawList?.Dispose();
+        public void Dispose() { }
     }
 
     /// Pictomancy's own UI mask switches off under DLSS/FSR or 3D resolution scaling, so the game's visible windows are

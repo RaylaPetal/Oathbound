@@ -42,25 +42,49 @@ public sealed class StripService
 
     public static string Holder(string sessionId) => HolderPrefix + sessionId;
 
-    /// The slot taken off, or null when nothing is left to take or Glamourer can't do it.
-    public ApiEquipSlot? StripNext(string sessionId)
+    /// The slot taken off, or null with `skipped` saying why each slot in the order was passed over.
+    public ApiEquipSlot? StripNext(string sessionId, out string skipped)
     {
+        skipped = "";
         if (!glamourer.IsAvailable)
+        {
+            skipped = "Glamourer isn't available";
             return null;
+        }
         var holder = Holder(sessionId);
         var stripped = slotLocks.ClaimedSlots(holder);
+        var reasons = new List<string>();
         foreach (var slot in config.Games.StripOrder)
         {
-            if (stripped.Contains(slot) || !NothingIds.TryGetValue(slot, out var nothing) || slotLocks.IsHeld(slot))
+            var name = SlotName(slot);
+            if (stripped.Contains(slot) || !NothingIds.TryGetValue(slot, out var nothing))
                 continue;
-            if (glamourer.GetEquipSlotValue(slot) is not { } worn || worn.ItemId == 0 || worn.ItemId == nothing)
+            if (slotLocks.IsLocked(slot))
+            {
+                reasons.Add($"{name} is locked");
+                continue;
+            }
+            if (glamourer.GetEquipSlotValue(slot) is not { } worn)
+            {
+                reasons.Add($"{name} couldn't be read");
+                continue;
+            }
+            if (worn.ItemId == 0 || worn.ItemId == nothing)
                 continue;
             if (!slotLocks.Claim(holder, [slot]))
+            {
+                reasons.Add($"{name} couldn't be read");
                 continue;
-            if (glamourer.SetItemOnce(slot, nothing, [0, 0]) == Glamourer.Api.Enums.GlamourerApiEc.Success)
+            }
+            var ec = glamourer.SetItemOnce(slot, nothing, [0, 0]);
+            if (ec == GlamourerApiEc.Success)
                 return slot;
             slotLocks.ReleaseClaim(holder, [slot]);
+            reasons.Add($"Glamourer refused {name} ({ec})");
         }
+        skipped = string.Join(", ", reasons);
+        if (skipped.Length > 0)
+            Plugin.Log.Information($"Game strip found nothing to take off: {skipped}.");
         return null;
     }
 

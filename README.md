@@ -53,7 +53,7 @@ everything instantly with their safeword.
 | 📖 | **Rulebook** | Rules that keep running while the Owner is away. **Oaths** the Sub swears to: daily rituals (greet the Owner with a gesture, message them, check in), manners (say goodnight before logging off, call the Owner by a title, a forbidden word, staying quiet in public), places and a curfew, or duty oaths (no deaths, no wipes, a time limit), with something for keeping and something for breaking each one. A **deck** of reward and punishment cards: bad things draw a punishment, a kept oath draws a reward, or the Owner draws one by hand. **Place** rules for entering or leaving a city, a house or a duty. **Presence** rules for when the Owner comes near. And a **ledger** score with thresholds. Daily rituals can score the ledger each time they're done or missed, and are judged as kept or broken when the oath ends. More oaths: complete a number of duties, play only certain jobs, keep on the outfit you put on them, stay at your side, and ask before logging off. An oath can allow a few strikes before it breaks, pay a streak bonus, and start again by itself or be offered again when it ends. A **schedule** runs something at a time of day or at login, and a **shop** lets the Sub spend ledger points on a reward card or something you set. Every reward or punishment that puts on a title, outfit, moodle or restraint lasts as long as you choose, locked until it comes off by itself or you end it. The Sub accepts every version and every oath before anything runs; after that only the Owner can change or remove a rule, and the Owner sees what happened. |
 | ⚡ | **Custom Triggers** | Bundle several actions behind one word: a title, an outfit and an animation all at once. |
 | 🐾 | **Cage** | Save a cage where you stand - a spot in the world, a housing ward, or inside one specific house - free to move in a square or rectangle you size, or pinned in place. Send it for a set time or until you open it. If your Sub is there it closes now and walks them to the spot; if not, it waits for them to arrive. While caged they can't leave or change their permissions, and whatever they allow applies - even while they're away from the keyboard. Its edge is drawn on the ground with corner posts, and you see when it closes. |
-| 🎲 | **Games** | Play Deathroll, High Roll, Higher or Lower, Twenty-One or Truth or Dare with your partner, rolling with the game's own `/random`. Either of you can lose: a lost round takes a piece of your own clothing off, gives you a forfeit the winner picks, or both - whatever you agreed to when the game started. Everything comes back when the game ends. |
+| 🎲 | **Games** | Play Deathroll, High Roll, Higher or Lower, Twenty-One or Truth or Dare with your partner, rolling with the game's own `/random`. Either of you can lose: a lost round takes a piece of your own clothing off, gives you a forfeit the winner picks, or both - whatever you agreed to when the game started. An Owner's dares and forfeits can carry a command (a gag, cuffs, an outfit...), which still only applies within the Sub's permissions. Everything comes back when the game ends. |
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header takes off everything you put on; gear goes back to what your Sub was wearing before. The collar and your pairing stay. |
 | ⭐ | **Favorites & Sub Control** | Star the commands you use most, open them from the server info bar, or see every command in one panel. |
@@ -251,10 +251,9 @@ further, and you should decide for yourself before turning them on:
   Custom chat messages; with either off, that part is skipped.
   A **schedule** rule runs at the time of day your Owner set, or each time you log in. Anything other than toys
   and moodles waits until you're out of combat and cutscenes, and each rule has a cooldown of at least a minute.
-- **Games** roll only when you press Roll (or type the roll yourself). While a game runs, your plugin sends the
-  other player a short `collargame` tell after each of your rolls, and answers theirs, so both plugins count the same
-  rolls; it also tells them which piece came off when you lose a strip round, and when the game ends on your side
-  (quit, idle, panic, logging out). Your moves, prompts and
+- **Games** roll only when you press Roll (or type the roll yourself), and both plugins count rolls straight from
+  the game's own roll lines. While a game runs, your plugin tells the other player in a short `collargame` tell which
+  piece came off when you lose a strip round, and when the game ends on your side (quit, idle, panic, logging out). Your moves, prompts and
   forfeits are sent only when you press their buttons.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
   reaction with a chat message **replies automatically**, in whatever channel you wrote it for, at most
@@ -272,7 +271,7 @@ you accepted, or the optional "collarrulebook" tell when an Owner publishes a ru
 ticked, which only asks the Sub's plugin to pick it up right away. If you struggle free of a restraint lock, your
 plugin sends the Owner who set it one short "collarstruggle free" tell naming that restraint, and if you unlock one with
 a key your Owner gave you, one "collarstruggle key" tell naming it; failed tries and wrong keys send nothing. During a
-game, the roll, piece and game-ended `collargame` tells described under Games go out on their own. An Owner's
+game, the piece and game-ended `collargame` tells described under Games go out on their own. An Owner's
 **Grant leave** button (for an "ask before logging off" oath) sends one tell with the word they chose, only when
 they press it.
 

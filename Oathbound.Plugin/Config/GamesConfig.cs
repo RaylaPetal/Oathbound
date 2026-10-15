@@ -28,6 +28,9 @@ public sealed class GameCard
     public GameCardFor For { get; set; }
     public PromptRating Rating { get; set; }
     public string Text { get; set; } = "";
+    /// A dare or forfeit's Owner command, sent with the card only when the drawer is the other player's Owner.
+    public string? Command { get; set; }
+    public string? CommandLabel { get; set; }
 }
 
 /// Each player's own: never sent, except a card's text when it's drawn.

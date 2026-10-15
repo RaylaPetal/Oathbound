@@ -215,7 +215,7 @@ model is a constraint on any new feature here, not just documentation.
 Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
 Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
 a leash ends on its side (`LeashOffNotifier`), the Sub's `collarleash on` notice and an Owner-written /tell from an
-accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices after struggling free of a lock or unlocking it with its key (`RestraintCommand.StruggledFree` / `KeyUnlocked`), a user-configured Reactions chat reply, the `collargame` roll notices (`rolled`, `seen`, `missed`), piece report (`stripped`) and game-ended (`quit`) tells during a game (`GamesService`), and lifecycle tells tied
+accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices after struggling free of a lock or unlocking it with its key (`RestraintCommand.StruggledFree` / `KeyUnlocked`), a user-configured Reactions chat reply, the `collargame` piece report (`stripped`) and game-ended (`quit`) tells during a game (`GamesService`), and lifecycle tells tied
 to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
 rulebooks (`Rulebook/`) run consequences on their own, but only through `ChatCommandListener.RunRulebookCommand`
 and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never chat, teleport, leash or collar) - except a presence rule's
@@ -236,8 +236,8 @@ struggle, keys, Take off, local test commands, stopping a toy/animation, ruleboo
 `CageService.IsCaged`. Panic and unpairing must always open it - never add a cage check to either.
 
 Games (`Games/`) are the one two-way feature: both clients run the same rules from roll lines they read themselves
-plus `collargame` tells, and a loss only ever acts on the local player (`StripService`'s `game:` holder in
-`SlotLockManager`). Panic ends a game first. `ChatSender` allows exactly `/random <n>` and `/dice party <n>` besides
+plus `collargame` tells for moves a roll can't show, and a loss only ever acts on the local player (`StripService`'s
+`game:` holder in `SlotLockManager`, which skips locked slots but strips over an unlocked outfit). Panic ends a game first. `ChatSender` allows exactly `/random <n>` and `/dice party <n>` besides
 its channel prefixes, for the Roll button only.
 
 Guided tours live in `UI/TutorialCatalog.cs` and point at sections by their `Section.Begin` id. Renaming,

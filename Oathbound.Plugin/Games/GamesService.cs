@@ -52,28 +52,20 @@ public sealed class GameSession
     public bool OutOfStep { get; set; }
     public DateTime LastActivityUtc { get; set; } = DateTime.UtcNow;
 
-    internal (int Value, int Max, DateTime AtUtc)? PendingOwnRoll;
-    internal readonly List<(int Value, int Max, DateTime AtUtc)> PeerRollsSeen = new();
-    internal (int Value, int Max, DateTime AtUtc)? PeerNoticeWaiting;
-
     public string NameOf(Seat seat) => seat == Me ? MyName : FirstName(PeerName);
 
     public static string FirstName(string name) => name.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? name;
 }
 
 /// Runs a game between the two people of a pairing. Each client keeps its own copy of the session and moves it on only
-/// from roll lines it read itself and `collargame` tells from the other player, so neither trusts the other's word for
-/// a roll. Losses act only on the local player.
+/// from roll lines it read itself and `collargame` tells for the moves a roll can't show, so neither trusts the other's
+/// word for a roll. Losses act only on the local player.
 public sealed class GamesService
 {
     public const string Keyword = "collargame";
 
     private static readonly TimeSpan InviteLifetime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan IdleLimit = TimeSpan.FromMinutes(15);
-    /// How long the watcher waits to read a roll the roller says they made.
-    private static readonly TimeSpan SeeRollWait = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan AnswerWait = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan KeepPeerRoll = TimeSpan.FromSeconds(30);
     /// The game drops chat lines sent faster than this.
     private static readonly TimeSpan SendSpacing = TimeSpan.FromSeconds(1.1);
     private const int MaxLog = 40;
@@ -179,7 +171,7 @@ public sealed class GamesService
     /// The roll command for this player's turn, or null when it isn't theirs to roll.
     public string? RollCommand()
     {
-        if (Session is not { } s || !GameWords.UsesDice(s.Kind) || s.PendingOwnRoll is not null || s.Rules.ExpectedMax(s.Me) is not { } max)
+        if (Session is not { } s || !GameWords.UsesDice(s.Kind) || s.Rules.ExpectedMax(s.Me) is not { } max)
             return null;
         var number = max.ToString(CultureInfo.InvariantCulture);
         return s.Channel == RollChannel.Party ? $"/dice party {number}" : $"/random {number}";
@@ -196,27 +188,41 @@ public sealed class GamesService
     public void Pick(bool dare) => Move(s => s.Rules.Pick(s.Me, dare), id => $"pick {id} {(dare ? "dare" : "truth")}");
     public void Answer(bool done) => Move(s => s.Rules.Answer(s.Me, done), id => $"{(done ? "done" : "refuse")} {id}");
 
-    public void SendPrompt(string text)
+    /// `command` is an already composed Owner command, sent after the prompt only to this player's own Sub.
+    public void SendPrompt(string text, IReadOnlyList<string>? command = null, string? commandLabel = null)
     {
         var clean = GameDecks.Clean(text);
         if (clean.Length == 0)
             return;
-        Move(s => s.Rules.Prompt(s.Me, clean), id => $"prompt {id} \"{clean}\"");
+        if (Move(s => s.Rules.Prompt(s.Me, clean), id => $"prompt {id} \"{clean}\"") && Session is { } s)
+            SendCommand(s, command, commandLabel);
     }
 
     /// `body` gets the session id. Applied locally only once it's queued, so both sides apply it.
-    private void Move(Func<GameSession, GameOutcome> action, Func<string, string> body)
+    private bool Move(Func<GameSession, GameOutcome> action, Func<string, string> body)
     {
         if (Session is not { } s)
-            return;
+            return false;
         var outcome = action(s);
         if (!outcome.Accepted)
-            return;
+            return false;
         Send(s.PeerName, s.PeerWorld, body(s.Id));
         Apply(s, outcome);
+        return true;
     }
 
-    public void SendForfeit(string text)
+    /// Through the same queue as the game's tells, so neither is dropped for coming too fast. It applies on the Sub's
+    /// side like any other command, only within their permissions.
+    private void SendCommand(GameSession s, IReadOnlyList<string>? command, string? label)
+    {
+        if (command is not { Count: > 0 } || !IsOwnerOfPeer(s))
+            return;
+        foreach (var message in command)
+            outbox.Enqueue(message);
+        AddLog(s, $"Also sent {s.NameOf(s.Peer)}: {label ?? "a command"}.");
+    }
+
+    public void SendForfeit(string text, IReadOnlyList<string>? command = null, string? commandLabel = null)
     {
         if (Session is not { ForfeitsToGive: > 0 } s)
             return;
@@ -226,6 +232,7 @@ public sealed class GamesService
         s.ForfeitsToGive--;
         Send(s.PeerName, s.PeerWorld, $"forfeit {s.Id} \"{clean}\"");
         AddLog(s, $"Forfeit for {s.NameOf(s.Peer)}: {clean}");
+        SendCommand(s, command, commandLabel);
     }
 
     public GameCard? DrawForfeit() =>
@@ -372,17 +379,6 @@ public sealed class GamesService
                 OathboundChat.Print($"Your forfeit from {s.PeerName}: {forfeit}");
                 Plugin.NotificationManager.AddNotification(new Notification { Title = "Forfeit", Content = forfeit, Type = NotificationType.Warning });
                 break;
-            case "rolled" when TryNumbers(args, out var value, out var max):
-                OnPeerNotice(s, value, max);
-                break;
-            case "seen" when int.TryParse(word, out var seen) && s.PendingOwnRoll is { } pending && pending.Value == seen:
-                s.PendingOwnRoll = null;
-                CountRoll(s, s.Me, pending.Value, pending.Max);
-                break;
-            case "missed" when int.TryParse(word, out var missed) && s.PendingOwnRoll is { } pending && pending.Value == missed:
-                s.PendingOwnRoll = null;
-                AddLog(s, $"{s.NameOf(s.Peer)} didn't see your roll of {missed} - roll again.");
-                break;
             case "stripped":
                 OnPeerStripped(s, word);
                 break;
@@ -417,54 +413,7 @@ public sealed class GamesService
             return;
         }
 
-        if (seat == s.Me)
-        {
-            if (s.PendingOwnRoll is not null)
-            {
-                AddLog(s, $"Your roll of {roll.Value} didn't count: {s.NameOf(s.Peer)} hasn't confirmed your last one yet.");
-                return;
-            }
-            s.PendingOwnRoll = (roll.Value, roll.Max, DateTime.UtcNow);
-            Send(s.PeerName, s.PeerWorld, string.Create(CultureInfo.InvariantCulture, $"rolled {s.Id} {roll.Value} {roll.Max}"));
-            return;
-        }
-
-        if (s.PeerNoticeWaiting is { } notice && notice.Value == roll.Value && notice.Max == roll.Max)
-        {
-            s.PeerNoticeWaiting = null;
-            ConfirmPeerRoll(s, roll.Value, roll.Max);
-            return;
-        }
-        s.PeerRollsSeen.Add((roll.Value, roll.Max, DateTime.UtcNow));
-    }
-
-    private void OnPeerNotice(GameSession s, int value, int max)
-    {
-        var index = s.PeerRollsSeen.FindIndex(r => r.Value == value && r.Max == max);
-        if (index >= 0)
-        {
-            s.PeerRollsSeen.RemoveAt(index);
-            ConfirmPeerRoll(s, value, max);
-            return;
-        }
-        s.PeerNoticeWaiting = (value, max, DateTime.UtcNow);
-    }
-
-    private void ConfirmPeerRoll(GameSession s, int value, int max)
-    {
-        Send(s.PeerName, s.PeerWorld, string.Create(CultureInfo.InvariantCulture, $"seen {s.Id} {value}"));
-        CountRoll(s, s.Peer, value, max);
-    }
-
-    private void CountRoll(GameSession s, Seat seat, int value, int max)
-    {
-        s.LastActivityUtc = DateTime.UtcNow;
-        if (s.Rules.ExpectedMax(seat) != max)
-        {
-            MarkOutOfStep(s, $"{s.NameOf(seat)}'s roll of {value} no longer fits the game here");
-            return;
-        }
-        Apply(s, s.Rules.Roll(seat, value));
+        Apply(s, s.Rules.Roll(seat, roll.Value));
     }
 
     private void ApplyPeer(GameSession s, GameOutcome outcome, string what)
@@ -501,7 +450,7 @@ public sealed class GamesService
         OathboundChat.Print($"You lost a round of {GameWords.Name(s.Kind)}.");
         if (s.Loss != LossRule.Forfeit)
         {
-            var slot = strip.StripNext(s.Id);
+            var slot = strip.StripNext(s.Id, out var skipped);
             Send(s.PeerName, s.PeerWorld, $"stripped {s.Id} {(slot is { } taken ? StripService.SlotName(taken).Replace(' ', '-') : "none")}");
             if (slot is { } piece)
             {
@@ -510,7 +459,7 @@ public sealed class GamesService
             }
             else
             {
-                AddLog(s, strip.IsAvailable ? "Nothing left to take off - a forfeit instead." : "Glamourer isn't available - a forfeit instead.");
+                AddLog(s, skipped.Length > 0 ? $"Nothing could come off ({skipped}) - a forfeit instead." : "Nothing left to take off - a forfeit instead.");
                 if (s.Loss == LossRule.Strip)
                     s.ForfeitsOwed++;
             }
@@ -565,18 +514,6 @@ public sealed class GamesService
             End("idle", "The game ended after 15 minutes without a move.", notifyPeer: true);
             return;
         }
-        if (s.PeerNoticeWaiting is { } notice && now - notice.AtUtc >= SeeRollWait)
-        {
-            s.PeerNoticeWaiting = null;
-            Send(s.PeerName, s.PeerWorld, string.Create(CultureInfo.InvariantCulture, $"missed {s.Id} {notice.Value}"));
-            AddLog(s, $"You didn't see {s.NameOf(s.Peer)}'s roll of {notice.Value} - they roll again.");
-        }
-        if (s.PendingOwnRoll is { } pending && now - pending.AtUtc >= AnswerWait)
-        {
-            s.PendingOwnRoll = null;
-            AddLog(s, $"No answer from {s.NameOf(s.Peer)} about your roll of {pending.Value} - roll again.");
-        }
-        s.PeerRollsSeen.RemoveAll(r => now - r.AtUtc >= KeepPeerRoll);
     }
 
     private void End(string reason, string message, bool notifyPeer)

@@ -228,8 +228,9 @@ public sealed class SlotLockManager : IDisposable
     public bool ReleaseClaimsStartingWith(string prefix) =>
         ReleaseCore(null, h => h.StartsWith(prefix, StringComparison.Ordinal), null);
 
-    /// Any lock or holder on the slot, including one set aside under another.
-    public bool IsHeld(ApiEquipSlot slot) => locks.ContainsKey(slot) || suspended.ContainsKey(slot) || layers.ContainsKey(slot);
+    /// Locked now, or a lock set aside under another that comes back. A holder without a lock (an unlocked outfit)
+    /// doesn't count: something can be put over it and taken off again.
+    public bool IsLocked(ApiEquipSlot slot) => locks.ContainsKey(slot) || (suspended.TryGetValue(slot, out var aside) && aside.Relock);
 
     /// Per slot: a piece set aside underneath shows if there is one; a lock still on the slot keeps showing; otherwise
     /// the slot gets what it showed when the lowest released holder at the top took it. A released holder further down

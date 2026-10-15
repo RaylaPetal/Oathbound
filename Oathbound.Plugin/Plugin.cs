@@ -342,6 +342,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw += restraintRenderer.Draw;
         PluginInterface.UiBuilder.Draw += cageRenderer.Draw;
+        PluginInterface.UiBuilder.Draw += worldStrokes.EndFrame;
         // After every window, so anchors reported this frame are current.
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -423,6 +424,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw -= restraintRenderer.Draw;
         PluginInterface.UiBuilder.Draw -= cageRenderer.Draw;
+        PluginInterface.UiBuilder.Draw -= worldStrokes.EndFrame;
         Tutorial.Dispose();
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
