@@ -218,6 +218,19 @@ public sealed partial class ModuleWindow
             if (ImGui.Button("Send"))
                 ReportCageSend(CageSendAction.TrySend(plugin, cage));
         }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Cages your Sub here: it closes now if they're there, otherwise when they arrive.");
+        ImGui.SameLine();
+        var apartment = CagePlaces.IsApartment(cage.Place);
+        using (ImRaii.Disabled(!canSend || apartment))
+        {
+            if (ImGui.Button("Bring & lock"))
+                ReportCageSend(CageSendAction.TrySend(plugin, cage, bring: true));
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(apartment
+                ? "Apartments can't be travelled to. Send it instead; it closes when your Sub walks in."
+                : "Like Send, but if your Sub is elsewhere their character travels here by itself (world, teleport, then walking) and is locked in on arrival. Needs their Teleport permission. For a house, they're also taken through the door and walked to the cage.");
         ImGui.SameLine();
         if (ImGui.Button("Move here"))
         {

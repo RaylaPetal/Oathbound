@@ -70,6 +70,9 @@ public static class CagePlaces
 
     public static bool IsIn(CagePlace place) => Current() is { } here && here.SameAs(place);
 
+    /// An apartment has no plot entrance to travel to, so it can't be brought to.
+    public static bool IsApartment(CagePlace place) => place.Kind == CagePlaceKind.House && ((HouseId)place.HouseId).IsApartment;
+
     public static string Describe(CagePlace place)
     {
         var territories = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();

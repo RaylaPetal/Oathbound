@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Interface.ImGuiNotification;
+using Dalamud.Game.ClientState.Objects.Enums;
+using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
 
@@ -22,6 +27,8 @@ public sealed class CageService
     public const string OpenWord = "open";
     public const string CloseWord = "close";
     public const string PinWord = "pin";
+    /// Travels the Sub to an armed cage with Teleport, then the cage closes on arrival as usual.
+    public const string BringWord = "bring";
 
     /// Slack before an outside Sub is walked back, so standing on the edge doesn't restart the walk.
     private const float EdgeMargin = 0.5f;
@@ -30,6 +37,24 @@ public sealed class CageService
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AreaSettle = TimeSpan.FromSeconds(2);
     private const uint DismountAction = 23;
+    /// How close to a house's door the journey must end for the door to be opened.
+    private const float DoorReach = 8f;
+    /// The door object sits on the plot entrance Lifestream reports; anything farther is another plot's.
+    private const float DoorMatch = 4f;
+    private static readonly TimeSpan DoorGiveUp = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan DoorRetry = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan DoorPromptWindow = TimeSpan.FromSeconds(10);
+    /// The door's "enter?" prompt in every client language; any other yes/no is never answered.
+    private static readonly string[] DoorPrompts =
+    [
+        "Enter the estate hall?",
+        "Das Geb\u00e4ude betreten?",
+        "Entrer dans la maison ?",
+        "\u300c\u30cf\u30a6\u30b9\u300d\u3078\u5165\u308a\u307e\u3059\u304b\uff1f",
+        "\u8981\u8fdb\u5165\u8fd9\u95f4\u623f\u5c4b\u5417\uff1f",
+        "\u8981\u9032\u5165\u9019\u9593\u623f\u5c4b\u55ce\uff1f",
+        "'\uc8fc\ud0dd'\uc73c\ub85c \ub4e4\uc5b4\uac00\uc2dc\uaca0\uc2b5\ub2c8\uae4c?",
+    ];
 
     public const string CagedNote = "You're caged - this stays locked until your cage opens.";
 
@@ -37,6 +62,7 @@ public sealed class CageService
     private readonly MovementLockService movementLock;
     private readonly VnavmeshIpc vnavmesh;
     private readonly TeleportCommand teleport;
+    private readonly LifestreamIpc lifestream;
 
     private DateTime? settledSince;
     private bool navUnavailableNotified;
@@ -51,13 +77,20 @@ public sealed class CageService
     private float bestDistance;
     private bool dismountSent;
 
+    // Bring & lock to a house: the door to open once the journey ends there.
+    private Vector3? houseDoor;
+    private DateTime? doorSince;
+    private DateTime doorTouchedAt = DateTime.MinValue;
+    private DateTime doorAnsweredAt = DateTime.MinValue;
+
     // Written by OnFrameworkUpdate, read by Confine (both on the main thread).
     private Vector2 center;
     private Vector2 playerGround;
     private Vector2 half;
 
-    public CageService(PluginConfig config, MovementLockService movementLock, VnavmeshIpc vnavmesh, TeleportCommand teleport)
+    public CageService(PluginConfig config, MovementLockService movementLock, VnavmeshIpc vnavmesh, TeleportCommand teleport, LifestreamIpc lifestream)
     {
+        this.lifestream = lifestream;
         this.config = config;
         this.movementLock = movementLock;
         this.vnavmesh = vnavmesh;
@@ -76,11 +109,12 @@ public sealed class CageService
 
     public bool IsWalkingIn => walking;
 
-    /// `cage [lockfor:<s>] [armfor:<s>] close <place> pos:<x>,<y>,<z> <r:<x>[x<z>]|pin> "<name>"` or `cage open`.
+    /// `cage [lockfor:<s>] [armfor:<s>] [bring] close <place> pos:<x>,<y>,<z> <r:<x>[x<z>]|pin> "<name>"` or `cage open`.
     public LocalTestResult Handle(string rest, PairingState? source)
     {
         rest = LockTimerOption.StripSeconds(rest, out var lockSeconds);
         rest = StripArmSeconds(rest, out var armSeconds);
+        rest = StripBring(rest, out var bring);
         var trimmed = rest.Trim();
         var space = trimmed.IndexOf(' ');
         var verb = space < 0 ? trimmed : trimmed[..space];
@@ -127,9 +161,73 @@ public sealed class CageService
         // Close straight away when the Sub is already there, rather than on the next frame.
         settledSince = DateTime.MinValue;
         OnFrameworkUpdate();
-        return IsCaged
-            ? LocalTestResult.Ok($"Caged in \"{name}\".", $"put you in the cage \"{name}\"")
-            : LocalTestResult.Ok($"Cage \"{name}\" armed - it closes when you're next at {CagePlaces.Describe(place)}.", $"set the cage \"{name}\" - it closes when you're next there");
+        if (IsCaged)
+            return LocalTestResult.Ok($"Caged in \"{name}\".", $"put you in the cage \"{name}\"");
+        if (bring)
+        {
+            var (traveling, why) = BringTo(place, position, source);
+            if (traveling)
+                return LocalTestResult.Ok($"Cage \"{name}\" armed - travelling you there now.", $"is bringing you to the cage \"{name}\"");
+            return LocalTestResult.Ok($"Cage \"{name}\" armed, but you couldn't be brought there ({why}) - it closes when you're next at {CagePlaces.Describe(place)}.",
+                $"set the cage \"{name}\", but couldn't bring you there: {why}");
+        }
+        return LocalTestResult.Ok($"Cage \"{name}\" armed - it closes when you're next at {CagePlaces.Describe(place)}.", $"set the cage \"{name}\" - it closes when you're next there");
+    }
+
+    /// Starts a Teleport journey to the cage, which needs the Sub's Teleport permission like any other. A house cage
+    /// travels to its plot's entrance; going inside is the Sub's own step, and the cage closes once they do.
+    private (bool Started, string Why) BringTo(CagePlace place, Vector3 position, PairingState? source)
+    {
+        if (BringTarget(place, position, out var why) is not { } target)
+            return (false, why);
+        var (success, reason) = teleport.Apply(target, source);
+        if (!success)
+            return (false, (reason ?? "Teleport failed to start.").TrimEnd('.'));
+        if (place.Kind == CagePlaceKind.House)
+        {
+            houseDoor = target.Position;
+            doorSince = null;
+        }
+        return (true, "");
+    }
+
+    private TeleportTarget? BringTarget(CagePlace place, Vector3 position, out string why)
+    {
+        why = "";
+        var worlds = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
+        switch (place.Kind)
+        {
+            case CagePlaceKind.Territory:
+                if (Plugin.ObjectTable.LocalPlayer?.CurrentWorld.Value.Name.ExtractText() is not { Length: > 0 } here)
+                {
+                    why = "your character can't be read right now";
+                    return null;
+                }
+                return new TeleportTarget(here, place.Territory, 0, 0, false, position);
+            case CagePlaceKind.Ward:
+                if (worlds.GetRowOrDefault(place.WorldId)?.Name.ExtractText() is not { Length: > 0 } wardWorld)
+                {
+                    why = "the cage's world is unknown";
+                    return null;
+                }
+                return new TeleportTarget(wardWorld, place.Territory, 0, place.Ward, place.Subdivision, position);
+            default:
+                HouseId house = place.HouseId;
+                if (house.IsApartment)
+                {
+                    why = "an apartment can't be travelled to - walk in yourself";
+                    return null;
+                }
+                uint district = house.TerritoryTypeId;
+                if (!TeleportDestinations.IsResidentialArea(district)
+                    || worlds.GetRowOrDefault(house.WorldId)?.Name.ExtractText() is not { Length: > 0 } houseWorld
+                    || lifestream.TryGetPlotEntrance(district, house.PlotIndex) is not { } entrance)
+                {
+                    why = "the house's plot couldn't be found";
+                    return null;
+                }
+                return new TeleportTarget(houseWorld, district, 0, house.WardIndex + 1, house.PlotIndex >= 30, entrance);
+        }
     }
 
     private LocalTestResult HandleOpen(PairingState? source)
@@ -221,7 +319,10 @@ public sealed class CageService
         if (cage.Phase == CagePhase.Armed)
         {
             if (!inPlace)
+            {
+                EnterHouse(cage, player, now);
                 return;
+            }
             if (outside && !vnavmesh.IsAvailable)
             {
                 if (!navUnavailableNotified)
@@ -245,6 +346,7 @@ public sealed class CageService
     private void Close(SubCageState cage, DateTime now)
     {
         navUnavailableNotified = false;
+        houseDoor = null;
         cage.Phase = CagePhase.Caged;
         if (!cage.HasClosed)
         {
@@ -412,8 +514,71 @@ public sealed class CageService
 
     private void ReleaseClaims()
     {
+        houseDoor = null;
         StopWalk();
         Unconfine();
+    }
+
+    private static unsafe bool AnswerDoorPrompt()
+    {
+        var address = Plugin.GameGui.GetAddonByName("SelectYesno").Address;
+        if (address == nint.Zero || !((AtkUnitBase*)address)->IsVisible)
+            return false;
+        var prompt = new AddonMaster.SelectYesno(address);
+        var text = prompt.Text.Replace("\n", "").Trim();
+        if (!DoorPrompts.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        prompt.Yes();
+        return true;
+    }
+
+    /// After a Bring & lock journey ends at a house's door: dismount, open the door and accept its "enter?" prompt,
+    /// the same steps a player takes. Inside, the cage's place matches and it closes as usual. Gives up after DoorGiveUp.
+    private unsafe void EnterHouse(SubCageState cage, Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, DateTime now)
+    {
+        if (houseDoor is not { } door || teleport.IsInProgress)
+            return;
+        doorSince ??= now;
+        if (Vector3.Distance(player.Position, door) > DoorReach || now - doorSince.Value >= DoorGiveUp)
+        {
+            houseDoor = null;
+            movementLock.ReleaseSuppressInput(LockOwner);
+            Notify("Cage waiting", $"You couldn't be taken inside for \"{cage.Name}\". It closes once you go in.", NotificationType.Info);
+            return;
+        }
+        movementLock.EngageSuppressInput(LockOwner);
+
+        if (Plugin.Condition[ConditionFlag.Mounted])
+        {
+            if (now - doorTouchedAt >= DoorRetry)
+            {
+                var actions = ActionManager.Instance();
+                if (actions != null)
+                    actions->UseAction(ActionType.GeneralAction, DismountAction);
+                doorTouchedAt = now;
+            }
+            return;
+        }
+
+        if (now - doorTouchedAt < DoorPromptWindow && now - doorAnsweredAt >= DoorRetry && AnswerDoorPrompt())
+        {
+            doorAnsweredAt = now;
+            return;
+        }
+        if (now - doorTouchedAt < DoorRetry)
+            return;
+
+        var entrance = Plugin.ObjectTable
+            .Where(o => o.ObjectKind == ObjectKind.EventObj && o.IsTargetable && Vector3.Distance(o.Position, door) <= DoorMatch)
+            .OrderBy(o => Vector3.Distance(o.Position, door))
+            .FirstOrDefault();
+        if (entrance is null)
+            return;
+        Plugin.TargetManager.Target = entrance;
+        var targets = TargetSystem.Instance();
+        if (targets != null)
+            targets->InteractWithObject((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)entrance.Address, false);
+        doorTouchedAt = now;
     }
 
     /// At an edge of the rectangle, the part of the wish that crosses it is removed, so the Sub slides along it.
@@ -454,6 +619,13 @@ public sealed class CageService
 
     private static void Notify(string title, string content, NotificationType type) =>
         Plugin.NotificationManager.AddNotification(new Notification { Title = title, Content = content, Type = type });
+
+    private static string StripBring(string rest, out bool bring)
+    {
+        var trimmed = rest.TrimStart();
+        bring = trimmed.StartsWith(BringWord + " ", StringComparison.OrdinalIgnoreCase);
+        return bring ? trimmed[(BringWord.Length + 1)..].TrimStart() : rest;
+    }
 
     /// `armfor:<seconds>` right after any `lockfor:`. A malformed one is left in place so the verb isn't recognized.
     private static string StripArmSeconds(string rest, out int? seconds)
@@ -531,10 +703,10 @@ public sealed class CageService
     }
 
     /// The Owner's side of the grammar, so both ends agree on it.
-    public static string ComposeClose(SavedCage cage)
+    public static string ComposeClose(SavedCage cage, bool bring = false)
     {
         var body = string.Create(CultureInfo.InvariantCulture,
-            $"cage armfor:{CageLimits.ClampArmSeconds(cage.ArmSeconds)} {CloseWord} {cage.Place.ToWire()} pos:{cage.Position.X:0.0},{cage.Position.Y:0.0},{cage.Position.Z:0.0} {ComposeSize(cage)} \"{cage.Name.Trim()}\"");
+            $"cage armfor:{CageLimits.ClampArmSeconds(cage.ArmSeconds)} {(bring ? BringWord + " " : "")}{CloseWord} {cage.Place.ToWire()} pos:{cage.Position.X:0.0},{cage.Position.Y:0.0},{cage.Position.Z:0.0} {ComposeSize(cage)} \"{cage.Name.Trim()}\"");
         return cage.LockSeconds is { } seconds ? LockTimerOption.InsertSeconds(body, seconds) : body;
     }
 

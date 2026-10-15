@@ -6,8 +6,9 @@ namespace Oathbound.Plugin.Commands;
 public static class CageSendAction
 {
     /// Callers show the error however suits their surface.
-    public static (bool Success, string? Error) TrySend(Plugin plugin, SavedCage cage) =>
-        Send(plugin, CageService.ComposeClose(cage), cage, open: false);
+    /// `bring` also travels the Sub there when they're elsewhere.
+    public static (bool Success, string? Error) TrySend(Plugin plugin, SavedCage cage, bool bring = false) =>
+        Send(plugin, CageService.ComposeClose(cage, bring), cage, open: false);
 
     public static (bool Success, string? Error) TryOpen(Plugin plugin) =>
         Send(plugin, CageService.ComposeOpen(), null, open: true);
