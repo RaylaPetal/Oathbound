@@ -321,6 +321,12 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "rulebook":
                 DrawRulebookModule(isOwner);
                 break;
+            case "cage":
+                DrawCageModule(isOwner);
+                break;
+            case "games":
+                DrawGamesModule();
+                break;
         }
     }
 
@@ -797,6 +803,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Permissions");
         ImGui.Separator();
         IconGlyph.WrappedDisabled("What you'll accept from a paired Owner while you're set to Sub - each category is independent.");
+        if (plugin.CageService.IsCaged)
+            IconGlyph.WrappedColored(Theme.Warning, "You're caged, so your permissions are locked as they are until the cage opens. Panic still opens it.");
+        using var frozen = ImRaii.Disabled(plugin.CageService.IsCaged);
         var group = Section.Begin("permBasic", "Everyday");
 
         if (ImGuiCheckbox("Title", permissions.Title, out var newTitle))
@@ -896,6 +905,19 @@ public sealed partial class ModuleWindow : Window, IDisposable
             if (ImGuiCheckbox("Rulebook", permissions.Rulebook, out var newRulebook))
                 SavePermission(() => permissions.Rulebook = newRulebook);
             IconGlyph.HelpMarker("Lets a rulebook you accepted run by itself: oaths, card draws, place and presence rules and the ledger. Each consequence still needs its own permission above. Turning this off voids your open oaths.");
+        }
+
+        group.Dispose();
+        group = Section.Begin("permCage", "Cage (own acknowledgement)");
+        if (!config.CageAcknowledged)
+            IconGlyph.WrappedColored(Theme.Warning, "Needs its own acknowledgement on the ToS tab first.");
+
+        using (ImRaii.Disabled(!config.CageAcknowledged))
+        {
+            if (ImGuiCheckbox("Cage", permissions.Cage, out var newCage))
+                SavePermission(() => permissions.Cage = newCage);
+            IconGlyph.HelpMarker("Lets a paired Owner put you in a cage they saved: you're walked to it and kept inside until its time is up or they open it, even while you're away from the keyboard. While caged you can't leave, change these permissions, struggle, use keys, take restraints off or stop what your Owner does - only what you allow here applies. If you aren't there yet, the cage waits for you to arrive; turning this off while it waits calls it off. Panic always opens it. Requires vnavmesh to walk you in.");
+            DrawPermissionDependencyNote(DependencyId.Vnavmesh);
         }
         group.Dispose();
     }
@@ -1077,12 +1099,15 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private void DrawStruggleButton(WornRestraint worn, StruggleSetting setting)
     {
         var wait = RestraintCommand.StruggleWait(worn);
-        using (ImRaii.Disabled(wait is not null))
+        var caged = plugin.CageService.IsCaged;
+        using (ImRaii.Disabled(wait is not null || caged))
         {
             if (ImGui.Button(wait is { } w ? $"Struggle: {worn.Reference} (again in {RestraintLock.Format(w)})" : $"Struggle: {worn.Reference}"))
                 restraintActionResult = plugin.RestraintCommand.Struggle(worn.RuntimeId).Message;
         }
-        IconGlyph.HelpMarker($"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes this restraint off, and your Owner is told.");
+        IconGlyph.HelpMarker(caged
+            ? $"You can't struggle while you're caged. {RestraintStruggle.Describe(setting)} once the cage opens."
+            : $"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes this restraint off, and your Owner is told.");
     }
 
     private void DrawRestraintKeyRow(WornRestraint worn)
@@ -1092,8 +1117,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
         if (ImGui.InputTextWithHint("##key", "Key...", ref guess, RestraintKey.MaxLength, ImGuiInputTextFlags.Password))
             restraintKeyGuesses[worn.RuntimeId] = guess;
         var wait = RestraintCommand.KeyWait(worn);
+        var caged = plugin.CageService.IsCaged;
         ImGui.SameLine();
-        using (ImRaii.Disabled(wait is not null || guess.Trim().Length == 0))
+        using (ImRaii.Disabled(wait is not null || guess.Trim().Length == 0 || caged))
         {
             if (ImGui.Button(wait is { } w ? $"Unlock (again in {RestraintLock.Format(w)})" : "Unlock"))
             {
@@ -1101,7 +1127,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 restraintKeyGuesses.Remove(worn.RuntimeId);
             }
         }
-        IconGlyph.HelpMarker("If your Owner gave you the key, type it here to take this restraint off. Your Owner is told.");
+        IconGlyph.HelpMarker(caged
+            ? "You can't use a key while you're caged."
+            : "If your Owner gave you the key, type it here to take this restraint off. Your Owner is told.");
     }
 
     private readonly ListDetail subRestraintList = new();
@@ -1760,8 +1788,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
         var held = plugin.GestureCommand.IsHeld;
         if (plugin.GestureCommand.HasActiveTemporary && !held)
         {
-            if (ImGui.Button("Reset active animation"))
-                plugin.GestureCommand.ResetActiveTemporary();
+            using (ImRaii.Disabled(plugin.CageService.IsCaged))
+            {
+                if (ImGui.Button("Reset active animation"))
+                    plugin.GestureCommand.ResetActiveTemporary();
+            }
             IconGlyph.HelpMarker("Puts the animation mod back to its saved settings now, instead of after the ~30s idle timeout.");
         }
 
@@ -4134,10 +4165,10 @@ public sealed partial class ModuleWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Warning, error);
 
         ImGui.Spacing();
-        using (ImRaii.Disabled(!intiface.IsConnected))
+        using (ImRaii.Disabled(!intiface.IsConnected || plugin.CageService.IsCaged))
         if (ImGui.Button("Stop now##toyControlLocal"))
             plugin.ToyControlCommand.ForceStop();
-        IconGlyph.HelpMarker("Stops every device right away.");
+        IconGlyph.HelpMarker(plugin.CageService.IsCaged ? "You can't stop it yourself while you're caged - panic still stops everything." : "Stops every device right away.");
         connectionBox.Dispose();
 
         using (Section.Begin("toyStatus", "Status"))
@@ -5400,6 +5431,8 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
     private void SavePermission(Action apply)
     {
+        if (plugin.CageService.IsCaged)
+            return;
         apply();
         plugin.Configuration.Save();
     }

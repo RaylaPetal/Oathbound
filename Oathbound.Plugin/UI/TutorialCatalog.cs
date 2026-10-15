@@ -84,7 +84,7 @@ public static class TutorialCatalog
             new("Sub Control", "Opens every command you have, from every module, in one console docked beside this window.", TutorialAnchors.MainSubControl, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Safeword", "Your own safeword. Typing /obpanic always takes everything off you, whatever role you're in.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile opens a module: titles, outfits, animations, moodles, restraints, toys, custom triggers, the collar, the leash, reactions and sync. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
-            new("Favorites", "The star in the title bar opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Favorites", "The Favorites tile, last in the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
             new("Role & trigger phrase", "Your role (Owner, Sub or Switch) and the trigger phrase that starts every command tell.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Pairing", "Pair with someone by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
@@ -114,7 +114,6 @@ public static class TutorialCatalog
         ["animation"] =
         [
             Help("animation", "Make your Sub perform an emote or pose from their Penumbra animation mods."),
-            new("Stop animation", "An animation you send holds your Sub in place until you stop it. This sends the stop.", TutorialAnchors.Fixed(Config.FixedActionIds.StopAnimation), n => n.Module("animation")),
             new("Stop animation", "Stops an animation you sent and gives your Sub their movement back.", S("gestureQuickFixed"), n => n.Module("animation")),
             new("Your Sub's animations", "Grouped by mod. Search, then pick one to send it, set a hold time, star it or edit it beside the list.", S("gestureQuickList"), n => n.Module("animation"), "No animations yet - they arrive when your Sub's catalog syncs."),
             new("Animations", "Grouped by mod. Each row plays that animation on your Sub.", TutorialAnchors.QuickRow, n => n.Module("animation"), "No animations yet."),
@@ -165,6 +164,21 @@ public static class TutorialCatalog
             new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
             Star(),
         ],
+        ["cage"] =
+        [
+            Help("cage", "Put your Sub in a cage you saved, for a while or until you open it."),
+            new("Status", "Whether your Sub is caged, or the cage is still waiting for them, as their client last reported it. Open cage lets them out.", S("cageStatus"), n => n.Module("cage"), "Shown once you pick a Sub."),
+            new("Save a cage here", "Stand where the cage should be and save it, free to move inside a square or rectangle you size, or pinned in place. Inside a house it's that exact house.", S("cageSave"), n => n.Module("cage")),
+            new("Saved cages", "Choose until opened or a timer, how long it waits for them to arrive, then Send. If they're there it closes now; otherwise when they get there.", S("cageSaved"), n => n.Module("cage")),
+        ],
+        ["games"] =
+        [
+            Help("games", "Play a game with the other person of your pairing. Either of you can lose, and a loss only changes the loser's own character."),
+            new("Play a game", "Pick a game, how rolls are made and what losing a round costs, then invite. The game starts when they accept on their side.", S("gamesInvite"), n => n.Module("games"), "Shown when no game is running."),
+            new("The game", "Whose turn it is, the Roll button and the other moves, the score, what each of you took off, and the forfeits. Quit ends it and gives everything back.", S("gamesSession"), n => n.Module("games"), "Shown while a game is running."),
+            new("Your strip order", "Which of your pieces come off first when you lose a strip round. Pieces held by restraints or locks are skipped.", S("gamesStrip"), n => n.Module("games")),
+            new("Your cards", "Your own truths, dares and forfeits, and the starter cards you can turn off.", S("gamesDecks"), n => n.Module("games")),
+        ],
         ["reactions"] =
         [
             Help("reactions", "Make your own character react by itself when someone uses an emote on you or says a phrase."),
@@ -210,7 +224,7 @@ public static class TutorialCatalog
             new("Your pairing", "Who owns you. With more than one pairing, pick the active one here.", TutorialAnchors.MainPairing, n => n.Main()),
             new("Safeword", "Your safeword. Typing /obpanic takes everything off you at once, except a locked collar.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile is something your Owner can do to you. In each one you choose what's allowed - which outfits, animations, moodles, restraints. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
-            new("Favorites", "Starred commands are an Owner feature; as a Switch, the star in the title bar opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Favorites", "Starred commands are an Owner feature; as a Switch, the Favorites tile opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
             new("Role & trigger phrase", "Your role and the trigger phrase every command tell must start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Pairing", "Pair with your Owner by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
@@ -281,7 +295,13 @@ public static class TutorialCatalog
             new("Attached moodle", "A status shown while you're leashed.", S("leashMoodle"), n => n.Module("follow")),
             new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
         ],
+        ["cage"] =
+        [
+            Help("cage", "Your cage. It only works while the Cage permission is on."),
+            new("Your cage", "Where your Owner caged you and for how long. While it's closed you can't leave or change your permissions. Panic always opens it.", S("cageSub"), n => n.Module("cage")),
+        ],
         ["reactions"] = OwnerTours["reactions"],
+        ["games"] = OwnerTours["games"],
         ["rulebook"] =
         [
             Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and only they can change a rule after that."),

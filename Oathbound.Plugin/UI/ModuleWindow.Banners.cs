@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Safety;
@@ -129,8 +130,9 @@ public sealed partial class ModuleWindow
                 l?.Key is not null ? "key" : null);
             if (l is null)
             {
+                using var caged = ImRaii.Disabled(plugin.CageService.IsCaged);
                 if (ImGui.Button("Take off"))
-                    restraintActionResult = restraints.ReleaseUnlocked(w.RuntimeId) ? $"{w.Reference} taken off." : restraints.LastFailureReason;
+                    restraintActionResult = restraints.TakeOff(w.RuntimeId) ? $"{w.Reference} taken off." : restraints.LastFailureReason;
             }
             else
             {

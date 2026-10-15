@@ -470,6 +470,9 @@ public class PermissionSet
 
     /// Rulebook consequences fire with no click from either person; needs RulebookAcknowledged.
     public bool Rulebook { get; set; }
+
+    /// Lets an Owner cage the Sub, closing their escapes until it opens; needs CageAcknowledged.
+    public bool Cage { get; set; }
 }
 
 /// Gagged always garbles chat while active; animations on any kind are optional cosmetics.
@@ -878,6 +881,9 @@ public class PluginConfig : IPluginConfiguration
     public float LeashOpacity { get; set; } = 1f;
 
     public bool ShowDrawnRestraints { get; set; } = true;
+
+    /// The cage's bounds drawn on the ground. Only on this client, never sent.
+    public bool ShowCageBounds { get; set; } = true;
     public static readonly Vector3 DefaultRestraintColor = new(0.62f, 0.64f, 0.68f);
     /// Brightness and opacity share the leash's minimums.
     public Vector3 RestraintColor { get; set; } = DefaultRestraintColor;
@@ -966,6 +972,18 @@ public class PluginConfig : IPluginConfiguration
 
     /// Set by panic, cleared only by the Sub's Resume.
     public bool RulebookSuspended { get; set; }
+
+    /// Separate from TosAcknowledged: a cage moves the character on its own and closes the Sub's escapes.
+    public bool CageAcknowledged { get; set; }
+
+    /// Sub side: the one armed or closed cage.
+    public SubCageState? ActiveCage { get; set; }
+
+    /// Owner side: cages saved where the Owner stood. Never synced.
+    public List<SavedCage> SavedCages { get; set; } = new();
+
+    /// Strip order and the player's own game cards.
+    public GamesConfig Games { get; set; } = new();
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Action? SaveOverride { get; set; }

@@ -40,10 +40,16 @@ public class CollarWindow : Window, IDisposable
         ("customtriggers", FontAwesomeIcon.BoltLightning, "Custom Triggers"),
         ("collar", FontAwesomeIcon.Lock, "Collar"),
         ("follow", FontAwesomeIcon.Link, "Follow / Leash"),
+        ("cage", FontAwesomeIcon.Dungeon, "Cage"),
+        ("games", FontAwesomeIcon.Dice, "Games"),
         ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("rulebook", FontAwesomeIcon.Book, "Rulebook"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
+        (FavoritesNavId, FontAwesomeIcon.Star, "Favorites"),
     ];
+
+    /// Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
+    private const string FavoritesNavId = "favorites";
 
     public CollarWindow(Plugin plugin, ModuleWindow moduleWindow) : base("Oathbound###CollarWindow")
     {
@@ -56,12 +62,11 @@ public class CollarWindow : Window, IDisposable
             Click = _ => plugin.ToggleSettingsUi(),
             ShowTooltip = () => ImGui.SetTooltip("Settings"),
         });
-        // Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
         TitleBarButtons.Add(new TitleBarButton
         {
-            Icon = FontAwesomeIcon.Star,
-            Click = _ => plugin.FavoritesWindow.IsOpen = true,
-            ShowTooltip = () => ImGui.SetTooltip("Favorites"),
+            Icon = FontAwesomeIcon.QuestionCircle,
+            Click = _ => HelpLinks.RequestOpen(),
+            ShowTooltip = () => ImGui.SetTooltip("Help & bug reports"),
         });
     }
 
@@ -102,16 +107,19 @@ public class CollarWindow : Window, IDisposable
         // Title-bar buttons aren't ImGui items, so the settings cog's area is reported by position.
         var titleBarHeight = ImGui.GetFrameHeight();
         TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
-        TutorialService.AnchorRect(TutorialAnchors.NavFavorites, LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, 0), LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, titleBarHeight));
 
+        HelpLinks.Draw();
         DrawCharacterHeader();
         moduleWindow.DrawStruggleRow("header");
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
-        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id));
+        var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
+            id => id == FavoritesNavId ? TutorialAnchors.NavFavorites : null);
         TutorialService.Anchor(TutorialAnchors.MainNav);
-        if (clicked is not null)
+        if (clicked == FavoritesNavId)
+            plugin.FavoritesWindow.IsOpen = true;
+        else if (clicked is not null)
             moduleWindow.Show(clicked);
 
         // Not on the appearing frame: widths aren't settled, so wrapped text measures far too tall.
@@ -242,6 +250,7 @@ public class CollarWindow : Window, IDisposable
         TutorialService.Anchor(TutorialAnchors.MainSafeword);
 
         DrawTeleportJourneyRow();
+        DrawCageRow();
 
         if (config.ResolveActiveDirection() == PairingDirection.OwnerSide)
         {
@@ -400,6 +409,30 @@ public class CollarWindow : Window, IDisposable
                 teleport.StopBySub("stopped from the header");
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Stops navigation right away and gives you back control of your movement.");
+    }
+
+    /// Shown while a cage is armed or closed, whatever the active pairing. No way out but panic, by design.
+    private void DrawCageRow()
+    {
+        if (plugin.CageService.Cage is not { } cage)
+            return;
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        var caged = cage.Phase == CagePhase.Caged;
+        IconGlyph.Text(FontAwesomeIcon.Lock, caged ? $"Caged: {cage.Name}" : $"Cage waiting: {cage.Name}");
+        string detail;
+        if (caged)
+            detail = cage.EndsAtUtc is { } end ? $"{cage.OwnerName} holds you here - {RestraintLock.Format(end - DateTime.UtcNow)} left." : $"{cage.OwnerName} holds you here until they open it.";
+        else if (cage.HasClosed)
+            detail = $"You left it. It closes again when you're back at {CagePlaces.Describe(cage.Place)}{(cage.EndsAtUtc is { } left ? $" ({RestraintLock.Format(left - DateTime.UtcNow)} left)" : "")}.";
+        else
+            detail = $"{cage.OwnerName} set it at {CagePlaces.Describe(cage.Place)}. It closes when you're there, and waits {RestraintLock.Format(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more.";
+        if (caged && plugin.CageService.IsWalkingIn)
+            detail += " Walking you in...";
+        IconGlyph.WrappedColored(caged ? Theme.Warning : Theme.TextMuted, detail);
+        if (caged)
+            IconGlyph.WrappedDisabled("Your permissions are locked until it opens. Panic still opens it.");
     }
 
     private static string TeleportStageLabel(TeleportCommand teleport) => teleport.Stage switch

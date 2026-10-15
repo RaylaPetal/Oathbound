@@ -99,6 +99,7 @@ public sealed class SubControlWindow : Window, IDisposable
         DrawCollarSection(canSend);
         DrawToyControlSection(canSend);
         DrawRulebookSection(canSend);
+        DrawCageSection(canSend);
         DrawTeleportRow(canSend);
     }
 
@@ -320,6 +321,39 @@ public sealed class SubControlWindow : Window, IDisposable
             yield return (char.ToUpperInvariant(name[0]) + name[1..], ToyControlCommand.BuildPatternCommand(name));
         foreach (var pattern in plugin.Configuration.ToyPatterns)
             yield return (pattern.Name, ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop));
+    }
+
+    /// Saved cages with their own lock settings; those are edited in the Cage module.
+    private void DrawCageSection(bool canSend)
+    {
+        var cages = plugin.Configuration.SavedCages;
+        if (!CategoryHeader("Cage", cages.Count))
+            return;
+
+        foreach (var cage in cages.ToList())
+        {
+            var lockText = cage.LockSeconds is { } s ? $"for {RestraintLock.Format(TimeSpan.FromSeconds(s))}" : "until you open it";
+            var tooltip = canSend
+                ? $"Cage your Sub in \"{cage.Name}\" ({cage.PlaceLabel}) {lockText}. If they aren't there, it waits for them."
+                : "No /tell target yet - pairing hasn't captured your Sub's name.";
+            if (DrawRow($"subControlCage_{cage.Id}", $"Cage: {cage.Name}", tooltip, canSend))
+                ReportCageResult(CageSendAction.TrySend(plugin, cage));
+        }
+        if (DrawRow("subControlCageOpen", "Open cage", canSend ? "Let your Sub out, or call off a cage still waiting for them." : "No /tell target yet - pairing hasn't captured your Sub's name.", canSend, tint: ReleaseTint))
+            ReportCageResult(CageSendAction.TryOpen(plugin));
+    }
+
+    private static void ReportCageResult((bool Success, string? Error) result)
+    {
+        if (result.Success)
+            return;
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Oathbound",
+            Content = result.Error ?? "The cage command couldn't be sent.",
+            Type = NotificationType.Warning,
+            InitialDuration = TimeSpan.FromSeconds(5),
+        });
     }
 
     /// Teleport has no static command text; resolved live via TeleportSendAction.

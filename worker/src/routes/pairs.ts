@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { nowSeconds, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
 import { RelayError } from "../lib/errors";
-import { type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow } from "../lib/pairs";
+import { type CageState, type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
 import { rulebookMailboxSummary } from "./rulebook";
@@ -71,6 +71,9 @@ async function pairStatusBody(env: Env, pair: PairRow, activity: Awaited<ReturnT
     collarState: pair.collar_state ?? null,
     collarStateAt: pair.collar_state_at ?? null,
     collarCheckinAt: pair.collar_checkin_at ?? null,
+    cageState: pair.cage_state ?? null,
+    cageStateAt: pair.cage_state_at ?? null,
+    cageEndsAt: pair.cage_ends_at ?? null,
     catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     ...activity,
@@ -121,4 +124,46 @@ export async function putCollarStatus(request: Request, env: Env, pairIdHash: st
     .run();
 
   return Response.json({ type: "collar-status-ack", schemaVersion: 1 });
+}
+
+function isCageState(value: unknown): value is CageState {
+  return value === "none" || value === "armed" || value === "caged";
+}
+
+function isUnixSecondsOrNull(value: unknown): value is number | null {
+  return value === null || isUnixSeconds(value);
+}
+
+/**
+ * collar/cage: the pair's Sub device reports the state of the cage that pairing holds. Authorized exactly like
+ * putCollarStatus. A report older than the stored state is ignored, so a delayed retry can't roll it back.
+ */
+export async function putCageStatus(request: Request, env: Env, pairIdHash: string): Promise<Response> {
+  if (!isHex64(pairIdHash)) throw new RelayError("not_found");
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  await enforceQuota(env, "deviceCageStatus", deviceKeyId);
+
+  const body = asRecord(bodyJson);
+  if (body.type !== "cage-status" || body.schemaVersion !== 1) throw new RelayError("invalid_request");
+  const pairEpoch = requireField(body, "pairEpoch", isNonNegInt);
+  const state = requireField(body, "state", isCageState);
+  const stateAt = requireField(body, "stateAt", isUnixSeconds);
+  const endsAt = requireField(body, "endsAt", isUnixSecondsOrNull);
+  if (state === "none" && endsAt !== null) throw new RelayError("invalid_request");
+  const now = nowSeconds();
+  if (stateAt > now + TIMESTAMP_TOLERANCE_SECONDS) throw new RelayError("invalid_request");
+
+  const pair = await pairAtEpoch(env, pairIdHash, pairEpoch);
+  // One generic answer for wrong pair, wrong device or a revoked epoch, so a caller can't tell which.
+  if (!pair || pair.sub_device_key_id !== deviceKeyId || pair.revoked_at !== null) throw new RelayError("unauthorized");
+
+  await env.RELAY_DB.prepare(
+    `UPDATE pairs SET cage_state = ?2, cage_state_at = ?1, cage_ends_at = ?3
+     WHERE pair_id_hash = ?4 AND pair_epoch = ?5 AND revoked_at IS NULL
+       AND (cage_state_at IS NULL OR ?1 >= cage_state_at)`,
+  )
+    .bind(stateAt, state, endsAt, pairIdHash, pairEpoch)
+    .run();
+
+  return Response.json({ type: "cage-status-ack", schemaVersion: 1 });
 }

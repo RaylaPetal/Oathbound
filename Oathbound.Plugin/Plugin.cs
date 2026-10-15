@@ -123,6 +123,8 @@ public sealed class Plugin : IDalamudPlugin
     public ToyControlCommand ToyControlCommand { get; }
     public CustomTriggerCommand CustomTriggerCommand { get; }
     public TeleportCommand TeleportCommand { get; }
+    public CageService CageService { get; }
+    public Games.GamesService Games { get; }
     public CatalogSyncService CatalogSyncService { get; }
     public CatalogSyncRelayService CatalogSyncRelayService { get; }
     public CatalogMailboxService CatalogMailboxService { get; }
@@ -135,14 +137,18 @@ public sealed class Plugin : IDalamudPlugin
     public OwnerToyStatusTracker OwnerToyStatus { get; }
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
     public OwnerCollarStatusStore OwnerCollarStatus { get; }
+    public OwnerCageStatusStore OwnerCageStatus { get; }
     public RelayActivity RelayActivity { get; } = new();
     private readonly CollarStatusReporter collarStatusReporter;
     public StatusIndicatorState StatusIndicators { get; }
     private readonly WorldStrokeRenderer worldStrokes;
     private readonly LeashRenderer leashRenderer;
     private readonly RestraintRenderer restraintRenderer;
+    private readonly CageRenderer cageRenderer;
     private readonly LeashTravelWatcher leashTravelWatcher;
     private readonly LeashOffNotifier leashOffNotifier;
+    private readonly CageExitGuard cageExitGuard;
+    private readonly CageStatusReporter cageStatusReporter;
     private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
@@ -205,6 +211,7 @@ public sealed class Plugin : IDalamudPlugin
         // Before Follow: the leash rides Teleport's journey across areas.
         TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
         FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand, TeleportCommand);
+        CageService = new CageService(Configuration, MovementLockService, VnavmeshIpc, TeleportCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
         ChatGagService.LevelSource = () => RestraintCommand.ActiveGagLevel;
@@ -220,8 +227,11 @@ public sealed class Plugin : IDalamudPlugin
         OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
         OwnerCollarStatus = new OwnerCollarStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
+        OwnerCageStatus = new OwnerCageStatusStore(Configuration);
+        RevocationService.PairStatusFetched += OwnerCageStatus.Update;
         RevocationService.PairStatusFetched += RelayActivity.Update;
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
+        cageStatusReporter = new CageStatusReporter(Configuration, RelayClient, CageService);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
         leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
         // One tell to the Owner who set the lock; failed tries and wrong keys send nothing.
@@ -231,6 +241,7 @@ public sealed class Plugin : IDalamudPlugin
         worldStrokes = new WorldStrokeRenderer();
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
         restraintRenderer = new RestraintRenderer(Configuration, StatusIndicators, worldStrokes);
+        cageRenderer = new CageRenderer(this, worldStrokes);
         statusIconRenderer = new StatusIconRenderer(StatusIndicators);
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
@@ -251,9 +262,18 @@ public sealed class Plugin : IDalamudPlugin
             () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
+        ChatCommandListener.Cage = CageService;
+        Games = new Games.GamesService(Configuration, ChatComposer, ChatSender, new Games.StripService(Configuration, GlamourerIpc, SlotLockManager));
+        ChatCommandListener.Games = Games;
+        RestraintCommand.IsCaged = () => CageService.IsCaged;
+        TeleportCommand.IsCaged = () => CageService.IsCaged;
+        FollowCommand.HeldByCage = () => CageService.IsCaged;
+        ActionBlockService.IsCaged = () => CageService.IsCaged;
+        cageExitGuard = new CageExitGuard(() => CageService.IsCaged);
 
-        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand);
+        PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand, CageService);
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
+        PanicHandler.Games = Games;
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
         RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
@@ -321,6 +341,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw += leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw += restraintRenderer.Draw;
+        PluginInterface.UiBuilder.Draw += cageRenderer.Draw;
         // After every window, so anchors reported this frame are current.
         PluginInterface.UiBuilder.OpenConfigUi += SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -332,6 +353,10 @@ public sealed class Plugin : IDalamudPlugin
         // One check at startup; the periodic schedule is seeded past its interval so it doesn't double up.
         nextRevocationCheckUtc = DateTime.UtcNow.AddHours(6);
         FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
+
+        // A reload mid-game leaves its pieces stripped; put them back once the game state is ready.
+        if (ClientState.IsLoggedIn)
+            Framework.RunOnTick(Games.OnLogin);
 
         Log.Information("Oathbound loaded.");
     }
@@ -346,6 +371,7 @@ public sealed class Plugin : IDalamudPlugin
     private void OnLogin()
     {
         RestraintCommand.OnLogin();
+        Games.OnLogin();
         TitleCommand.RequestReassert();
         // Check every pairing against the relay right away, and pick up code invitations.
         nextPairStatusCheckUtc = DateTime.MinValue;
@@ -358,6 +384,7 @@ public sealed class Plugin : IDalamudPlugin
     /// Fresh token source so work resumed after the next login isn't pre-cancelled.
     private void OnLogout(int type, int code)
     {
+        Games.OnLogout();
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
         RestrictionRuleManager.ReleaseAllForPanic();
         Configuration.FlushPendingSave(force: true);
@@ -395,6 +422,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= FileDialogManager.Draw;
         PluginInterface.UiBuilder.Draw -= leashRenderer.Draw;
         PluginInterface.UiBuilder.Draw -= restraintRenderer.Draw;
+        PluginInterface.UiBuilder.Draw -= cageRenderer.Draw;
         Tutorial.Dispose();
         PluginInterface.UiBuilder.OpenConfigUi -= SettingsWindow.Toggle;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
@@ -412,6 +440,7 @@ public sealed class Plugin : IDalamudPlugin
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
         RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
+        RevocationService.PairStatusFetched -= OwnerCageStatus.Update;
         RevocationService.PairStatusFetched -= RelayActivity.Update;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
         RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
@@ -432,6 +461,7 @@ public sealed class Plugin : IDalamudPlugin
         ChatCommandListener.Dispose();
         MovementLockService.Dispose();
         ActionBlockService.Dispose();
+        cageExitGuard.Dispose();
         ChatGagService.Dispose();
         IntifaceIpc.Dispose();
         ToyTriggerEvaluator.Dispose();
@@ -514,12 +544,16 @@ public sealed class Plugin : IDalamudPlugin
 
         UpdateQuickAccessText();
         collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+        cageStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         GestureCommand.OnFrameworkUpdate();
         RestraintCommand.OnFrameworkUpdate();
         ToyControlCommand.OnFrameworkUpdate();
         EmoteWatcher.Poll();
         ToyTriggerEvaluator.OnFrameworkUpdate();
         ReactionService.OnFrameworkUpdate();
+        // Before the movement lock, so a claim the cage takes this frame is applied this frame.
+        CageService.OnFrameworkUpdate();
+        Games.OnFrameworkUpdate();
         MovementLockService.OnFrameworkUpdate();
         FollowCommand.OnFrameworkUpdate();
         WalkOnlyService.OnFrameworkUpdate();
@@ -544,9 +578,11 @@ public sealed class Plugin : IDalamudPlugin
             FireAndForget(RevocationService.CheckForMissedRevocationAsync(relayBackgroundWorkCts.Token));
         }
         // Skipped while not logged in, so a title-screen session doesn't spend relay requests.
-        if (utcNow >= nextPairStatusCheckUtc && ClientState.IsLoggedIn)
+        // A cage the Owner sent and hasn't seen close yet, or a Sub's view just opened, checks sooner.
+        if ((utcNow >= nextPairStatusCheckUtc || OwnerCageStatus.WantsCheck(utcNow)) && ClientState.IsLoggedIn)
         {
             nextPairStatusCheckUtc = utcNow.AddSeconds(RelayProtocolConstants.PairStatusPollIntervalSeconds).AddSeconds(Random.Shared.Next(0, 120));
+            OwnerCageStatus.MarkChecked(utcNow);
             FireAndForget(RevocationService.CheckPairStatusAsync(relayBackgroundWorkCts.Token));
         }
         if (ClientState.IsLoggedIn)

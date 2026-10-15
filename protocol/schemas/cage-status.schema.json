@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/cage-status.schema.json",
+  "title": "Cage status report",
+  "description": "Signed by the pair's Sub device (request signing) and posted to /v1/pairs/{pairIdHash}/cage-status for the pairing that holds the Sub's cage. Carries no cage name, place, position, character name or world. A report whose stateAt is older than the stored one leaves the stored state unchanged.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schemaVersion",
+    "pairEpoch",
+    "state",
+    "stateAt",
+    "endsAt"
+  ],
+  "properties": {
+    "type": {
+      "const": "cage-status"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "pairEpoch": {
+      "$ref": "common.schema.json#/$defs/pairEpoch"
+    },
+    "state": {
+      "enum": [
+        "none",
+        "armed",
+        "caged"
+      ]
+    },
+    "stateAt": {
+      "$ref": "common.schema.json#/$defs/unixSeconds"
+    },
+    "endsAt": {
+      "description": "For caged, when the lock ends; for armed, when the armed cage is dropped; null for a cage locked until opened and for none.",
+      "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }]
+    }
+  }
+}

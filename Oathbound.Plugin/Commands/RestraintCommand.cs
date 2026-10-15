@@ -21,6 +21,9 @@ public sealed class RestraintCommand
     private const string ExportPrefix = "OATHBOUND-RESTRAINT-V1|";
     private const string ConfiguredExportPrefix = "OATHBOUND-RESTRAINT-CONFIG-V1|";
     public string? LastFailureReason { get; private set; }
+
+    /// Set once by Plugin. While true the Sub can't struggle, use a key or take anything off.
+    public Func<bool> IsCaged { get; set; } = static () => false;
     private const string Owner = "Restraints";
 
     /// A restraint may take over a locked outfit's slot (restored on release). The collar's Neck lock still refuses it.
@@ -198,6 +201,17 @@ public sealed class RestraintCommand
     }
 
     /// The Sub's own way to take off a restraint that isn't locked.
+    /// The Sub's own Take off button.
+    public bool TakeOff(string runtimeId)
+    {
+        if (IsCaged())
+        {
+            LastFailureReason = CageService.CagedNote;
+            return false;
+        }
+        return ReleaseUnlocked(runtimeId);
+    }
+
     public bool ReleaseUnlocked(string runtimeId)
     {
         if (FindWorn(runtimeId)?.Lock is not null)
@@ -530,6 +544,8 @@ public sealed class RestraintCommand
     /// The Sub's own click only. One roll; an escape releases that restraint exactly as its timer running out does.
     public LocalTestResult Struggle(string runtimeId)
     {
+        if (IsCaged())
+            return LocalTestResult.Fail(CageService.CagedNote);
         if (FindWorn(runtimeId) is not { Lock: { } restraintLock } worn || StruggleAvailable(worn) is not { } setting)
             return LocalTestResult.Fail("That restraint can't be struggled against.");
         if (StruggleWait(worn) is { } wait)
@@ -557,6 +573,8 @@ public sealed class RestraintCommand
     /// The Sub's own click only. A wrong guess starts a wait, so the key can't be found by rapid retries in-game.
     public LocalTestResult TryKey(string runtimeId, string guess)
     {
+        if (IsCaged())
+            return LocalTestResult.Fail(CageService.CagedNote);
         if (FindWorn(runtimeId) is not { Lock: { Key: { } key } restraintLock } worn)
             return LocalTestResult.Fail("That restraint has no key.");
         if (KeyWait(worn) is { } wait)

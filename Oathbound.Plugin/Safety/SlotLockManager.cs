@@ -225,6 +225,12 @@ public sealed class SlotLockManager : IDisposable
     public bool ReleaseClaim(string holder, IReadOnlyCollection<ApiEquipSlot>? only = null) =>
         ReleaseCore(null, h => h == holder, only);
 
+    public bool ReleaseClaimsStartingWith(string prefix) =>
+        ReleaseCore(null, h => h.StartsWith(prefix, StringComparison.Ordinal), null);
+
+    /// Any lock or holder on the slot, including one set aside under another.
+    public bool IsHeld(ApiEquipSlot slot) => locks.ContainsKey(slot) || suspended.ContainsKey(slot) || layers.ContainsKey(slot);
+
     /// Per slot: a piece set aside underneath shows if there is one; a lock still on the slot keeps showing; otherwise
     /// the slot gets what it showed when the lowest released holder at the top took it. A released holder further down
     /// hands what it recorded to the holder above it. No other slot is touched.

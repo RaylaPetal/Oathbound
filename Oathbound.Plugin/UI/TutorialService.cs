@@ -69,6 +69,7 @@ public sealed class TutorialService : IDisposable
         navigator = new TutorialNavigator(plugin);
         Current = this;
         TutorialCatalog.Validate();
+        Games.GameDecks.Validate();
     }
 
     public bool IsRunning => tour is not null;

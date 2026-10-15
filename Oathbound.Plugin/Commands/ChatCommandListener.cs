@@ -44,11 +44,17 @@ public sealed class ChatCommandListener : IDisposable
     ];
 
     /// First tokens that route to the Owner's override grammar; Sub aliases can't use them.
-    public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport",
+    public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport", "cage",
         Rulebook.ConsequenceValidator.DeckWord, Rulebook.ConsequenceValidator.LedgerWord];
 
     /// Set once by Plugin; the rulebook service is built after this listener.
     public IRulebookCommandSink? RulebookSink { get; set; }
+
+    /// Set once by Plugin.
+    public CageService? Cage { get; set; }
+
+    /// Set once by Plugin.
+    public Games.GamesService? Games { get; set; }
 
     /// A verified `collarrulebook` from the Owner of this Sub-side pairing.
     public event Action<PairingState>? RulebookNudgeReceived;
@@ -107,6 +113,8 @@ public sealed class ChatCommandListener : IDisposable
 
     private void OnChatMessage(Dalamud.Game.Chat.IHandleableChatMessage message)
     {
+        if (Games is { } games && global::Oathbound.Plugin.Games.RollReader.TryRead(message, out var roll))
+            games.OnRollLine(roll);
         if (message.LogKind == XivChatType.TellOutgoing)
         {
             OnOwnCommandLine(message);
@@ -131,7 +139,8 @@ public sealed class ChatCommandListener : IDisposable
                 || TryHandleCatalogPermissionDeniedMessage(text, message.Sender)
                 || TryHandleLeashOffNoticeMessage(text, message.Sender)
                 || TryHandleRulebookNudgeMessage(text, message.Sender)
-                || TryHandleStruggleNoticeMessage(text, message.Sender))
+                || TryHandleStruggleNoticeMessage(text, message.Sender)
+                || TryHandleGameMessage(text, message.Sender))
             {
                 Swallow(message);
                 return;
@@ -259,7 +268,7 @@ public sealed class ChatCommandListener : IDisposable
     private static readonly string[] NoticeKeywords =
     [
         PairingAckKeyword, InviteKeyword, UnpairNoticeKeyword, CatalogRequestKeyword, CatalogPermissionDeniedKeyword,
-        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword,
+        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword, global::Oathbound.Plugin.Games.GamesService.Keyword,
     ];
 
     private static bool IsNoticeLine(string text) =>
@@ -297,6 +306,9 @@ public sealed class ChatCommandListener : IDisposable
     /// Runs the same dispatch as a real tell. Never sends chat and never requires pairing.
     public LocalTestResult TestIncomingCommand(string rawText)
     {
+        // Running a command on yourself is the Sub changing themselves, which a cage closes.
+        if (Cage?.IsCaged == true)
+            return LocalTestResult.Fail(CageService.CagedNote);
         var trigger = config.TriggerPhrase.Trim();
         var trimmed = rawText.Trim();
         if (trigger.Length == 0 || !trimmed.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
@@ -434,6 +446,15 @@ public sealed class ChatCommandListener : IDisposable
             return true;
         RulebookNudgeReceived?.Invoke(subPairing);
         return true;
+    }
+
+    /// Either side of a pairing; GamesService checks the sender against the pairing and the session.
+    private bool TryHandleGameMessage(string text, SeString sender)
+    {
+        if (Games is not { } games || !text.StartsWith(global::Oathbound.Plugin.Games.GamesService.Keyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var (name, world) = ExtractNameAndWorld(sender);
+        return games.HandleTell(name, world, text);
     }
 
     /// Only a paired Sub of an Owner-side pairing counts; anyone else is ignored.
@@ -596,6 +617,9 @@ public sealed class ChatCommandListener : IDisposable
             case "teleport":
                 // No outer gate: TeleportCommand owns every guard, each with its own reportable reason.
                 return HandleForceTeleport(rest, sourcePairing);
+            case "cage":
+                // CageService owns the permission check, so `cage open` from the holding Owner always works.
+                return Cage is { } cage ? cage.Handle(rest, sourcePairing) : NotUnderstood("Cages aren't available.");
             case "revert":
                 // No outer gate: each category below checks its own permission.
                 return HandleForceRevert(rest);

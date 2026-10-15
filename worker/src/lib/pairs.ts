@@ -20,9 +20,14 @@ export interface PairRow {
   collar_state: CollarState | null;
   collar_state_at: number | null;
   collar_checkin_at: number | null;
+  cage_state: CageState | null;
+  cage_state_at: number | null;
+  cage_ends_at: number | null;
 }
 
 export type CollarState = "locked" | "unlocked" | "broken";
+
+export type CageState = "none" | "armed" | "caged";
 
 export async function latestPair(env: Env, pairIdHash: string): Promise<PairRow | null> {
   return env.RELAY_DB.prepare(

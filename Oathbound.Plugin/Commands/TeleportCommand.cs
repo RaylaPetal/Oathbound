@@ -102,6 +102,9 @@ public sealed class TeleportCommand
     public bool IsInProgress => stage != TeleportStage.Idle;
     public bool IsLeashJourneyInProgress => IsInProgress && isLeashJourney;
 
+    /// Set once by Plugin. A caged Sub can't be teleported by anyone.
+    public Func<bool> IsCaged { get; set; } = static () => false;
+
     /// Not raised when a newer leash travel replaces the journey.
     public event Action<LeashJourneyOutcome>? LeashJourneyEnded;
 
@@ -133,6 +136,8 @@ public sealed class TeleportCommand
     /// Guards run in a fixed order so the reported reason is the first real blocker.
     public (bool Success, string? Reason) Apply(TeleportTarget destination, PairingState? source)
     {
+        if (IsCaged())
+            return (false, "Refused: you're caged.");
         if (!config.Permissions.Teleport)
             return (false, "Teleport permission is not enabled.");
         if (!config.TosAcknowledged)

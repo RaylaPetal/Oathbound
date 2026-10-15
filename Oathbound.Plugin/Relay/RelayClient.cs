@@ -59,6 +59,17 @@ internal sealed class CollarStatusBody
     [JsonPropertyName("stateAt")] public long StateAt { get; set; }
 }
 
+internal sealed class CageStatusBody
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "cage-status";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("state")] public string State { get; set; } = "";
+    [JsonPropertyName("stateAt")] public long StateAt { get; set; }
+    /// The relay requires the field, so a null is written rather than dropped.
+    [JsonPropertyName("endsAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] public long? EndsAt { get; set; }
+}
+
 internal sealed class PairStatusBatchRequest
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "pair-status-batch-request";
@@ -327,6 +338,10 @@ public sealed class RelayClient : IDisposable
     public Task PutCollarStatusAsync(string pairIdHash, int pairEpoch, string state, long stateAt, CancellationToken ct) =>
         SendSignedAsync<CollarStatusAck>(HttpMethod.Post, $"/v1/pairs/{pairIdHash}/collar-status",
             new CollarStatusBody { PairEpoch = pairEpoch, State = state, StateAt = stateAt }, ct);
+
+    public Task PutCageStatusAsync(string pairIdHash, int pairEpoch, string state, long stateAt, long? endsAt, CancellationToken ct) =>
+        SendSignedAsync<CollarStatusAck>(HttpMethod.Post, $"/v1/pairs/{pairIdHash}/cage-status",
+            new CageStatusBody { PairEpoch = pairEpoch, State = state, StateAt = stateAt, EndsAt = endsAt }, ct);
 
     public Task PutBackupAsync(string backupId, string nonce, string ciphertext, CancellationToken ct) =>
         SendSignedAsync<BackupStatusBody>(HttpMethod.Put, $"/v1/backups/{backupId}", new BackupBody { Nonce = nonce, Ciphertext = ciphertext }, ct);

@@ -98,6 +98,8 @@ public sealed unsafe class MovementLockService : IDisposable
     private string? steerOwner;
     private SteerFunction? steer;
     private FlySteerFunction? flySteer;
+    /// Applied after the steer owner's function (or alone), so a cage's bounds hold whoever steers.
+    private SteerFunction? confinement;
     private bool legacyMoveMode;
     private bool ownsForceDisable;
 
@@ -194,6 +196,9 @@ public sealed unsafe class MovementLockService : IDisposable
         flySteer = null;
     }
 
+    public void SetConfinement(SteerFunction function) { if (IsSteerAvailable) confinement = function; }
+    public void ClearConfinement() => confinement = null;
+
     /// Same owner as SetSteering; cleared with ClearSteering.
     public void SetFlySteering(string owner, FlySteerFunction function)
     {
@@ -221,6 +226,7 @@ public sealed unsafe class MovementLockService : IDisposable
         steerOwner = null;
         steer = null;
         flySteer = null;
+        confinement = null;
         stepPulseFramesLeft = 0;
         ClearForceDisable();
     }
@@ -271,7 +277,8 @@ public sealed unsafe class MovementLockService : IDisposable
         if (stepPulseFramesLeft > 0 && TryStepPulse(self, sumLeft, sumForward, bAdditiveUnk))
             return;
         var function = steer;
-        if (function is null || IsSteerSuspended) return;
+        var confine = confinement;
+        if ((function is null && confine is null) || IsSteerSuspended) return;
         // Writing a non-zero vector on a frame the game skipped reading input breaks movement.
         if (bAdditiveUnk != 0 || rmiWalkIsInputEnabled1!(self) == 0 || rmiWalkIsInputEnabled2!(self) == 0) return;
         if (Plugin.ObjectTable.LocalPlayer is not { } player) return;
@@ -280,7 +287,11 @@ public sealed unsafe class MovementLockService : IDisposable
         if (!TryReferenceYaw(player.Rotation, out var referenceYaw)) return;
 
         var world = Rotate(new Vector2(*sumLeft, *sumForward), referenceYaw);
-        var local = Rotate(function(world), -referenceYaw);
+        if (function is not null)
+            world = function(world);
+        if (confine is not null)
+            world = confine(world);
+        var local = Rotate(world, -referenceYaw);
         *sumLeft = local.X;
         *sumForward = local.Y;
     }
@@ -310,12 +321,15 @@ public sealed unsafe class MovementLockService : IDisposable
     {
         rmiFlyHook!.Original(self, result);
         var function = flySteer;
-        if (function is null || IsSteerSuspended) return;
+        var confine = confinement;
+        if ((function is null && confine is null) || IsSteerSuspended) return;
         if (Plugin.ObjectTable.LocalPlayer is not { } player) return;
         if (!TryReferenceYaw(player.Rotation, out var referenceYaw)) return;
 
         var world = Rotate(new Vector2(result->Left, result->Forward), referenceYaw);
-        var (horizontal, pitch) = function(world, result->Up);
+        var (horizontal, pitch) = function is not null ? function(world, result->Up) : (world, result->Up);
+        if (confine is not null)
+            horizontal = confine(horizontal);
         var local = Rotate(horizontal, -referenceYaw);
         result->Left = local.X;
         result->Forward = local.Y;

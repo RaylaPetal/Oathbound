@@ -3,7 +3,7 @@ import { RelayError } from "./lib/errors";
 import { logEvent } from "./lib/log";
 import { acceptInvitation, cancelInvitation, consumeInvitation, createInvitation, fetchInvitation } from "./routes/invitations";
 import { deleteBackup, fetchBackup, putBackup } from "./routes/backups";
-import { fetchPair, fetchPairStatusBatch, putCollarStatus } from "./routes/pairs";
+import { fetchPair, fetchPairStatusBatch, putCageStatus, putCollarStatus } from "./routes/pairs";
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
 import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxKey, uploadMailboxSnapshot } from "./routes/mailbox";
@@ -64,6 +64,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (method === "POST" && segments.length === 3 && segments[2] === "status") return fetchPairStatusBatch(request, env);
     if (method === "GET" && segments.length === 3) return fetchPair(request, env, segments[2]!);
     if (method === "POST" && segments.length === 4 && segments[3] === "collar-status") return putCollarStatus(request, env, segments[2]!);
+    if (method === "POST" && segments.length === 4 && segments[3] === "cage-status") return putCageStatus(request, env, segments[2]!);
   }
 
   if (segments[1] === "revocations") {

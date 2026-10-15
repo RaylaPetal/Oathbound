@@ -154,16 +154,23 @@ public class SettingsWindow : Window, IDisposable
 
         if (ImGui.BeginTabItem("ToS", TabFlags(requested, SettingsTab.Tos)))
         {
-            using (Section.Begin("tosCard"))
-                DrawTosCard(config);
-            using (Section.Begin("customChatCard"))
-                DrawCustomChatCard(config);
-            using (Section.Begin("toyControlCard"))
-                DrawToyControlCard(config);
-            using (Section.Begin("toyTriggersCard"))
-                DrawToyTriggersCard(config);
-            using (Section.Begin("rulebookCard"))
-                DrawRulebookCard(config);
+            if (plugin.CageService.IsCaged)
+                IconGlyph.WrappedColored(Theme.Warning, "You're caged, so these stay as they are until the cage opens. Panic still opens it.");
+            using (ImRaii.Disabled(plugin.CageService.IsCaged))
+            {
+                using (Section.Begin("tosCard"))
+                    DrawTosCard(config);
+                using (Section.Begin("customChatCard"))
+                    DrawCustomChatCard(config);
+                using (Section.Begin("toyControlCard"))
+                    DrawToyControlCard(config);
+                using (Section.Begin("toyTriggersCard"))
+                    DrawToyTriggersCard(config);
+                using (Section.Begin("rulebookCard"))
+                    DrawRulebookCard(config);
+                using (Section.Begin("cageCard"))
+                    DrawCageCard(config);
+            }
             ImGui.EndTabItem();
         }
 
@@ -723,6 +730,23 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("Needed before the Rulebook permission can be turned on.");
+    }
+
+    /// Its own card: a cage moves the character on its own and closes the Sub's escapes until it opens.
+    private void DrawCageCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Lock, "Cage");
+        ImGui.Separator();
+        IconGlyph.WrappedDisabled("Your Owner can put you in a cage they saved. Your character is walked to it and kept inside until its time is up or they open it, including while you're away from the keyboard. While caged you can't leave the area, change any Oathbound permission or acknowledgement, struggle, use a restraint key, take a restraint off, run commands on yourself or stop what your Owner does. Only the categories you allow apply. Panic and unpairing always open the cage.");
+
+        if (ImGuiCheckbox("I understand a cage holds me until it opens", config.CageAcknowledged, out var newAck))
+        {
+            config.CageAcknowledged = newAck;
+            if (!newAck)
+                config.Permissions.Cage = false;
+            config.Save();
+        }
+        IconGlyph.HelpMarker("Needed before the Cage permission can be turned on. Automating your character is against the game's rules - see the README.");
     }
 
     /// ImGui.Checkbox never wraps its label, so the label is drawn separately, wrapped.

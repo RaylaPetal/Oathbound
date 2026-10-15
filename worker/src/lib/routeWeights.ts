@@ -21,6 +21,7 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "GET /v1/pairs/:id": 2,
   "POST /v1/pairs/status": 2,
   "POST /v1/pairs/:id/collar-status": 10,
+  "POST /v1/pairs/:id/cage-status": 10,
 
   "POST /v1/revocations": 12,
   "GET /v1/revocations/:id": 2,

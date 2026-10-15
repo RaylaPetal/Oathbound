@@ -70,6 +70,10 @@ public sealed class PairEnvelope
     [JsonPropertyName("collarState")] public string? CollarState { get; set; }
     [JsonPropertyName("collarStateAt")] public long? CollarStateAt { get; set; }
     [JsonPropertyName("collarCheckinAt")] public long? CollarCheckinAt { get; set; }
+    /// Null from a relay that predates cages, or before the Sub ever reported one for this pairing.
+    [JsonPropertyName("cageState")] public string? CageState { get; set; }
+    [JsonPropertyName("cageStateAt")] public long? CageStateAt { get; set; }
+    [JsonPropertyName("cageEndsAt")] public long? CageEndsAt { get; set; }
     /// Null only from a relay that predates the field, which puts automatic catalog sync back on its hourly checks.
     [JsonPropertyName("catalogMailbox")] public CatalogMailboxSummary? CatalogMailbox { get; set; }
     /// Null from a relay that predates rulebooks; rulebook work is skipped then.

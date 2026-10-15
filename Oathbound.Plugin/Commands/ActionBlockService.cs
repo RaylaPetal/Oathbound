@@ -33,6 +33,9 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
     /// Fail closed: if the hook couldn't be established, never claim to enforce anything.
     public bool IsAvailable { get; }
 
+    /// Set once by Plugin. While caged, the ways out of an area and onto a mount are refused.
+    public Func<bool> IsCaged { get; set; } = static () => false;
+
     /// Shown only while the block is really enforcing.
     public HotbarBlockVisuals Visuals { get; } = new();
 
@@ -56,9 +59,20 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
     {
         if (active || walkOnly.IsActive && actionType == ActionType.GeneralAction && actionId == 4)
             return false;
+        if (IsCageExit(actionType, actionId) && IsCaged())
+            return false;
 
         return useActionHook!.Original(am, actionType, actionId, targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
     }
+
+    /// General actions 7/8 and spells 5/6 are Teleport and Return; 9 and 24 are the mount roulettes.
+    private static bool IsCageExit(ActionType type, uint id) => type switch
+    {
+        ActionType.GeneralAction => id is 7 or 8 or 9 or 24,
+        ActionType.Action => id is 5 or 6,
+        ActionType.Mount => true,
+        _ => false,
+    };
 
     public void Dispose()
     {

@@ -1695,12 +1695,17 @@ public sealed partial class ModuleWindow
                     IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName ?? "Your Owner"} is starting over. Accepting clears your oaths (running ones end with no outcome), your ledger score, switched-off rules and history, and offers every oath again.");
                 using (Section.List("rbSubPendingDiff", Scaled(300)))
                     DrawRulebookDiff(startsOver ? null : state.Accepted, pending, startsOver ? new Dictionary<string, OathState>() : state.Oaths, pairing.PeerName ?? "your Owner");
-                if (ImGui.Button("Accept"))
-                    service.AcceptPending(pairing);
-                ImGui.SameLine();
-                if (ImGui.Button("Decline"))
-                    service.DeclinePending(pairing);
-                IconGlyph.HelpMarker("Declining keeps the version you already accepted running. Your Owner sees that you declined.");
+                using (ImRaii.Disabled(plugin.CageService.IsCaged))
+                {
+                    if (ImGui.Button("Accept"))
+                        service.AcceptPending(pairing);
+                    ImGui.SameLine();
+                    if (ImGui.Button("Decline"))
+                        service.DeclinePending(pairing);
+                }
+                IconGlyph.HelpMarker(plugin.CageService.IsCaged
+                    ? "You can accept or decline this once your cage opens."
+                    : "Declining keeps the version you already accepted running. Your Owner sees that you declined.");
             }
         }
 

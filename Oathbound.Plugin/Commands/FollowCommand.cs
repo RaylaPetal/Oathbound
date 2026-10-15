@@ -113,6 +113,9 @@ public sealed class FollowCommand
     /// Read by the leash line for its hand anchor. 0 while waiting or traveling.
     public ulong FollowedObjectId => state is LeashState.Waiting or LeashState.Traveling ? 0 : followedObjectId;
 
+    /// Set once by Plugin. While caged the cage alone decides where the Sub can go; the leash stays engaged.
+    public Func<bool> HeldByCage { get; set; } = static () => false;
+
     /// Including while waiting for or traveling to the Owner.
     public bool IsLeashed => state != LeashState.Released;
 
@@ -408,6 +411,16 @@ public sealed class FollowCommand
             return;
         }
 
+        if (HeldByCage())
+        {
+            if (state is LeashState.Pulling or LeashState.Following or LeashState.Slack)
+            {
+                StopFollowing();
+                state = LeashState.Free;
+            }
+            return;
+        }
+
         if (DutyPaused)
         {
             if (state != LeashState.Waiting)
@@ -567,6 +580,8 @@ public sealed class FollowCommand
     /// Outward part removed at the edge, breadcrumb direction while pulling, input untouched otherwise.
     private Vector2 Steer(Vector2 wish)
     {
+        if (HeldByCage())
+            return wish;
         if (zeroNextFrame)
         {
             zeroNextFrame = false;
@@ -590,6 +605,8 @@ public sealed class FollowCommand
     /// The Sub keeps their own pitch while free; a Sub left in the air after the Owner lands is brought down.
     private (Vector2 Horizontal, float Pitch) FlySteer(Vector2 wish, float pitch)
     {
+        if (HeldByCage())
+            return (wish, pitch);
         if (zeroNextFrame)
         {
             zeroNextFrame = false;
@@ -699,7 +716,7 @@ public sealed class FollowCommand
 
     private static Vector2 Ground(Vector3 position) => new(position.X, position.Z);
 
-    private static bool GameHoldsSub()
+    internal static bool GameHoldsSub()
     {
         var c = Plugin.Condition;
         return c[ConditionFlag.Unconscious] || c[ConditionFlag.BetweenAreas] || c[ConditionFlag.BetweenAreas51]

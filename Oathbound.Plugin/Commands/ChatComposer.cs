@@ -39,6 +39,13 @@ public sealed class ChatComposer
         return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {ControlWords.Leash} {LeashTravelWord} {target.ToPayload()}";
     }
 
+    /// Always a /tell to that pairing: a cage command carries where the cage is.
+    public string ComposeCage(PairingState pairing, string body)
+    {
+        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
+        return $"/tell {pairing.PeerName}@{pairing.PeerWorld} {trigger} {body}";
+    }
+
     public const string LeashTravelWord = "travel";
 
     /// `gesture stop` ends a held animation on the Sub.
@@ -110,6 +117,8 @@ public sealed class ChatComposer
         $"/tell {name}@{world} {StruggleNoticeKeyword} {word} {restraint}".TrimEnd();
 
     public const string StruggleNoticeKeyword = "collarstruggle";
+
+    public string ComposeGame(string name, string world, string body) => $"/tell {name}@{world} {Games.GamesService.Keyword} {body}";
     public const string StruggleFreeWord = "free";
     public const string StruggleKeyWord = "key";
 
