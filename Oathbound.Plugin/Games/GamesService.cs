@@ -21,6 +21,7 @@ public sealed class GameInvite
     public LossRule Loss { get; init; }
     public PromptRating Rating { get; init; }
     public int DeathrollStart { get; init; }
+    public GameEnd End { get; init; } = GameEnd.Never;
     public DateTime ExpiresAtUtc { get; init; }
 }
 
@@ -38,7 +39,11 @@ public sealed class GameSession
     public required RollChannel Channel { get; init; }
     public required LossRule Loss { get; init; }
     public required PromptRating Rating { get; init; }
+    public required GameEnd End { get; init; }
     public GameRules Rules { get; set; } = null!;
+    /// Set once the game is over: no more rounds, but forfeits still owed can be given until it's ended.
+    public Seat? GameLoser { get; set; }
+    public bool Over => GameLoser is not null;
 
     public Seat Peer => Me.Other();
     public int[] Losses { get; } = new int[2];
@@ -94,7 +99,7 @@ public sealed class GamesService
     // ---- Invites
 
     /// Null when sent, otherwise why it can't be.
-    public string? SendInvite(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int deathrollStart)
+    public string? SendInvite(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int deathrollStart, GameEnd end)
     {
         if (Session is not null)
             return "A game is already running.";
@@ -102,7 +107,7 @@ public sealed class GamesService
             return "An invite is already waiting for an answer.";
         if (config.ActivePairing is not { PeerName: { Length: > 0 } name, PeerWorld: { Length: > 0 } world } pairing)
             return "Pick a pairing first.";
-        if (GameWords.UsesDice(kind) && channel == RollChannel.Party)
+        if (channel == RollChannel.Party)
         {
             if (!RollReader.PartyRollsVerified)
                 return "Party rolls aren't available yet. Use nearby rolls.";
@@ -115,12 +120,13 @@ public sealed class GamesService
         var invite = new GameInvite
         {
             Id = NewSessionId(), PairingId = pairing.Id, PeerName = name, PeerWorld = world, Outgoing = true,
-            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = deathrollStart,
+            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = deathrollStart, End = end.For(loss),
             ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
         };
         var body = $"invite {invite.Id} {GameWords.Kinds[kind]} {GameWords.Channels[channel]} {GameWords.Losses[loss]} {GameWords.Ratings[rating]}";
         if (kind == GameKind.Deathroll)
             body += " " + deathrollStart.ToString(CultureInfo.InvariantCulture);
+        body += " " + invite.End.Word;
         Invite = invite;
         Send(name, world, body);
         return null;
@@ -158,11 +164,11 @@ public sealed class GamesService
         {
             Id = invite.Id, PairingId = invite.PairingId, PeerName = invite.PeerName, PeerWorld = invite.PeerWorld,
             MyName = GameSession.FirstName(myName), Me = me, Kind = invite.Kind, Channel = invite.Channel, Loss = invite.Loss,
-            Rating = invite.Rating,
+            Rating = invite.Rating, End = invite.End,
         };
         session.Rules = GameRules.Create(invite.Kind, session.NameOf, invite.DeathrollStart);
         Session = session;
-        AddLog(session, $"{GameWords.Name(invite.Kind)} started. Loss: {GameWords.Name(invite.Loss).ToLowerInvariant()}. {session.NameOf(Seat.Inviter)} goes first.");
+        AddLog(session, $"{GameWords.Name(invite.Kind)} started. Loss: {GameWords.Name(invite.Loss).ToLowerInvariant()}. Ends: {invite.End.Describe().ToLowerInvariant()}. {session.NameOf(Seat.Inviter)} goes first.");
         OathboundChat.Print($"{GameWords.Name(invite.Kind)} with {invite.PeerName} started.");
     }
 
@@ -171,7 +177,7 @@ public sealed class GamesService
     /// The roll command for this player's turn, or null when it isn't theirs to roll.
     public string? RollCommand()
     {
-        if (Session is not { } s || !GameWords.UsesDice(s.Kind) || s.Rules.ExpectedMax(s.Me) is not { } max)
+        if (Session is not { Over: false } s || s.Rules.ExpectedMax(s.Me) is not { } max)
             return null;
         var number = max.ToString(CultureInfo.InvariantCulture);
         return s.Channel == RollChannel.Party ? $"/dice party {number}" : $"/random {number}";
@@ -201,7 +207,7 @@ public sealed class GamesService
     /// `body` gets the session id. Applied locally only once it's queued, so both sides apply it.
     private bool Move(Func<GameSession, GameOutcome> action, Func<string, string> body)
     {
-        if (Session is not { } s)
+        if (Session is not { Over: false } s)
             return false;
         var outcome = action(s);
         if (!outcome.Accepted)
@@ -326,9 +332,15 @@ public sealed class GamesService
             || !GameWords.TryParse(GameWords.Losses, parts[2], out LossRule loss)
             || !GameWords.TryParse(GameWords.Ratings, parts[3], out PromptRating rating))
             return;
-        var start = parts.Length > 4 && int.TryParse(parts[4], NumberStyles.None, CultureInfo.InvariantCulture, out var n) && GameWords.DeathrollStarts.Contains(n)
-            ? n
-            : GameWords.DefaultDeathrollStart;
+        var start = GameWords.DefaultDeathrollStart;
+        var end = GameEnd.Never;
+        foreach (var option in parts.Skip(4))
+        {
+            if (GameEnd.TryParse(option, out var parsedEnd))
+                end = parsedEnd.For(loss);
+            else if (int.TryParse(option, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && GameWords.DeathrollStarts.Contains(n))
+                start = n;
+        }
         if (Session is not null || Invite is not null)
         {
             Plugin.Log.Information($"Game invite from {name} ignored: a game or invite is already open.");
@@ -337,7 +349,7 @@ public sealed class GamesService
         Invite = new GameInvite
         {
             Id = id, PairingId = pairing.Id, PeerName = name, PeerWorld = world, Outgoing = false,
-            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = start,
+            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = start, End = end,
             ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
         };
         Plugin.NotificationManager.AddNotification(new Notification
@@ -353,6 +365,9 @@ public sealed class GamesService
     {
         s.LastActivityUtc = DateTime.UtcNow;
         var (word, _) = Split(args);
+        // Once over, only what settles the last round still counts.
+        if (s.Over && verb is not ("forfeit" or "stripped" or "quit"))
+            return;
         switch (verb)
         {
             case "call":
@@ -391,7 +406,7 @@ public sealed class GamesService
     /// Roll lines from chat, from anyone. Only the two players' rolls in this session's channel matter.
     public void OnRollLine(RollLine roll)
     {
-        if (Session is not { } s || !GameWords.UsesDice(s.Kind) || roll.Channel != s.Channel)
+        if (Session is not { Over: false } s || roll.Channel != s.Channel)
             return;
         Seat seat;
         if (roll.Self)
@@ -440,6 +455,8 @@ public sealed class GamesService
         s.Losses[(int)loser]++;
         s.LastLoser = loser;
         AddLog(s, $"{s.NameOf(loser)} lost the round.");
+        if (s.End.Kind == GameEndKind.Rounds && s.Losses[(int)loser] >= s.End.Rounds)
+            GameOver(s, loser);
         if (loser == s.Peer)
         {
             if (s.Loss != LossRule.Strip)
@@ -462,6 +479,8 @@ public sealed class GamesService
                 AddLog(s, skipped.Length > 0 ? $"Nothing could come off ({skipped}) - a forfeit instead." : "Nothing left to take off - a forfeit instead.");
                 if (s.Loss == LossRule.Strip)
                     s.ForfeitsOwed++;
+                if (s.End.Kind == GameEndKind.OutOfClothes)
+                    GameOver(s, s.Me);
             }
         }
         if (s.Loss != LossRule.Strip)
@@ -475,11 +494,29 @@ public sealed class GamesService
             AddLog(s, $"{s.NameOf(s.Peer)} has nothing left to take off.");
             if (s.Loss == LossRule.Strip)
                 s.ForfeitsToGive++;
+            if (s.End.Kind == GameEndKind.OutOfClothes)
+                GameOver(s, s.Peer);
             return;
         }
         var piece = word.Replace('-', ' ');
         s.Stripped[(int)s.Peer].Add(piece);
         AddLog(s, $"{s.NameOf(s.Peer)}'s {piece} came off.");
+    }
+
+    private static void GameOver(GameSession s, Seat loser)
+    {
+        if (s.Over)
+            return;
+        s.GameLoser = loser;
+        var who = loser == s.Me ? "You" : s.PeerName;
+        AddLog(s, $"Game over: {s.NameOf(loser)} lost the game.");
+        OathboundChat.Print($"{GameWords.Name(s.Kind)} is over: {who} lost the game. End it in Games to get everything back.");
+        Plugin.NotificationManager.AddNotification(new Notification
+        {
+            Title = "Game over",
+            Content = $"{who} lost the game of {GameWords.Name(s.Kind)}.",
+            Type = NotificationType.Info,
+        });
     }
 
     private void MarkOutOfStep(GameSession s, string why)

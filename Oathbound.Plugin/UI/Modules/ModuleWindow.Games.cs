@@ -67,7 +67,7 @@ public sealed partial class ModuleWindow
         if (games.Invite is { Outgoing: false } incoming)
         {
             IconGlyph.WrappedColored(Theme.Warning, $"{incoming.PeerName} invites you to {GameWords.Name(incoming.Kind)}.");
-            IconGlyph.WrappedDisabled(DescribeTerms(incoming.Kind, incoming.Channel, incoming.Loss, incoming.Rating, incoming.DeathrollStart));
+            IconGlyph.WrappedDisabled(DescribeTerms(incoming.Kind, incoming.Channel, incoming.Loss, incoming.Rating, incoming.DeathrollStart, incoming.End));
             IconGlyph.WrappedDisabled("Accepting agrees to this loss rule for this game only. A strip loss takes a piece off your own character, and it all comes back when the game ends or you panic.");
             if (incoming.Loss != LossRule.Forfeit && !games.CanStrip)
                 IconGlyph.WrappedColored(Theme.Warning, "Glamourer isn't available, so your strip losses become forfeits.");
@@ -101,19 +101,16 @@ public sealed partial class ModuleWindow
         IconGlyph.WrappedDisabled(GameRulesText(newGameKind));
 
         var save = false;
-        if (GameWords.UsesDice(newGameKind))
+        var channel = (int)config.LastChannel;
+        Layout.ItemWidth(180);
+        if (ImGui.Combo("Rolls##gameChannel", ref channel, ["Nearby (/random)", "Party (/dice party)"], 2))
         {
-            var channel = (int)config.LastChannel;
-            Layout.ItemWidth(180);
-            if (ImGui.Combo("Rolls##gameChannel", ref channel, ["Nearby (/random)", "Party (/dice party)"], 2))
-            {
-                config.LastChannel = (RollChannel)channel;
-                save = true;
-            }
-            IconGlyph.HelpMarker(RollReader.PartyRollsVerified
-                ? "Nearby rolls are seen by everyone around you. Party rolls stay in party chat, but you both need to be in one party."
-                : "Nearby rolls are seen by everyone around you. Party rolls aren't available yet.");
+            config.LastChannel = (RollChannel)channel;
+            save = true;
         }
+        IconGlyph.HelpMarker(RollReader.PartyRollsVerified
+            ? "Nearby rolls are seen by everyone around you. Party rolls stay in party chat, but you both need to be in one party."
+            : "Nearby rolls are seen by everyone around you. Party rolls aren't available yet.");
         if (newGameKind == GameKind.Deathroll)
         {
             var start = Array.IndexOf(GameWords.DeathrollStarts, config.LastDeathrollStart);
@@ -142,18 +139,30 @@ public sealed partial class ModuleWindow
             save = true;
         }
         IconGlyph.HelpMarker("The most explicit card either of you can draw in this game.");
+        var end = new GameEnd(config.LastEndKind, config.LastEndRounds).For(config.LastLossRule);
+        var endChoices = GameEnd.Choices(config.LastLossRule);
+        var endIndex = Math.Max(0, Array.IndexOf(endChoices, end));
+        Layout.ItemWidth(180);
+        if (ImGui.Combo("Game ends##gameEnd", ref endIndex, endChoices.Select(e => e.Describe()).ToArray(), endChoices.Length))
+        {
+            end = endChoices[endIndex];
+            config.LastEndKind = end.Kind;
+            config.LastEndRounds = end.Rounds;
+            save = true;
+        }
+        IconGlyph.HelpMarker("Out of clothes: whoever loses a round with nothing left to take off loses the game. Either way, the last forfeit can still be given before you end it.");
         if (save)
             plugin.Configuration.Save();
 
         if (ImGui.Button($"Invite {pairing.PeerName}"))
-            gameInviteError = games.SendInvite(newGameKind, GameWords.UsesDice(newGameKind) ? config.LastChannel : RollChannel.Nearby, config.LastLossRule, config.LastRating, config.LastDeathrollStart);
+            gameInviteError = games.SendInvite(newGameKind, config.LastChannel, config.LastLossRule, config.LastRating, config.LastDeathrollStart, end);
         if (gameInviteError is not null)
             IconGlyph.WrappedColored(Theme.Warning, gameInviteError);
     }
 
     private void DrawGameSession(GamesService games, GameSession s)
     {
-        IconGlyph.WrappedDisabled(DescribeTerms(s.Kind, s.Channel, s.Loss, s.Rating, null));
+        IconGlyph.WrappedDisabled(DescribeTerms(s.Kind, s.Channel, s.Loss, s.Rating, null, s.End));
         ImGui.TextUnformatted($"Rounds lost - {s.NameOf(s.Me)}: {s.Losses[(int)s.Me]}, {s.NameOf(s.Peer)}: {s.Losses[(int)s.Peer]}");
         if (s.Loss != LossRule.Forfeit)
         {
@@ -161,11 +170,15 @@ public sealed partial class ModuleWindow
         }
 
         ImGui.Spacing();
-        IconGlyph.WrappedColored(s.Rules.IsTurnOf(s.Me) ? Theme.AccentHover : Theme.TextMuted, s.Rules.Status());
-        if (s.OutOfStep)
-            IconGlyph.WrappedColored(Theme.Warning, $"Your game and {s.PeerName}'s have drifted apart. Quit to end it and get everything back.");
-
-        DrawGameActions(games, s);
+        if (s.GameLoser is { } gameLoser)
+            IconGlyph.WrappedColored(Theme.Warning, $"Game over: {s.NameOf(gameLoser)} lost the game. End it to get everything back.");
+        else
+        {
+            IconGlyph.WrappedColored(s.Rules.IsTurnOf(s.Me) ? Theme.AccentHover : Theme.TextMuted, s.Rules.Status());
+            if (s.OutOfStep)
+                IconGlyph.WrappedColored(Theme.Warning, $"Your game and {s.PeerName}'s have drifted apart. Quit to end it and get everything back.");
+            DrawGameActions(games, s);
+        }
         DrawForfeits(games, s);
         DrawGameFollowUp(games, s);
 
@@ -180,16 +193,17 @@ public sealed partial class ModuleWindow
                     ImGui.SetScrollHereY(1f);
             }
         }
-        if (ImGui.Button("Quit game"))
+        if (ImGui.Button(s.Over ? "End game" : "Quit game"))
             games.Quit();
         IconGlyph.HelpMarker("Ends the game for both of you. Everything taken off comes back.");
     }
 
     private void DrawGameActions(GamesService games, GameSession s)
     {
-        if (GameWords.UsesDice(s.Kind))
+        var command = games.RollCommand();
+        // Truth or Dare only rolls between rounds; its other buttons stand in for it the rest of the time.
+        if (command is not null || s.Kind != GameKind.TruthOrDare)
         {
-            var command = games.RollCommand();
             using (ImRaii.Disabled(command is null))
             {
                 if (ImGui.Button(command is null ? "Roll" : $"Roll ({command})"))
@@ -246,7 +260,7 @@ public sealed partial class ModuleWindow
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"Fills in a random {(tod.Dare ? "dare" : "truth")} from your cards, up to this game's rating.");
             ImGui.SameLine();
-            var command = tod.Dare ? DrawSendWithCommand(games, s, "gamePromptCommand", ref gamePromptCommand) : null;
+            var command = tod.Dare ? DrawSendWithCommand(games, s, "gamePromptCommand", gamePromptCommand, v => gamePromptCommand = v) : null;
             using (ImRaii.Disabled(GameDecks.Clean(gamePromptText).Length == 0 || command is { Fits: false }))
             {
                 if (ImGui.Button("Send##gamePromptSend"))
@@ -287,7 +301,7 @@ public sealed partial class ModuleWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Fills in a random forfeit from your cards, up to this game's rating.");
         ImGui.SameLine();
-        var command = DrawSendWithCommand(games, s, "gameForfeitCommand", ref gameForfeitCommand);
+        var command = DrawSendWithCommand(games, s, "gameForfeitCommand", gameForfeitCommand, v => gameForfeitCommand = v);
         using (ImRaii.Disabled(GameDecks.Clean(gameForfeitText).Length == 0 || command is { Fits: false }))
         {
             if (ImGui.Button("Send##gameForfeitSend"))
@@ -299,22 +313,22 @@ public sealed partial class ModuleWindow
         }
     }
 
+    private const string CardCommandPurpose = "Sent with this card when you draw it as the other player's Owner. It only applies within their permissions.";
+
     private static GameCommand? CardCommand(GameCard card) =>
         card.Command is { Length: > 0 } command ? new GameCommand(card.CommandLabel ?? command, command) : null;
 
     /// The Owner's command picker beside Send, and the composed messages to send. Null for a Sub, or with no command
     /// picked; not fitting when this pairing isn't the active one, since commands go to the active pairing.
-    private (IReadOnlyList<string> Messages, bool Fits)? DrawSendWithCommand(GamesService games, GameSession s, string id, ref GameCommand? attached)
+    private (IReadOnlyList<string> Messages, bool Fits)? DrawSendWithCommand(GamesService games, GameSession s, string id, GameCommand? attached, Action<GameCommand?> set)
     {
         if (!games.IsOwnerOfPeer(s))
         {
-            attached = null;
+            if (attached is not null)
+                set(null);
             return null;
         }
-        Layout.ItemWidth(180);
-        DrawGameCommandPicker(id, ref attached);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"A saved command sent to {s.PeerName} with it. It only applies within their permissions.");
+        DrawGameCommandPicker(id, attached, set, $"Sent to {s.PeerName} with it. It only applies within their permissions.");
         ImGui.SameLine();
         if (attached is not { } picked)
             return null;
@@ -324,32 +338,30 @@ public sealed partial class ModuleWindow
         return (messages, Commands.ChatComposer.AllFit(messages));
     }
 
-    /// Returns whether the pick changed.
-    private bool DrawGameCommandPicker(string id, ref GameCommand? value)
+    /// A button naming the attached command that opens the command picker, and a clear button once one is attached.
+    private void DrawGameCommandPicker(string id, GameCommand? current, Action<GameCommand?> set, string purpose)
     {
-        var changed = false;
-        using var combo = ImRaii.Combo($"##{id}", value is { } current ? current.Label : "No command");
-        if (!combo)
-            return false;
-        if (ImGui.Selectable("No command", value is null))
+        var label = current is { } attached ? $"+ {attached.Label}" : "+ Command...";
+        var maxWidth = Layout.Scaled(180);
+        var text = label;
+        while (text.Length > 4 && ImGui.CalcTextSize(text).X + ImGui.GetStyle().FramePadding.X * 2 > maxWidth)
+            text = text[..^2];
+        if (text != label)
+            text = text.TrimEnd() + "...";
+        if (ImGui.Button($"{text}##{id}"))
+            plugin.CommandPickerWindow.Open(purpose, cmd => set(new GameCommand(cmd.Label, OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd))));
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(current is { } shown ? $"{shown.Label}\n\n{purpose}\nClick to change." : $"Optional: attach one of your saved commands.\n{purpose}");
+        if (current is null)
+            return;
+        ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
+        using (ImRaii.PushId($"clear_{id}"))
         {
-            value = null;
-            changed = true;
+            if (IconGlyph.Button(FontAwesomeIcon.Times, new System.Numerics.Vector2(ImGui.GetFrameHeight(), ImGui.GetFrameHeight())))
+                set(null);
         }
-        foreach (var (category, commands) in QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands))
-        {
-            if (commands.Count == 0)
-                continue;
-            ImGui.TextDisabled(category);
-            foreach (var cmd in commands)
-            {
-                if (!ImGui.Selectable($"{cmd.Label}##{id}{category}{cmd.Command}"))
-                    continue;
-                value = new GameCommand(cmd.Label, OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
-                changed = true;
-            }
-        }
-        return changed;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Remove the command");
     }
 
     /// The Owner's favorites after their Sub loses, applied like from any other module: only within permissions.
@@ -467,10 +479,7 @@ public sealed partial class ModuleWindow
             if (takesCommand)
             {
                 ImGui.SameLine();
-                Layout.ItemWidth(160);
-                DrawGameCommandPicker("newCardCommand", ref newCardCommand);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("A saved command sent with this card when you draw it as the other player's Owner. It only applies within their permissions.");
+                DrawGameCommandPicker("newCardCommand", newCardCommand, v => newCardCommand = v, CardCommandPurpose);
             }
             ImGui.SameLine();
             using (ImRaii.Disabled(GameDecks.Clean(newCardText).Length == 0))
@@ -504,14 +513,13 @@ public sealed partial class ModuleWindow
                 if (card.Kind != GameCardKind.Truth)
                 {
                     ImGui.SameLine();
-                    var attached = CardCommand(card);
-                    Layout.ItemWidth(160);
-                    if (DrawGameCommandPicker("cardCommand", ref attached))
+                    var config = plugin.Configuration;
+                    DrawGameCommandPicker("cardCommand", CardCommand(card), v =>
                     {
-                        card.Command = attached?.Command;
-                        card.CommandLabel = attached?.Label;
-                        changed = true;
-                    }
+                        card.Command = v?.Command;
+                        card.CommandLabel = v?.Label;
+                        config.Save();
+                    }, CardCommandPurpose);
                 }
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Delete"))
@@ -563,15 +571,15 @@ public sealed partial class ModuleWindow
         _ => "Strip a piece and take a forfeit",
     };
 
-    private static string DescribeTerms(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int? deathrollStart)
+    private static string DescribeTerms(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int? deathrollStart, GameEnd end)
     {
         var parts = new System.Collections.Generic.List<string>();
-        if (GameWords.UsesDice(kind))
-            parts.Add(channel == RollChannel.Party ? "rolls in party chat" : "rolls nearby");
+        parts.Add(channel == RollChannel.Party ? "rolls in party chat" : "rolls nearby");
         if (kind == GameKind.Deathroll && deathrollStart is { } start)
             parts.Add($"starting at {start}");
         parts.Add($"losing a round: {DescribeLoss(loss).ToLowerInvariant()}");
         parts.Add($"cards up to {GameWords.Name(rating).ToLowerInvariant()}");
+        parts.Add($"ends: {end.Describe().ToLowerInvariant()}");
         return string.Join(", ", parts) + ".";
     }
 
@@ -581,6 +589,6 @@ public sealed partial class ModuleWindow
         GameKind.HighRoll => "Both roll up to 999. The lower roll loses; a tie rolls again.",
         GameKind.HigherLower => "Call whether the next roll (up to 100) beats the number. Wrong loses; right passes the turn and builds the streak.",
         GameKind.TwentyOne => "Hit to add a roll of up to 10, or stand. Over 21 loses at once; otherwise the lower total loses.",
-        _ => "Pick truth or dare; the other writes or draws one. Refusing loses the round.",
+        _ => "Both roll up to 999; the lower roll picks truth or dare and the winner writes or draws one. Refusing loses the round.",
     };
 }

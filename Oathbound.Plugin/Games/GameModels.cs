@@ -36,6 +36,67 @@ public enum PromptRating
     Explicit,
 }
 
+public enum GameEndKind
+{
+    /// A player who loses a round with nothing left to take off loses the game. Strip rules only.
+    OutOfClothes,
+    /// The first player to lose this many rounds loses the game.
+    Rounds,
+    /// Only Quit ends it.
+    Never,
+}
+
+/// When a game is over. Both clients judge it from the same events, so both reach the same end.
+public readonly record struct GameEnd(GameEndKind Kind, int Rounds = 0)
+{
+    public static readonly GameEnd Clothes = new(GameEndKind.OutOfClothes);
+    public static readonly GameEnd Never = new(GameEndKind.Never);
+    public static readonly int[] RoundChoices = [3, 5, 10];
+    public static readonly GameEnd DefaultRounds = new(GameEndKind.Rounds, 5);
+
+    /// The choices for a loss rule, in menu order.
+    public static GameEnd[] Choices(LossRule loss) =>
+        [.. loss == LossRule.Forfeit ? [] : new[] { Clothes }, .. RoundChoices.Select(n => new GameEnd(GameEndKind.Rounds, n)), Never];
+
+    /// One of Choices(loss). Out of clothes means nothing under a forfeit-only game, so it falls back to rounds there.
+    public GameEnd For(LossRule loss) => Kind switch
+    {
+        GameEndKind.OutOfClothes => loss == LossRule.Forfeit ? DefaultRounds : Clothes,
+        GameEndKind.Rounds => RoundChoices.Contains(Rounds) ? this : DefaultRounds,
+        _ => Never,
+    };
+
+    /// `end:clothes`, `end:<rounds>` or `end:never` in an invite.
+    public string Word => Kind switch
+    {
+        GameEndKind.OutOfClothes => "end:clothes",
+        GameEndKind.Rounds => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"end:{Rounds}"),
+        _ => "end:never",
+    };
+
+    public static bool TryParse(string word, out GameEnd end)
+    {
+        end = Never;
+        if (!word.StartsWith("end:", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var value = word[4..];
+        if (value.Equals("clothes", StringComparison.OrdinalIgnoreCase))
+            end = Clothes;
+        else if (int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var rounds) && RoundChoices.Contains(rounds))
+            end = new GameEnd(GameEndKind.Rounds, rounds);
+        else if (!value.Equals("never", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
+    }
+
+    public string Describe() => Kind switch
+    {
+        GameEndKind.OutOfClothes => "When someone runs out of clothes",
+        GameEndKind.Rounds => $"First to lose {Rounds} rounds",
+        _ => "Only when we quit",
+    };
+}
+
 /// The inviter always goes first; both clients agree on seats from who sent the invite.
 public enum Seat
 {
@@ -120,8 +181,6 @@ public static class GameWords
     public const int MaxRoll = 999;
     public static readonly int[] DeathrollStarts = [100, 500, MaxRoll];
     public const int DefaultDeathrollStart = MaxRoll;
-
-    public static bool UsesDice(GameKind kind) => kind != GameKind.TruthOrDare;
 }
 
 /// What a game action did, for the log and for the session to act on.
@@ -374,9 +433,12 @@ public sealed class TwentyOneRules : GameRules
 
 public sealed class TruthOrDareRules : GameRules
 {
-    private enum Phase { Pick, Prompt, Answer }
+    public const int Max = GameWords.MaxRoll;
 
-    private Phase phase = Phase.Pick;
+    private enum Phase { Roll, Pick, Prompt, Answer }
+
+    private Phase phase = Phase.Roll;
+    private readonly int?[] rolls = new int?[2];
 
     public Seat Answerer { get; private set; } = Seat.Inviter;
     public bool Dare { get; private set; }
@@ -385,16 +447,34 @@ public sealed class TruthOrDareRules : GameRules
     public TruthOrDareRules(Func<Seat, string> name) : base(name) { }
 
     public override GameKind Kind => GameKind.TruthOrDare;
-    public override string WhyNoRoll(Seat seat) => "Truth or Dare has no rolls";
+    public override int? ExpectedMax(Seat seat) => phase == Phase.Roll && rolls[(int)seat] is null ? Max : null;
+    public override string WhyNoRoll(Seat seat) => phase == Phase.Roll ? "you've already rolled this round" : "the next roll comes after this truth or dare";
 
     public override bool IsTurnOf(Seat seat) => phase switch
     {
+        Phase.Roll => rolls[(int)seat] is null,
         Phase.Prompt => seat != Answerer,
         _ => seat == Answerer,
     };
 
+    public override GameOutcome Roll(Seat seat, int value)
+    {
+        rolls[(int)seat] = value;
+        if (rolls[0] is not { } a || rolls[1] is not { } b)
+            return GameOutcome.Ok($"{Name(seat)} rolled {value}.");
+        rolls[0] = rolls[1] = null;
+        if (a == b)
+            return GameOutcome.Ok($"{Name(seat)} rolled {value} - a tie, both roll again.");
+        Answerer = a < b ? Seat.Inviter : Seat.Guest;
+        phase = Phase.Pick;
+        return GameOutcome.Ok($"{Name(seat)} rolled {value}. {Name(Answerer)} rolled lower and answers.");
+    }
+
     public override string Status() => phase switch
     {
+        Phase.Roll => rolls[0] is null && rolls[1] is null
+            ? $"Both roll up to {Max}. The lower roll answers."
+            : $"Waiting for {Name(rolls[0] is null ? Seat.Inviter : Seat.Guest)}'s roll.",
         Phase.Pick => $"{Name(Answerer)} picks truth or dare.",
         Phase.Prompt => $"{Name(Answerer)} picked {(Dare ? "dare" : "truth")}. {Name(Answerer.Other())} sends one.",
         _ => $"{Name(Answerer)}'s {(Dare ? "dare" : "truth")}: {PromptText}",
@@ -427,8 +507,7 @@ public sealed class TruthOrDareRules : GameRules
         if (!CanAnswer(seat))
             return GameOutcome.Refused("no answer is due");
         var kind = Dare ? "dare" : "truth";
-        Answerer = seat.Other();
-        phase = Phase.Pick;
+        phase = Phase.Roll;
         PromptText = null;
         return done
             ? GameOutcome.Ok($"{Name(seat)} did the {kind}.")

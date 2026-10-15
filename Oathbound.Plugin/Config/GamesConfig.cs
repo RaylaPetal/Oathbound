@@ -47,4 +47,6 @@ public sealed class GamesConfig
     public LossRule LastLossRule { get; set; }
     public PromptRating LastRating { get; set; } = PromptRating.Spicy;
     public int LastDeathrollStart { get; set; } = GameWords.DefaultDeathrollStart;
+    public GameEndKind LastEndKind { get; set; } = GameEndKind.OutOfClothes;
+    public int LastEndRounds { get; set; } = 5;
 }

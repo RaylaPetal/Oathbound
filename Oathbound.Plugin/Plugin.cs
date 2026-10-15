@@ -70,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
     private WelcomeWindow WelcomeWindow { get; }
     public AnimationPickerWindow AnimationPickerWindow { get; }
     public CustomizePresetPickerWindow CustomizePresetPickerWindow { get; }
+    public CommandPickerWindow CommandPickerWindow { get; }
     public ItemPickerWindow ItemPickerWindow { get; }
     public FavoritesWindow FavoritesWindow { get; }
     public SnapshotOverlay Snapshot { get; }
@@ -287,6 +288,7 @@ public sealed class Plugin : IDalamudPlugin
         WelcomeWindow = new WelcomeWindow(this);
         AnimationPickerWindow = new AnimationPickerWindow(this);
         CustomizePresetPickerWindow = new CustomizePresetPickerWindow(this);
+        CommandPickerWindow = new CommandPickerWindow(this);
         ItemPickerWindow = new ItemPickerWindow(this);
         FavoritesWindow = new FavoritesWindow(this);
         QuickAccessMenuHost = new QuickAccessMenuHost(this);
@@ -312,6 +314,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(WelcomeWindow);
         WindowSystem.AddWindow(AnimationPickerWindow);
         WindowSystem.AddWindow(CustomizePresetPickerWindow);
+        WindowSystem.AddWindow(CommandPickerWindow);
         WindowSystem.AddWindow(ItemPickerWindow);
         WindowSystem.AddWindow(FavoritesWindow);
         WindowSystem.AddWindow(QuickAccessMenuHost);
@@ -436,6 +439,7 @@ public sealed class Plugin : IDalamudPlugin
         WelcomeWindow.Dispose();
         AnimationPickerWindow.Dispose();
         CustomizePresetPickerWindow.Dispose();
+        CommandPickerWindow.Dispose();
         ItemPickerWindow.Dispose();
         QuickAccessMenuHost.Dispose();
         favoritesDtrEntry.Remove();
