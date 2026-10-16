@@ -37,10 +37,22 @@ public sealed class CageService
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AreaSettle = TimeSpan.FromSeconds(2);
     private const uint DismountAction = 23;
-    /// How close to a house's door the journey must end for the door to be opened.
-    private const float DoorReach = 8f;
-    /// The door object sits on the plot entrance Lifestream reports; anything farther is another plot's.
-    private const float DoorMatch = 4f;
+    /// How far from the plot entrance Lifestream reports the house's door can be; the journey ends at the gate.
+    private const float DoorSearch = 30f;
+    /// Close enough to the door to open it.
+    private const float DoorTouch = 3.5f;
+    /// The house door's name in every client language. The plot's placard stands right by the entrance point too,
+    /// so the door is found by name, not by being nearest.
+    private static readonly string[] DoorNames =
+    [
+        "Entrance",
+        "Eingang",
+        "Entr\u00e9e",
+        "\u30cf\u30a6\u30b9\u3078\u5165\u308b",
+        "\u8fdb\u5165\u623f\u5c4b",
+        "\u9032\u5165\u623f\u5c4b",
+        "\uc8fc\ud0dd\uc73c\ub85c \ub4e4\uc5b4\uac00\uae30",
+    ];
     private static readonly TimeSpan DoorGiveUp = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan DoorRetry = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan DoorPromptWindow = TimeSpan.FromSeconds(10);
@@ -82,6 +94,9 @@ public sealed class CageService
     private DateTime? doorSince;
     private DateTime doorTouchedAt = DateTime.MinValue;
     private DateTime doorAnsweredAt = DateTime.MinValue;
+    private CancellationTokenSource? doorPathCancel;
+    private Task<List<Vector3>>? doorPath;
+    private DateTime doorPathAt = DateTime.MinValue;
 
     // Written by OnFrameworkUpdate, read by Confine (both on the main thread).
     private Vector2 center;
@@ -346,7 +361,7 @@ public sealed class CageService
     private void Close(SubCageState cage, DateTime now)
     {
         navUnavailableNotified = false;
-        houseDoor = null;
+        StopDoorWalk();
         cage.Phase = CagePhase.Caged;
         if (!cage.HasClosed)
         {
@@ -514,7 +529,7 @@ public sealed class CageService
 
     private void ReleaseClaims()
     {
-        houseDoor = null;
+        StopDoorWalk();
         StopWalk();
         Unconfine();
     }
@@ -536,17 +551,38 @@ public sealed class CageService
     /// the same steps a player takes. Inside, the cage's place matches and it closes as usual. Gives up after DoorGiveUp.
     private unsafe void EnterHouse(SubCageState cage, Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, DateTime now)
     {
-        if (houseDoor is not { } door || teleport.IsInProgress)
+        if (houseDoor is not { } plotEntrance || teleport.IsInProgress)
             return;
         doorSince ??= now;
-        if (Vector3.Distance(player.Position, door) > DoorReach || now - doorSince.Value >= DoorGiveUp)
+        if (Vector3.Distance(player.Position, plotEntrance) > DoorSearch || now - doorSince.Value >= DoorGiveUp)
         {
-            houseDoor = null;
-            movementLock.ReleaseSuppressInput(LockOwner);
+            StopDoorWalk();
             Notify("Cage waiting", $"You couldn't be taken inside for \"{cage.Name}\". It closes once you go in.", NotificationType.Info);
             return;
         }
         movementLock.EngageSuppressInput(LockOwner);
+
+        if (now - doorTouchedAt < DoorPromptWindow && now - doorAnsweredAt >= DoorRetry && AnswerDoorPrompt())
+        {
+            doorAnsweredAt = now;
+            return;
+        }
+
+        var entrance = Plugin.ObjectTable
+            .Where(o => o.IsTargetable && DoorNames.Any(n => o.Name.TextValue.Equals(n, StringComparison.OrdinalIgnoreCase))
+                        && Vector3.Distance(o.Position, plotEntrance) <= DoorSearch)
+            .OrderBy(o => Vector3.Distance(o.Position, plotEntrance))
+            .FirstOrDefault();
+        if (entrance is null)
+            return;
+
+        if (Vector3.Distance(player.Position, entrance.Position) > DoorTouch)
+        {
+            WalkToDoor(player.Position, entrance.Position, now);
+            return;
+        }
+        if (vnavmesh.TryIsRunning())
+            vnavmesh.TryStop();
 
         if (Plugin.Condition[ConditionFlag.Mounted])
         {
@@ -559,26 +595,48 @@ public sealed class CageService
             }
             return;
         }
-
-        if (now - doorTouchedAt < DoorPromptWindow && now - doorAnsweredAt >= DoorRetry && AnswerDoorPrompt())
-        {
-            doorAnsweredAt = now;
-            return;
-        }
         if (now - doorTouchedAt < DoorRetry)
             return;
 
-        var entrance = Plugin.ObjectTable
-            .Where(o => o.ObjectKind == ObjectKind.EventObj && o.IsTargetable && Vector3.Distance(o.Position, door) <= DoorMatch)
-            .OrderBy(o => Vector3.Distance(o.Position, door))
-            .FirstOrDefault();
-        if (entrance is null)
-            return;
         Plugin.TargetManager.Target = entrance;
         var targets = TargetSystem.Instance();
         if (targets != null)
             targets->InteractWithObject((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)entrance.Address, false);
         doorTouchedAt = now;
+    }
+
+    /// From the plot's gate up to the door: one path at a time, asked again only once the last one has finished.
+    private void WalkToDoor(Vector3 from, Vector3 door, DateTime now)
+    {
+        if (doorPath is { IsCompleted: true } done)
+        {
+            doorPath = null;
+            if (done.IsCompletedSuccessfully && done.Result is { Count: > 0 } path)
+                vnavmesh.TryMoveTo(path, false);
+            return;
+        }
+        if (doorPath is not null || vnavmesh.TryIsRunning() || now - doorPathAt < DoorRetry || !vnavmesh.TryIsReady())
+            return;
+        doorPathCancel?.Cancel();
+        doorPathCancel?.Dispose();
+        doorPathCancel = new CancellationTokenSource();
+        var to = vnavmesh.TryNearestPointReachable(door, 2f, 3f) ?? door;
+        doorPath = vnavmesh.TryPathfind(from, to, false, doorPathCancel.Token);
+        doorPathAt = now;
+    }
+
+    private void StopDoorWalk()
+    {
+        if (houseDoor is null)
+            return;
+        houseDoor = null;
+        doorPathCancel?.Cancel();
+        doorPathCancel?.Dispose();
+        doorPathCancel = null;
+        doorPath = null;
+        if (vnavmesh.TryIsRunning())
+            vnavmesh.TryStop();
+        movementLock.ReleaseSuppressInput(LockOwner);
     }
 
     /// At an edge of the rectangle, the part of the wish that crosses it is removed, so the Sub slides along it.
