@@ -49,4 +49,17 @@ public sealed class GamesConfig
     public int LastDeathrollStart { get; set; } = GameWords.DefaultDeathrollStart;
     public GameEndKind LastEndKind { get; set; } = GameEndKind.OutOfClothes;
     public int LastEndRounds { get; set; } = 5;
+    public int LastPenaltyMinutes { get; set; }
+    /// The lost game's penalty this player is serving, if any.
+    public GamePenaltyRecord? Penalty { get; set; }
+}
+
+/// Wall-clock end, so it keeps counting while logged out. Several lost games can share one penalty; the last one to
+/// end sets EndsAtUtc.
+[Serializable]
+public sealed class GamePenaltyRecord
+{
+    public Guid PairingId { get; set; }
+    public List<string> SessionIds { get; set; } = new();
+    public DateTime EndsAtUtc { get; set; }
 }

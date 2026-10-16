@@ -44,6 +44,8 @@ public sealed partial class ModuleWindow
         IconGlyph.WrappedDisabled("Play with the other person of your active pairing. Either of you can lose, and a loss only ever changes the loser's own character. Panic ends the game and gives everything back.");
 
         var games = plugin.Games;
+        if (games.Penalty is { } penalty)
+            IconGlyph.WrappedColored(Theme.Warning, $"You lost a game: locked naked for {Commands.RestraintLock.Format(penalty.EndsAtUtc - DateTime.UtcNow)} more. Panic ends it early.");
         if (games.Session is { } session)
         {
             using (Section.Begin("gamesSession", $"{GameWords.Name(session.Kind)} with {session.PeerName}"))
@@ -67,8 +69,10 @@ public sealed partial class ModuleWindow
         if (games.Invite is { Outgoing: false } incoming)
         {
             IconGlyph.WrappedColored(Theme.Warning, $"{incoming.PeerName} invites you to {GameWords.Name(incoming.Kind)}.");
-            IconGlyph.WrappedDisabled(DescribeTerms(incoming.Kind, incoming.Channel, incoming.Loss, incoming.Rating, incoming.DeathrollStart, incoming.End));
+            IconGlyph.WrappedDisabled(DescribeTerms(incoming.Kind, incoming.Channel, incoming.Loss, incoming.Rating, incoming.DeathrollStart, incoming.End, incoming.Penalty));
             IconGlyph.WrappedDisabled("Accepting agrees to this loss rule for this game only. A strip loss takes a piece off your own character, and it all comes back when the game ends or you panic.");
+            if (!incoming.Penalty.IsOff)
+                IconGlyph.WrappedColored(Theme.Warning, $"Penalty: whoever loses the game is stripped of everything in their strip order and locked naked for {incoming.Penalty.DescribeLength()}, even after the game ends. Panic ends it early.");
             if (incoming.Loss != LossRule.Forfeit && !games.CanStrip)
                 IconGlyph.WrappedColored(Theme.Warning, "Glamourer isn't available, so your strip losses become forfeits.");
             if (ImGui.Button("Accept"))
@@ -151,18 +155,32 @@ public sealed partial class ModuleWindow
             save = true;
         }
         IconGlyph.HelpMarker("Out of clothes: whoever loses a round with nothing left to take off loses the game. Either way, the last forfeit can still be given before you end it.");
+        var penalty = GamePenalty.Off;
+        if (GamePenalty.Allowed(config.LastLossRule, end))
+        {
+            penalty = new GamePenalty(config.LastPenaltyMinutes).For(config.LastLossRule, end);
+            var penaltyIndex = Math.Max(0, Array.IndexOf(GamePenalty.MinuteChoices, penalty.Minutes));
+            Layout.ItemWidth(180);
+            if (ImGui.Combo("Penalty##gamePenalty", ref penaltyIndex, GamePenalty.MinuteChoices.Select(m => new GamePenalty(m).Describe()).ToArray(), GamePenalty.MinuteChoices.Length))
+            {
+                penalty = new GamePenalty(GamePenalty.MinuteChoices[penaltyIndex]);
+                config.LastPenaltyMinutes = penalty.Minutes;
+                save = true;
+            }
+            IconGlyph.HelpMarker("Whoever loses the game has everything left in their strip order taken off, and stays locked naked this long after the game ends. It keeps counting while they're logged out. Panic ends it early.");
+        }
         if (save)
             plugin.Configuration.Save();
 
         if (ImGui.Button($"Invite {pairing.PeerName}"))
-            gameInviteError = games.SendInvite(newGameKind, config.LastChannel, config.LastLossRule, config.LastRating, config.LastDeathrollStart, end);
+            gameInviteError = games.SendInvite(newGameKind, config.LastChannel, config.LastLossRule, config.LastRating, config.LastDeathrollStart, end, penalty);
         if (gameInviteError is not null)
             IconGlyph.WrappedColored(Theme.Warning, gameInviteError);
     }
 
     private void DrawGameSession(GamesService games, GameSession s)
     {
-        IconGlyph.WrappedDisabled(DescribeTerms(s.Kind, s.Channel, s.Loss, s.Rating, null, s.End));
+        IconGlyph.WrappedDisabled(DescribeTerms(s.Kind, s.Channel, s.Loss, s.Rating, null, s.End, s.Penalty));
         ImGui.TextUnformatted($"Rounds lost - {s.NameOf(s.Me)}: {s.Losses[(int)s.Me]}, {s.NameOf(s.Peer)}: {s.Losses[(int)s.Peer]}");
         if (s.Loss != LossRule.Forfeit)
         {
@@ -171,7 +189,9 @@ public sealed partial class ModuleWindow
 
         ImGui.Spacing();
         if (s.GameLoser is { } gameLoser)
-            IconGlyph.WrappedColored(Theme.Warning, $"Game over: {s.NameOf(gameLoser)} lost the game. End it to get everything back.");
+            IconGlyph.WrappedColored(Theme.Warning, s.Penalty.IsOff
+                ? $"Game over: {s.NameOf(gameLoser)} lost the game. End it to get everything back."
+                : $"Game over: {s.NameOf(gameLoser)} lost the game and stays locked naked for {s.Penalty.DescribeLength()}.");
         else
         {
             IconGlyph.WrappedColored(s.Rules.IsTurnOf(s.Me) ? Theme.AccentHover : Theme.TextMuted, s.Rules.Status());
@@ -195,7 +215,9 @@ public sealed partial class ModuleWindow
         }
         if (ImGui.Button(s.Over ? "End game" : "Quit game"))
             games.Quit();
-        IconGlyph.HelpMarker("Ends the game for both of you. Everything taken off comes back.");
+        IconGlyph.HelpMarker(s.Penalty.IsOff
+            ? "Ends the game for both of you. Everything taken off comes back."
+            : "Ends the game for both of you. Everything taken off comes back, except for the loser of the game, who stays locked naked until the penalty ends.");
     }
 
     private void DrawGameActions(GamesService games, GameSession s)
@@ -571,7 +593,7 @@ public sealed partial class ModuleWindow
         _ => "Strip a piece and take a forfeit",
     };
 
-    private static string DescribeTerms(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int? deathrollStart, GameEnd end)
+    private static string DescribeTerms(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int? deathrollStart, GameEnd end, GamePenalty penalty)
     {
         var parts = new System.Collections.Generic.List<string>();
         parts.Add(channel == RollChannel.Party ? "rolls in party chat" : "rolls nearby");
@@ -580,6 +602,8 @@ public sealed partial class ModuleWindow
         parts.Add($"losing a round: {DescribeLoss(loss).ToLowerInvariant()}");
         parts.Add($"cards up to {GameWords.Name(rating).ToLowerInvariant()}");
         parts.Add($"ends: {end.Describe().ToLowerInvariant()}");
+        if (!penalty.IsOff)
+            parts.Add($"loser of the game: {penalty.Describe().ToLowerInvariant()}");
         return string.Join(", ", parts) + ".";
     }
 

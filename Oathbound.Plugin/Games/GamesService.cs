@@ -22,6 +22,7 @@ public sealed class GameInvite
     public PromptRating Rating { get; init; }
     public int DeathrollStart { get; init; }
     public GameEnd End { get; init; } = GameEnd.Never;
+    public GamePenalty Penalty { get; init; }
     public DateTime ExpiresAtUtc { get; init; }
 }
 
@@ -40,6 +41,7 @@ public sealed class GameSession
     public required LossRule Loss { get; init; }
     public required PromptRating Rating { get; init; }
     public required GameEnd End { get; init; }
+    public required GamePenalty Penalty { get; init; }
     public GameRules Rules { get; set; } = null!;
     /// Set once the game is over: no more rounds, but forfeits still owed can be given until it's ended.
     public Seat? GameLoser { get; set; }
@@ -99,7 +101,7 @@ public sealed class GamesService
     // ---- Invites
 
     /// Null when sent, otherwise why it can't be.
-    public string? SendInvite(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int deathrollStart, GameEnd end)
+    public string? SendInvite(GameKind kind, RollChannel channel, LossRule loss, PromptRating rating, int deathrollStart, GameEnd end, GamePenalty penalty)
     {
         if (Session is not null)
             return "A game is already running.";
@@ -116,17 +118,20 @@ public sealed class GamesService
         }
         if (!GameWords.DeathrollStarts.Contains(deathrollStart))
             deathrollStart = GameWords.DefaultDeathrollStart;
+        end = end.For(loss);
 
         var invite = new GameInvite
         {
             Id = NewSessionId(), PairingId = pairing.Id, PeerName = name, PeerWorld = world, Outgoing = true,
-            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = deathrollStart, End = end.For(loss),
-            ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
+            Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = deathrollStart, End = end,
+            Penalty = penalty.For(loss, end), ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
         };
         var body = $"invite {invite.Id} {GameWords.Kinds[kind]} {GameWords.Channels[channel]} {GameWords.Losses[loss]} {GameWords.Ratings[rating]}";
         if (kind == GameKind.Deathroll)
             body += " " + deathrollStart.ToString(CultureInfo.InvariantCulture);
         body += " " + invite.End.Word;
+        if (!invite.Penalty.IsOff)
+            body += " " + invite.Penalty.Word;
         Invite = invite;
         Send(name, world, body);
         return null;
@@ -164,11 +169,11 @@ public sealed class GamesService
         {
             Id = invite.Id, PairingId = invite.PairingId, PeerName = invite.PeerName, PeerWorld = invite.PeerWorld,
             MyName = GameSession.FirstName(myName), Me = me, Kind = invite.Kind, Channel = invite.Channel, Loss = invite.Loss,
-            Rating = invite.Rating, End = invite.End,
+            Rating = invite.Rating, End = invite.End, Penalty = invite.Penalty,
         };
         session.Rules = GameRules.Create(invite.Kind, session.NameOf, invite.DeathrollStart);
         Session = session;
-        AddLog(session, $"{GameWords.Name(invite.Kind)} started. Loss: {GameWords.Name(invite.Loss).ToLowerInvariant()}. Ends: {invite.End.Describe().ToLowerInvariant()}. {session.NameOf(Seat.Inviter)} goes first.");
+        AddLog(session, $"{GameWords.Name(invite.Kind)} started. Loss: {GameWords.Name(invite.Loss).ToLowerInvariant()}. Ends: {invite.End.Describe().ToLowerInvariant()}. Penalty: {invite.Penalty.Describe().ToLowerInvariant()}. {session.NameOf(Seat.Inviter)} goes first.");
         OathboundChat.Print($"{GameWords.Name(invite.Kind)} with {invite.PeerName} started.");
     }
 
@@ -260,6 +265,7 @@ public sealed class GamesService
     {
         Invite = null;
         End("panic", "The game ended: panic.", notifyPeer: true);
+        EndPenalty("Panic ended your game penalty.");
     }
 
     public void OnLogout()
@@ -275,8 +281,11 @@ public sealed class GamesService
     public void OnLogin()
     {
         if (Session is null)
-            strip.RestoreStale();
+            strip.RestoreStale(config.Games.Penalty is { } penalty && DateTime.UtcNow < penalty.EndsAtUtc ? penalty.SessionIds : []);
     }
+
+    /// The lost game's penalty this player is serving, if any.
+    public GamePenaltyRecord? Penalty => config.Games.Penalty;
 
     // ---- Chat input
 
@@ -334,10 +343,13 @@ public sealed class GamesService
             return;
         var start = GameWords.DefaultDeathrollStart;
         var end = GameEnd.Never;
+        var penalty = GamePenalty.Off;
         foreach (var option in parts.Skip(4))
         {
             if (GameEnd.TryParse(option, out var parsedEnd))
                 end = parsedEnd.For(loss);
+            else if (GamePenalty.TryParse(option, out var parsedPenalty))
+                penalty = parsedPenalty;
             else if (int.TryParse(option, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && GameWords.DeathrollStarts.Contains(n))
                 start = n;
         }
@@ -350,12 +362,12 @@ public sealed class GamesService
         {
             Id = id, PairingId = pairing.Id, PeerName = name, PeerWorld = world, Outgoing = false,
             Kind = kind, Channel = channel, Loss = loss, Rating = rating, DeathrollStart = start, End = end,
-            ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
+            Penalty = penalty.For(loss, end), ExpiresAtUtc = DateTime.UtcNow + InviteLifetime,
         };
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Game invite",
-            Content = $"{name} invites you to {GameWords.Name(kind)} ({GameWords.Name(loss).ToLowerInvariant()}). Answer in Games.",
+            Content = $"{name} invites you to {GameWords.Name(kind)} ({GameWords.Name(loss).ToLowerInvariant()}{(Invite.Penalty.IsOff ? "" : ", " + Invite.Penalty.Describe().ToLowerInvariant())}). Answer in Games.",
             Type = NotificationType.Info,
         });
         OathboundChat.Print($"{name} invites you to {GameWords.Name(kind)}. Open Games to accept or decline.");
@@ -485,6 +497,9 @@ public sealed class GamesService
         }
         if (s.Loss != LossRule.Strip)
             s.ForfeitsOwed++;
+        // After the round's own piece, so the round is paid as it would be without a penalty.
+        if (s.GameLoser == s.Me && !s.Penalty.IsOff)
+            StartPenalty(s);
     }
 
     private void OnPeerStripped(GameSession s, string word)
@@ -510,13 +525,65 @@ public sealed class GamesService
         s.GameLoser = loser;
         var who = loser == s.Me ? "You" : s.PeerName;
         AddLog(s, $"Game over: {s.NameOf(loser)} lost the game.");
-        OathboundChat.Print($"{GameWords.Name(s.Kind)} is over: {who} lost the game. End it in Games to get everything back.");
+        if (!s.Penalty.IsOff)
+            AddLog(s, $"{s.NameOf(loser)} is locked naked for {s.Penalty.DescribeLength()}, until {DateTime.Now + s.Penalty.Length:HH:mm}.");
+        OathboundChat.Print(s.Penalty.IsOff
+            ? $"{GameWords.Name(s.Kind)} is over: {who} lost the game. End it in Games to get everything back."
+            : $"{GameWords.Name(s.Kind)} is over: {who} lost the game, locked naked for {s.Penalty.DescribeLength()}.");
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Game over",
             Content = $"{who} lost the game of {GameWords.Name(s.Kind)}.",
             Type = NotificationType.Info,
         });
+    }
+
+    // ---- Penalty
+
+    private void StartPenalty(GameSession s)
+    {
+        var record = config.Games.Penalty;
+        if (record is not null && record.PairingId != s.PairingId)
+        {
+            EndPenalty(null);
+            record = null;
+        }
+        record ??= config.Games.Penalty = new GamePenaltyRecord { PairingId = s.PairingId };
+        if (!record.SessionIds.Contains(s.Id))
+            record.SessionIds.Add(s.Id);
+        var endsAt = DateTime.UtcNow + s.Penalty.Length;
+        if (endsAt > record.EndsAtUtc)
+            record.EndsAtUtc = endsAt;
+        config.Save();
+
+        var locked = strip.LockNaked(s.Id);
+        s.Stripped[(int)s.Me].Clear();
+        s.Stripped[(int)s.Me].AddRange(locked.Select(StripService.SlotName));
+        OathboundChat.Print($"You lost the game: you're locked naked until {record.EndsAtUtc.ToLocalTime():HH:mm}. Panic ends it early.");
+        Plugin.Log.Information($"Game {s.Id} penalty started: {locked.Count} slot(s) held until {record.EndsAtUtc:O}.");
+    }
+
+    /// Releases the penalty once it's over, or when its pairing ended.
+    private void CheckPenalty(DateTime now)
+    {
+        if (config.Games.Penalty is not { } record)
+            return;
+        if (config.FindPairingById(record.PairingId) is not { IsPaired: true })
+            EndPenalty("Your game penalty ended: the pairing ended.");
+        else if (now >= record.EndsAtUtc && Plugin.ObjectTable.LocalPlayer is not null && strip.IsAvailable)
+            EndPenalty("Your game penalty is over.");
+    }
+
+    private void EndPenalty(string? message)
+    {
+        if (config.Games.Penalty is not { } record)
+            return;
+        config.Games.Penalty = null;
+        config.Save();
+        strip.ReleasePenalty(record.SessionIds);
+        if (message is not null)
+            OathboundChat.Print(message);
+        Plugin.Log.Information("Game penalty released.");
     }
 
     private void MarkOutOfStep(GameSession s, string why)
@@ -539,6 +606,8 @@ public sealed class GamesService
                 OathboundChat.Print(invite.Outgoing ? $"{invite.PeerName} didn't answer your game invite." : $"The game invite from {invite.PeerName} expired.");
         }
 
+        CheckPenalty(now);
+
         if (Session is not { } s)
             return;
         if (config.FindPairingById(s.PairingId) is not { IsPaired: true })
@@ -558,7 +627,8 @@ public sealed class GamesService
         if (Session is not { } s)
             return;
         Session = null;
-        strip.RestoreAll(s.Id);
+        if (config.Games.Penalty?.SessionIds.Contains(s.Id) != true)
+            strip.RestoreAll(s.Id);
         if (notifyPeer)
             Send(s.PeerName, s.PeerWorld, $"quit {s.Id} {reason}");
         OathboundChat.Print(message);

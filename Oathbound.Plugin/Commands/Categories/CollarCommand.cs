@@ -135,7 +135,8 @@ public sealed class CollarCommand
             pieces[ApiEquipSlot.Neck] = new SlotLockValue(neckItem, collar.Stain, collar.Stain2);
         if (collar.RingItemId is { } ringItem)
             pieces[ApiEquipSlot.LFinger] = new SlotLockValue(ringItem, collar.RingStain, collar.RingStain2);
-        if (!slotLocks.TryLock(Owner, pieces))
+        // A lost game's penalty yields to the collar; the slot is bare again if the collar comes off first.
+        if (!slotLocks.TryLock(Owner, pieces, [Games.StripService.PenaltyOwner]))
         {
             // TryLock doesn't roll back a Glamourer failure on the second slot; don't leave half a collar locked.
             if (!runtimeState.CollarForceLocked && slotLocks.HasLock(Owner))

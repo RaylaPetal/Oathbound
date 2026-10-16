@@ -26,8 +26,9 @@ public sealed class RestraintCommand
     public Func<bool> IsCaged { get; set; } = static () => false;
     private const string Owner = "Restraints";
 
-    /// A restraint may take over a locked outfit's slot (restored on release). The collar's Neck lock still refuses it.
-    private static readonly string[] TakesOverFrom = [OutfitCommand.SlotLockOwner];
+    /// A restraint may take over a locked outfit's or game penalty's slot (restored on release). The collar's Neck lock
+    /// still refuses it.
+    private static readonly string[] TakesOverFrom = [OutfitCommand.SlotLockOwner, Games.StripService.PenaltyOwner];
     private const long PlayDelayMs = 500;
 
     private readonly PluginConfig config;

@@ -225,8 +225,10 @@ public sealed class SlotLockManager : IDisposable
     public bool ReleaseClaim(string holder, IReadOnlyCollection<ApiEquipSlot>? only = null) =>
         ReleaseCore(null, h => h == holder, only);
 
-    public bool ReleaseClaimsStartingWith(string prefix) =>
-        ReleaseCore(null, h => h.StartsWith(prefix, StringComparison.Ordinal), null);
+    public bool ReleaseClaimsWhere(Func<string, bool> holderMatches) => ReleaseCore(null, holderMatches, null);
+
+    /// Ends the owner's locks and lets go of exactly these holders' slots, leaving the owner's other holders alone.
+    public bool ReleaseHolders(string owner, IReadOnlySet<string> holders) => ReleaseCore(owner, holders.Contains, null);
 
     /// Locked now, or a lock set aside under another that comes back. A holder without a lock (an unlocked outfit)
     /// doesn't count: something can be put over it and taken off again.

@@ -57,10 +57,12 @@ public static partial class RollReader
     private static bool TryReadDice(IHandleableChatMessage message, out RollLine roll)
     {
         roll = default;
-        var match = DiceBody().Match(message.Message.TextValue);
+        var text = message.Message.TextValue;
+        if (Numbers().IsMatch(text))
+            LogRaw("dice", message);
+        var match = DiceBody().Match(text);
         if (!match.Success)
             return false;
-        LogRaw("dice", message);
         if (!PartyRollsVerified
             || !int.TryParse(match.Groups[1].Value, out var max)
             || !int.TryParse(match.Groups[2].Value, out var value))

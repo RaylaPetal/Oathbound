@@ -97,6 +97,45 @@ public readonly record struct GameEnd(GameEndKind Kind, int Rounds = 0)
     };
 }
 
+/// How long the loser of a game stays locked naked. 0 is off.
+public readonly record struct GamePenalty(int Minutes)
+{
+    public static readonly GamePenalty Off = new(0);
+    public static readonly int[] MinuteChoices = [0, 15, 30, 60, 120];
+
+    public bool IsOff => Minutes <= 0;
+
+    public TimeSpan Length => TimeSpan.FromMinutes(Minutes);
+
+    /// Only a strip game that can be lost carries one; checked on both sides so an invite can't widen it.
+    public static bool Allowed(LossRule loss, GameEnd end) => loss != LossRule.Forfeit && end.Kind != GameEndKind.Never;
+
+    public GamePenalty For(LossRule loss, GameEnd end) => Allowed(loss, end) && MinuteChoices.Contains(Minutes) ? this : Off;
+
+    /// `pen:<minutes>` in an invite; absent means off.
+    public string Word => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"pen:{Minutes}");
+
+    public static bool TryParse(string word, out GamePenalty penalty)
+    {
+        penalty = Off;
+        if (!word.StartsWith("pen:", StringComparison.OrdinalIgnoreCase)
+            || !int.TryParse(word[4..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var minutes)
+            || !MinuteChoices.Contains(minutes))
+            return false;
+        penalty = new GamePenalty(minutes);
+        return true;
+    }
+
+    public string Describe() => IsOff ? "No penalty" : $"Locked naked {DescribeLength()}";
+
+    public string DescribeLength() => Minutes switch
+    {
+        < 60 => $"{Minutes} minutes",
+        60 => "1 hour",
+        _ => $"{Minutes / 60} hours",
+    };
+}
+
 /// The inviter always goes first; both clients agree on seats from who sent the invite.
 public enum Seat
 {

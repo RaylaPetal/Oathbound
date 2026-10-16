@@ -175,7 +175,7 @@ public static class TutorialCatalog
         [
             Help("games", "Play a game with the other person of your pairing. Either of you can lose, and a loss only changes the loser's own character."),
             new("Play a game", "Pick a game, how rolls are made and what losing a round costs, then invite. The game starts when they accept on their side.", S("gamesInvite"), n => n.Module("games"), "Shown when no game is running."),
-            new("The game", "Whose turn it is, the Roll button and the other moves, the score, what each of you took off, and the forfeits. Quit ends it and gives everything back.", S("gamesSession"), n => n.Module("games"), "Shown while a game is running."),
+            new("The game", "Whose turn it is, the Roll button and the other moves, the score, what each of you took off, and the forfeits. Quit ends it and gives everything back, except to the loser of a game with a penalty.", S("gamesSession"), n => n.Module("games"), "Shown while a game is running."),
             new("Your strip order", "Which of your pieces come off first when you lose a strip round. Pieces held by restraints or locks are skipped.", S("gamesStrip"), n => n.Module("games")),
             new("Your cards", "Your own truths, dares and forfeits, and the starter cards you can turn off.", S("gamesDecks"), n => n.Module("games")),
         ],

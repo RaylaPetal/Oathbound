@@ -11,6 +11,14 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.1", "2026-10-16", "Game penalties",
+        [
+            new("New",
+            [
+                "Games: a strip game can carry a penalty for losing it - 15 minutes, 30 minutes, 1 hour or 2 hours. Whoever loses the game has everything left in their strip order taken off and stays locked naked that long, even after the game ends. It's shown on the invite before you accept, keeps counting while you're logged out, and panic ends it early.",
+                "Quitting before the game is lost never brings a penalty.",
+            ]),
+        ]),
         new("0.2.6.0", "2026-10-16", "Cage, Games and more",
         [
             new("New",
