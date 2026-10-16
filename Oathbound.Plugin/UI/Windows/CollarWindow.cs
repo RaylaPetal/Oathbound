@@ -108,7 +108,7 @@ public class CollarWindow : Window, IDisposable
         var titleBarHeight = ImGui.GetFrameHeight();
         TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
 
-        HelpLinks.Draw();
+        HelpLinks.Draw(plugin);
         DrawCharacterHeader();
         moduleWindow.DrawStruggleRow("header");
         ImGui.Spacing();

@@ -804,6 +804,9 @@ public class PluginConfig : IPluginConfiguration
     /// Migrated to true for installs that predate it, so they never see the Welcome window.
     public bool HasCompletedWelcome { get; set; }
 
+    /// The plugin version whose changelog was last shown, so it opens once per update.
+    public string? LastSeenChangelog { get; set; }
+
     /// Tracked per role. Rerun Tutorial doesn't touch these.
     public bool HasSeenOwnerTutorial { get; set; }
 

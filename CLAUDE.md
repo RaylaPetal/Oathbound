@@ -77,7 +77,9 @@ is enabled with full log sampling on all three environments.
 
 A version bump commit is not a release by itself - nothing ships until the matching git tag is pushed:
 
-1. Bump `<Version>` in `Oathbound.Plugin/Oathbound.Plugin.csproj`, commit as `release: X.Y.Z <description>`.
+1. Bump `<Version>` in `Oathbound.Plugin/Oathbound.Plugin.csproj` and add an entry for that version at the top of
+   `UI/Windows/Changelog.cs` (the What's new window opens once per update, only for a version that has an entry),
+   then commit as `release: X.Y.Z <description>`.
 2. `git push origin master`
 3. `git tag vX.Y.Z && git push origin vX.Y.Z`
 

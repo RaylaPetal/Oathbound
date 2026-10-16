@@ -68,6 +68,7 @@ public sealed class Plugin : IDalamudPlugin
     public SubControlWindow SubControlWindow { get; }
     internal SettingsWindow SettingsWindow { get; }
     private WelcomeWindow WelcomeWindow { get; }
+    public ChangelogWindow ChangelogWindow { get; }
     public AnimationPickerWindow AnimationPickerWindow { get; }
     public CustomizePresetPickerWindow CustomizePresetPickerWindow { get; }
     public CommandPickerWindow CommandPickerWindow { get; }
@@ -286,6 +287,7 @@ public sealed class Plugin : IDalamudPlugin
         SubControlWindow = new SubControlWindow(this, CollarWindow);
         SettingsWindow = new SettingsWindow(this);
         WelcomeWindow = new WelcomeWindow(this);
+        ChangelogWindow = new ChangelogWindow(this);
         AnimationPickerWindow = new AnimationPickerWindow(this);
         CustomizePresetPickerWindow = new CustomizePresetPickerWindow(this);
         CommandPickerWindow = new CommandPickerWindow(this);
@@ -312,6 +314,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(ModuleWindow);
         WindowSystem.AddWindow(SettingsWindow);
         WindowSystem.AddWindow(WelcomeWindow);
+        WindowSystem.AddWindow(ChangelogWindow);
         WindowSystem.AddWindow(AnimationPickerWindow);
         WindowSystem.AddWindow(CustomizePresetPickerWindow);
         WindowSystem.AddWindow(CommandPickerWindow);
@@ -322,6 +325,7 @@ public sealed class Plugin : IDalamudPlugin
 
         if (!Configuration.HasCompletedWelcome)
             WelcomeWindow.IsOpen = true;
+        ChangelogWindow.ShowIfUpdated();
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -437,6 +441,7 @@ public sealed class Plugin : IDalamudPlugin
         CollarWindow.Dispose();
         SettingsWindow.Dispose();
         WelcomeWindow.Dispose();
+        ChangelogWindow.Dispose();
         AnimationPickerWindow.Dispose();
         CustomizePresetPickerWindow.Dispose();
         CommandPickerWindow.Dispose();

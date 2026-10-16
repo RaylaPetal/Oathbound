@@ -2,7 +2,7 @@ using Dalamud.Bindings.ImGui;
 
 namespace Oathbound.Plugin.UI;
 
-/// Plugin help: a popup with the GitHub issue tracker and the developer's Discord handle.
+/// Plugin help: a popup with the GitHub issue tracker, the developer's Discord handle and the changelog.
 public static class HelpLinks
 {
     private const string PopupId = "oathbound_help";
@@ -15,7 +15,7 @@ public static class HelpLinks
     public static void RequestOpen() => openRequested = true;
 
     /// Called inside the window's Draw.
-    public static void Draw()
+    public static void Draw(Plugin plugin)
     {
         if (openRequested)
         {
@@ -38,6 +38,15 @@ public static class HelpLinks
             ImGui.SetClipboardText(DiscordHandle);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Click to copy the username, then add or message it on Discord");
+
+        ImGui.Spacing();
+        if (ImGui.Button("What's new"))
+        {
+            plugin.ChangelogWindow.IsOpen = true;
+            ImGui.CloseCurrentPopup();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The changelog: what each update added and fixed");
 
         ImGui.EndPopup();
     }
