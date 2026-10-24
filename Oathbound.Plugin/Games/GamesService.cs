@@ -109,13 +109,8 @@ public sealed class GamesService
             return "An invite is already waiting for an answer.";
         if (config.ActivePairing is not { PeerName: { Length: > 0 } name, PeerWorld: { Length: > 0 } world } pairing)
             return "Pick a pairing first.";
-        if (channel == RollChannel.Party)
-        {
-            if (!RollReader.PartyRollsVerified)
-                return "Party rolls aren't available yet. Use nearby rolls.";
-            if (!InPartyWith(name, world))
-                return $"You and {name} need to be in a party together to roll in party chat.";
-        }
+        if (channel == RollChannel.Party && !InPartyWith(name, world))
+            return $"You and {name} need to be in a party together to roll in party chat.";
         if (!GameWords.DeathrollStarts.Contains(deathrollStart))
             deathrollStart = GameWords.DefaultDeathrollStart;
         end = end.For(loss);
@@ -185,13 +180,17 @@ public sealed class GamesService
         if (Session is not { Over: false } s || s.Rules.ExpectedMax(s.Me) is not { } max)
             return null;
         var number = max.ToString(CultureInfo.InvariantCulture);
-        return s.Channel == RollChannel.Party ? $"/dice party {number}" : $"/random {number}";
+        return s.Channel == RollChannel.Party ? $"/dice {number}" : $"/random {number}";
     }
 
     public void Roll()
     {
-        if (RollCommand() is { } command)
-            outbox.Enqueue(command);
+        if (RollCommand() is not { } command)
+            return;
+        // `/dice` rolls in whatever channel is active; a bare `/p` makes that party chat first.
+        if (Session?.Channel == RollChannel.Party)
+            outbox.Enqueue("/p");
+        outbox.Enqueue(command);
     }
 
     public void Call(bool higher) => Move(s => s.Rules.Call(s.Me, higher), id => $"call {id} {(higher ? "higher" : "lower")}");

@@ -197,6 +197,7 @@ public sealed class Plugin : IDalamudPlugin
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.Gagged, ChatGagService);
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.FullBodyCuffed, new MovementLockEnforcer(MovementLockService, "RestraintsFullBody"));
 
+        Configuration.DeviceIdentity ??= new(); // A hand-edited config can null it out.
         DeviceIdentityService = new DeviceIdentityService(Configuration);
         DeviceIdentityService.EnsureIdentity();
         RelayClient = new RelayClient(Configuration, DeviceIdentityService);

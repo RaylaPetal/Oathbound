@@ -107,14 +107,12 @@ public sealed partial class ModuleWindow
         var save = false;
         var channel = (int)config.LastChannel;
         Layout.ItemWidth(180);
-        if (ImGui.Combo("Rolls##gameChannel", ref channel, ["Nearby (/random)", "Party (/dice party)"], 2))
+        if (ImGui.Combo("Rolls##gameChannel", ref channel, ["Nearby (/random)", "Party (/dice)"], 2))
         {
             config.LastChannel = (RollChannel)channel;
             save = true;
         }
-        IconGlyph.HelpMarker(RollReader.PartyRollsVerified
-            ? "Nearby rolls are seen by everyone around you. Party rolls stay in party chat, but you both need to be in one party."
-            : "Nearby rolls are seen by everyone around you. Party rolls aren't available yet.");
+        IconGlyph.HelpMarker("Nearby rolls are seen by everyone around you. Party rolls stay in party chat, but you both need to be in one party. Roll switches your chat to party (/p) before it rolls; if you type /dice yourself, do it in party chat.");
         if (newGameKind == GameKind.Deathroll)
         {
             var start = Array.IndexOf(GameWords.DeathrollStarts, config.LastDeathrollStart);

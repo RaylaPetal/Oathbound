@@ -239,8 +239,8 @@ struggle, keys, Take off, local test commands, stopping a toy/animation, ruleboo
 
 Games (`Games/`) are the one two-way feature: both clients run the same rules from roll lines they read themselves
 plus `collargame` tells for moves a roll can't show, and a loss only ever acts on the local player (`StripService`'s
-`game:` holder in `SlotLockManager`, which skips locked slots but strips over an unlocked outfit). Panic ends a game first. `ChatSender` allows exactly `/random <n>` and `/dice party <n>` besides
-its channel prefixes, for the Roll button only.
+`game:` holder in `SlotLockManager`, which skips locked slots but strips over an unlocked outfit). Panic ends a game first. `ChatSender` allows exactly `/random <n>`, `/dice <n>` and a bare `/p` (a party roll switches
+the active channel first, since `/dice` rolls where chat is) besides its channel prefixes, for the Roll button only.
 
 Guided tours live in `UI/TutorialCatalog.cs` and point at sections by their `Section.Begin` id. Renaming,
 removing or adding a module section needs the matching tour step updated there.

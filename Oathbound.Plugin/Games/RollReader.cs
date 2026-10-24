@@ -16,15 +16,8 @@ public static partial class RollReader
     /// The log kind of every `/random` result; the bits above it only say whose roll it was.
     private const int RandomLogKind = 0x4A;
 
-    /// A `/dice` result arrives as an ordinary party message, so until a real one can be told apart from the same
-    /// text typed by hand, party rolls never count.
-    public static readonly bool PartyRollsVerified = false;
-
     [GeneratedRegex("[0-9]+")]
     private static partial Regex Numbers();
-
-    [GeneratedRegex(@"\(1-([0-9]+)\)\s*([0-9]+)\s*$")]
-    private static partial Regex DiceBody();
 
     public static bool TryRead(IHandleableChatMessage message, out RollLine roll)
     {
@@ -54,23 +47,42 @@ public static partial class RollReader
         return true;
     }
 
+    /// A `/dice` result arrives as a party message, so only the game's own icon in it tells it apart from the same
+    /// text typed by hand: typed chat can't carry an icon payload.
     private static bool TryReadDice(IHandleableChatMessage message, out RollLine roll)
     {
         roll = default;
         var text = message.Message.TextValue;
-        if (Numbers().IsMatch(text))
-            LogRaw("dice", message);
-        var match = DiceBody().Match(text);
-        if (!match.Success)
+        if (!Numbers().IsMatch(text))
             return false;
-        if (!PartyRollsVerified
-            || !int.TryParse(match.Groups[1].Value, out var max)
-            || !int.TryParse(match.Groups[2].Value, out var value))
+        LogRaw("dice", message);
+        if (!message.Message.Payloads.OfType<IconPayload>().Any())
             return false;
+        var numbers = Numbers().Matches(text).Select(m => int.TryParse(m.Value, out var n) ? n : -1).Where(n => n >= 0).ToList();
+        // "(1-N) V": the range's leading 1 says nothing.
+        if (numbers.Count == 3 && numbers[0] == 1)
+            numbers.RemoveAt(0);
+        if (numbers.Count != 2)
+            return false;
+        var value = numbers.Min();
+        var max = numbers.Max();
+
+        var me = Plugin.ObjectTable.LocalPlayer;
         var player = message.Sender.Payloads.OfType<PlayerPayload>().FirstOrDefault();
-        roll = player is null
+        if (player is null)
+        {
+            // Your own party lines usually carry no player payload, only your name.
+            if (me is null || !message.Sender.TextValue.Contains(me.Name.TextValue, System.StringComparison.OrdinalIgnoreCase))
+                return false;
+            roll = new RollLine(true, null, null, value, max, RollChannel.Party);
+            return true;
+        }
+        var world = player.World.Value.Name.ExtractText();
+        var self = me is not null && string.Equals(player.PlayerName, me.Name.TextValue, System.StringComparison.OrdinalIgnoreCase)
+            && string.Equals(world, me.HomeWorld.Value.Name.ExtractText(), System.StringComparison.OrdinalIgnoreCase);
+        roll = self
             ? new RollLine(true, null, null, value, max, RollChannel.Party)
-            : new RollLine(false, player.PlayerName, player.World.Value.Name.ExtractText(), value, max, RollChannel.Party);
+            : new RollLine(false, player.PlayerName, world, value, max, RollChannel.Party);
         return true;
     }
 

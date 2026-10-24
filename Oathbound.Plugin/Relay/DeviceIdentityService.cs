@@ -62,7 +62,16 @@ public sealed class DeviceIdentityService
 
         var privateD = Unprotect(identity.ProtectedPrivateKey!, identity.IsProtected);
         var publicKeyJwk = new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = identity.PublicKeyX!, Y = identity.PublicKeyY! };
-        cachedKey = RelayCrypto.ImportSigningPrivateKey(publicKeyJwk, privateD);
+        try
+        {
+            cachedKey = RelayCrypto.ImportSigningPrivateKey(publicKeyJwk, privateD);
+        }
+        catch (ArgumentException ex)
+        {
+            // A legacy (unflagged) DPAPI blob from another Wine prefix or Windows profile comes back as ciphertext.
+            throw new DeviceIdentityUnavailableException(
+                "This device's identity key isn't usable on this install (it was likely protected on a different Windows user profile or Wine prefix). Reset the device identity in Settings to recover.", ex);
+        }
         return cachedKey;
     }
 

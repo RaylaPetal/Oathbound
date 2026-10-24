@@ -11,6 +11,19 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.2", "2026-10-24", "Party rolls, moved installs",
+        [
+            new("New",
+            [
+                "Games: party rolls work. Pick Party (/dice) and the game rolls in party chat, seen only by your party. You both need to be in one party. Roll switches your chat to party first; if you type /dice yourself, do it in party chat.",
+            ]),
+            new("Fixed",
+            [
+                "After moving your game to a new computer or Wine prefix, pairing and backups could fail with an error every time, and Reset device identity didn't help. The plugin now tells you to reset, and the reset works.",
+                "A recovery backup left over from an old device identity no longer fails with \"unauthorized\" over and over.",
+                "Before your first pairing, the recovery section says your backup will be saved once you pair, instead of \"Backup is being updated...\" forever.",
+            ]),
+        ]),
         new("0.2.6.1", "2026-10-16", "Game penalties",
         [
             new("New",

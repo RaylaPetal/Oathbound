@@ -17,7 +17,7 @@ public enum RollChannel
 {
     /// `/random <N>`, seen by everyone nearby.
     Nearby,
-    /// `/dice party <N>`, seen by the party.
+    /// `/dice <N>` typed in party chat, seen by the party.
     Party,
 }
 

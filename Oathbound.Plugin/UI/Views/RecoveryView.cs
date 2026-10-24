@@ -56,6 +56,8 @@ public sealed class RecoveryView
                 IconGlyph.WrappedColored(Theme.Warning, error);
             else if (backup.IsUpToDate && backup.LastUploadAt is { } at)
                 IconGlyph.WrappedColored(Theme.Success, $"Backup up to date (saved {at.ToLocalTime():g}).");
+            else if (backup.WaitingForPairing)
+                IconGlyph.WrappedDisabled("Your backup will be saved once you pair with someone.");
             else
                 IconGlyph.WrappedDisabled("Backup is being updated...");
 

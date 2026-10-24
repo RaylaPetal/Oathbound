@@ -55,6 +55,8 @@ public sealed class BackupService
     public bool IsUpToDate => config.Recovery.UploadedFingerprint is not null && config.Recovery.UploadedFingerprint == Fingerprint();
     public DateTimeOffset? LastUploadAt => config.Recovery.LastUploadAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(config.Recovery.LastUploadAt) : null;
 
+    public bool WaitingForPairing => !config.Pairings.Any(p => p.IsPaired);
+
     public string? LastError { get; private set; }
 
     public void AcknowledgeCode()
@@ -101,7 +103,8 @@ public sealed class BackupService
         if (!config.Recovery.HasCode && config.Pairings.Any(p => p.IsPaired) && identity.HasIdentity)
             StoreCode(PairingCodes.NewRecoveryCode(), acknowledged: false);
 
-        if (!config.Recovery.HasCode || now < retryNotBeforeUtc) return;
+        // The relay only accepts signed requests from a key it has seen in a pairing, so an unpaired key can't sync yet.
+        if (!config.Recovery.HasCode || now < retryNotBeforeUtc || WaitingForPairing) return;
         if (IsUpToDate && config.Recovery.PendingDeletes.Count == 0) return;
         if (Interlocked.Exchange(ref busy, 1) == 1) return;
         Plugin.FireAndForget(SyncAsync(ct));
@@ -125,7 +128,14 @@ public sealed class BackupService
 
             foreach (var oldBackupId in config.Recovery.PendingDeletes.ToList())
             {
-                await relay.DeleteBackupAsync(oldBackupId, ct).ConfigureAwait(false);
+                try
+                {
+                    await relay.DeleteBackupAsync(oldBackupId, ct).ConfigureAwait(false);
+                }
+                catch (RelayException ex) when (ex.Code is "unauthorized" or "not_found")
+                {
+                    // Gone already, or owned by a retired identity this key can never delete.
+                }
                 config.Recovery.PendingDeletes.Remove(oldBackupId);
                 config.SaveNow();
             }
@@ -171,6 +181,7 @@ public sealed class BackupService
         {
             try { await relay.DeleteBackupAsync(PairingCodes.BackupId(code), ct).ConfigureAwait(false); }
             catch (RelayException ex) { Plugin.Log.Information($"Backup delete on identity reset failed: {ex.Code}."); }
+            catch (DeviceIdentityUnavailableException) { Plugin.Log.Information("Backup delete on identity reset skipped: the old key can't sign."); }
         }
         config.Recovery = new RecoveryState();
         config.SaveNow();

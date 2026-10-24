@@ -14,8 +14,9 @@ public sealed class ChatSender
     /// the command into public chat.
     private static readonly Regex ValidPrefix = new(@"^/(tell|p|a|l[1-8]|cwl[1-8]) ", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// The Games Roll button's commands, and nothing else of their kind.
-    private static readonly Regex RollCommand = new(@"^/(random|dice party) [0-9]{1,3}$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// The Games Roll button's commands, and nothing else of their kind. `/dice` rolls in the active channel, so a party
+    /// roll first switches it with a bare `/p`.
+    private static readonly Regex RollCommand = new(@"^(/p|/(random|dice) [0-9]{1,3})$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public bool Send(string text)
     {

@@ -415,7 +415,10 @@ public sealed class PairingService
             var pairEpoch = pairing.PairEpoch;
             ReleasePeer(pairing, publishRelayRevocation: false);
             if (pairIdHash is not null)
-                await revocation.PublishBestEffortAsync(pairing, pairIdHash, pairEpoch, "identity-reset", ct).ConfigureAwait(false);
+            {
+                try { await revocation.PublishBestEffortAsync(pairing, pairIdHash, pairEpoch, "identity-reset", ct).ConfigureAwait(false); }
+                catch (DeviceIdentityUnavailableException) { } // The old key can't sign; the reset is how the user recovers from that.
+            }
 
             // A retry signed by the retired identity can't be authenticated anymore, so drop it.
             config.RevocationOutbox.RemoveAll(o => o.PairIdHash == pairIdHash && o.PairEpoch == pairEpoch);
