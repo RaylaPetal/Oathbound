@@ -32,9 +32,12 @@ public sealed class CageService
 
     /// Slack before an outside Sub is walked back, so standing on the edge doesn't restart the walk.
     private const float EdgeMargin = 0.5f;
+    /// Further above or below the cage's spot than this is outside it, so a rooftop cage isn't held from the street.
+    private const float HeightAllowance = 4f;
+    /// How far short of the cage a ground path may end before it counts as not reaching it.
+    private const float GroundReachSlack = 2f;
     private const float ProgressMinDelta = 0.5f;
     private static readonly TimeSpan GiveUpAfter = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AreaSettle = TimeSpan.FromSeconds(2);
     private const uint DismountAction = 23;
     /// How far from the plot entrance Lifestream reports the house's door can be; the journey ends at the gate.
@@ -79,15 +82,12 @@ public sealed class CageService
     private DateTime? settledSince;
     private bool navUnavailableNotified;
 
+    private readonly Navigator navigator;
+    private readonly NavOptions navOptions;
     private bool walking;
     private bool confined;
-    private CancellationTokenSource? pathCancel;
-    private Task<List<Vector3>>? pendingPath;
-    private bool pathStarted;
-    private DateTime lastPathRequest;
     private DateTime progressAt;
     private float bestDistance;
-    private bool dismountSent;
 
     // Bring & lock to a house: the door to open once the journey ends there.
     private Vector3? houseDoor;
@@ -100,6 +100,7 @@ public sealed class CageService
 
     // Written by OnFrameworkUpdate, read by Confine (both on the main thread).
     private Vector2 center;
+    private float centerHeight;
     private Vector2 playerGround;
     private Vector2 half;
 
@@ -110,6 +111,15 @@ public sealed class CageService
         this.movementLock = movementLock;
         this.vnavmesh = vnavmesh;
         this.teleport = teleport;
+        navigator = new Navigator(vnavmesh, "Cage");
+        navOptions = new NavOptions
+        {
+            Goal = () => config.ActiveCage?.Position ?? new Vector3(center.X, centerHeight, center.Y),
+            IsAtGoal = position => OutsideBy(position) <= 0f && WithinHeight(position),
+            GroundSearchXZ = 3f,
+            LandOnFloor = true,
+            GroundPathReaches = end => OutsideBy(end) <= GroundReachSlack && WithinHeight(end),
+        };
     }
 
     /// Raised on every change of phase, end time or holder, and when the cage opens or is dropped.
@@ -123,6 +133,9 @@ public sealed class CageService
     public bool IsArmed => config.ActiveCage is { Phase: CagePhase.Armed };
 
     public bool IsWalkingIn => walking;
+
+    /// Only the cage's own Mount Roulette on the way in gets past the caged mount block.
+    public bool IsMountingIn => walking && navigator.IsMounting;
 
     /// `cage [lockfor:<s>] [armfor:<s>] [bring] close <place> pos:<x>,<y>,<z> <r:<x>[x<z>]|pin> "<name>"` or `cage open`.
     public LocalTestResult Handle(string rest, PairingState? source)
@@ -278,10 +291,9 @@ public sealed class CageService
     /// After something else dropped every movement claim: the next frame takes the cage's own claims again.
     public void ForgetClaims()
     {
-        CancelPendingPath();
+        navigator.Cancel();
         walking = false;
         confined = false;
-        pathStarted = false;
     }
 
     public void OnFrameworkUpdate()
@@ -329,7 +341,7 @@ public sealed class CageService
 
         var inPlace = CagePlaces.IsIn(cage.Place);
         UpdateGeometry(cage, player.Position);
-        var outside = OutsideBy() > EdgeMargin;
+        var outside = !IsInside(player.Position);
 
         if (cage.Phase == CagePhase.Armed)
         {
@@ -395,35 +407,32 @@ public sealed class CageService
             return;
         }
 
-        var distance = OutsideBy();
         if (walking)
         {
-            UpdateWalk(cage, player, distance, now);
+            UpdateWalk(cage, player, now);
             return;
         }
-        if (distance > EdgeMargin)
+        if (!IsInside(player.Position))
         {
-            StartWalk(now, distance);
+            StartWalk(now, Vector3.Distance(player.Position, cage.Position));
             return;
         }
         Confine(cage);
     }
 
+    /// Never dismounts first: a Sub brought here flying keeps flying to the spot.
     private void StartWalk(DateTime now, float distance)
     {
         Unconfine();
         movementLock.EngageSuppressInput(LockOwner);
         walking = true;
-        pathStarted = false;
-        dismountSent = false;
         bestDistance = distance;
         progressAt = now;
-        lastPathRequest = DateTime.MinValue;
     }
 
-    private unsafe void UpdateWalk(SubCageState cage, Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, float distance, DateTime now)
+    private void UpdateWalk(SubCageState cage, Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, DateTime now)
     {
-        if (distance <= 0f)
+        if (IsInside(player.Position))
         {
             StopWalk();
             Confine(cage);
@@ -436,73 +445,60 @@ public sealed class CageService
             progressAt = now;
             return;
         }
-        if (Plugin.Condition[ConditionFlag.Mounted])
+
+        // Arrived but not inside (a dismount that timed out, or landing beside the spot) starts over from here.
+        if (navigator.Status is NavStatus.Idle or NavStatus.Arrived)
+            navigator.Start(navOptions);
+        switch (navigator.Tick())
         {
-            if (!dismountSent)
-            {
-                var actions = ActionManager.Instance();
-                if (actions != null)
-                    actions->UseAction(ActionType.GeneralAction, DismountAction);
-                dismountSent = true;
-            }
-            progressAt = now;
-            return;
+            case NavStatus.Unreachable:
+            case NavStatus.NoPath:
+                MoveCageToSub(cage, player, "can't be reached from here");
+                return;
+            case NavStatus.Preparing:
+            case NavStatus.Mounting:
+            case NavStatus.Landing:
+                progressAt = now;
+                return;
         }
 
-        if (pendingPath is { IsCompleted: true } done)
-        {
-            pendingPath = null;
-            if (done.IsCompletedSuccessfully && done.Result is { Count: > 0 } path && vnavmesh.TryMoveTo(path, false))
-                pathStarted = true;
-        }
-
+        var distance = Vector3.Distance(player.Position, cage.Position);
         if (bestDistance - distance >= ProgressMinDelta)
         {
             bestDistance = distance;
             progressAt = now;
         }
         else if (now - progressAt >= GiveUpAfter)
-        {
-            cage.Position = player.Position;
-            config.Save();
-            StopWalk();
-            Plugin.Log.Information($"Cage \"{cage.Name}\" walk-in made no progress; the cage moved to the Sub.");
-            Notify("Cage moved", $"You couldn't be walked into \"{cage.Name}\", so it closed where you stand.", NotificationType.Info);
-            UpdateGeometry(cage, player.Position);
-            Confine(cage);
-            return;
-        }
-
-        var idle = pendingPath is null && (!pathStarted || !vnavmesh.TryIsRunning());
-        if (idle && now - lastPathRequest >= RetryInterval)
-            RequestPath(cage, player.Position, now);
+            MoveCageToSub(cage, player, "made no progress");
     }
 
-    private void RequestPath(SubCageState cage, Vector3 from, DateTime now)
+    private void MoveCageToSub(SubCageState cage, Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, string why)
     {
-        CancelPendingPath();
-        var to = vnavmesh.TryNearestPointReachable(cage.Position, 3f, 5f) ?? cage.Position;
-        pathCancel = new CancellationTokenSource();
-        pendingPath = vnavmesh.TryPathfind(from, to, false, pathCancel.Token);
-        lastPathRequest = now;
+        // Never a spot in the air: once landed the Sub would be below it and outside again.
+        cage.Position = Plugin.Condition[ConditionFlag.InFlight]
+            ? vnavmesh.TryPointOnFloor(player.Position, true, 2f) ?? player.Position
+            : player.Position;
+        config.Save();
+        StopWalk();
+        Plugin.Log.Information($"Cage \"{cage.Name}\" walk-in {why}; the cage moved to the Sub.");
+        Notify("Cage moved", $"You couldn't be walked into \"{cage.Name}\", so it closed where you stand.", NotificationType.Info);
+        UpdateGeometry(cage, player.Position);
+        Confine(cage);
     }
 
     private void PauseWalk()
     {
-        if (!walking)
-            return;
-        CancelPendingPath();
-        vnavmesh.TryStop();
-        pathStarted = false;
+        if (walking)
+            navigator.Stop();
     }
 
     private void StopWalk()
     {
-        CancelPendingPath();
         if (walking)
-            vnavmesh.TryStop();
+            navigator.Stop();
+        else
+            navigator.Cancel();
         walking = false;
-        pathStarted = false;
         movementLock.ReleaseSuppressInput(LockOwner);
     }
 
@@ -653,24 +649,24 @@ public sealed class CageService
     private void UpdateGeometry(SubCageState cage, Vector3 playerPosition)
     {
         center = new Vector2(cage.Position.X, cage.Position.Z);
+        centerHeight = cage.Position.Y;
         playerGround = new Vector2(playerPosition.X, playerPosition.Z);
         half = cage.HalfExtents;
     }
 
-    /// How far the Sub stands outside the rectangle along the ground; 0 inside.
-    private float OutsideBy()
+    /// How far a point is outside the rectangle along the ground; 0 inside.
+    private float OutsideBy(Vector3 position)
     {
-        var offset = Vector2.Abs(playerGround - center) - half;
+        var offset = Vector2.Abs(new Vector2(position.X, position.Z) - center) - half;
         return Vector2.Max(offset, Vector2.Zero).Length();
     }
 
-    private void CancelPendingPath()
-    {
-        pathCancel?.Cancel();
-        pathCancel?.Dispose();
-        pathCancel = null;
-        pendingPath = null;
-    }
+    private bool WithinHeight(Vector3 position) => MathF.Abs(position.Y - centerHeight) <= HeightAllowance;
+
+    /// Mounted or flying never counts, so the Sub is always landed and on foot before being held.
+    private bool IsInside(Vector3 position) =>
+        OutsideBy(position) <= EdgeMargin && WithinHeight(position)
+        && !Plugin.Condition[ConditionFlag.Mounted] && !Plugin.Condition[ConditionFlag.InFlight];
 
     private bool CanEnforce(float cageRadius) =>
         movementLock.IsAvailable && movementLock.IsImmobilizeAvailable && (cageRadius <= 0 || movementLock.IsSteerAvailable);

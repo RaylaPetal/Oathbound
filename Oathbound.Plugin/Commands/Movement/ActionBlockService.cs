@@ -36,6 +36,9 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
     /// Set once by Plugin. While caged, the ways out of an area and onto a mount are refused.
     public Func<bool> IsCaged { get; set; } = static () => false;
 
+    /// Set once by Plugin. The cage's own Mount Roulette while it takes the Sub to its spot.
+    public Func<bool> CageMountAllowed { get; set; } = static () => false;
+
     /// Shown only while the block is really enforcing.
     public HotbarBlockVisuals Visuals { get; } = new();
 
@@ -59,7 +62,7 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
     {
         if (active || walkOnly.IsActive && actionType == ActionType.GeneralAction && actionId == 4)
             return false;
-        if (IsCageExit(actionType, actionId) && IsCaged())
+        if (IsCageExit(actionType, actionId) && IsCaged() && !(IsMount(actionType, actionId) && CageMountAllowed()))
             return false;
 
         return useActionHook!.Original(am, actionType, actionId, targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
@@ -73,6 +76,9 @@ public sealed class ActionBlockService : IRestrictionEnforcer, IDisposable
         ActionType.Mount => true,
         _ => false,
     };
+
+    private static bool IsMount(ActionType type, uint id) =>
+        type == ActionType.Mount || type == ActionType.GeneralAction && id is 9 or 24;
 
     public void Dispose()
     {

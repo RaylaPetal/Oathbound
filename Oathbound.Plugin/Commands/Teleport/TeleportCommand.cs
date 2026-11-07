@@ -1,15 +1,10 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Threading;
-using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.ImGuiNotification;
 using ECommons.Automation;
-using ECommons.GameHelpers;
-using FFXIVClientStructs.FFXIV.Client.Game;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
 
@@ -40,18 +35,8 @@ public sealed class TeleportCommand
     private const string LockOwner = "Teleport";
 
     private const float ArrivalDistance = 3f;
-    private const float MountDistance = 40f;
-    private const float RetargetDistance = 3f;
-    private const float ProgressMinDelta = 1f;
-    private const uint MountRouletteAction = 9;
-    private const uint DismountAction = 23;
 
     private static readonly TimeSpan TravelStartTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan MountTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan DismountTimeout = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan ProgressWindow = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan TravelStallTimeout = TimeSpan.FromSeconds(90);
     private const float TravelProgressDistance = 2f;
 
@@ -59,6 +44,8 @@ public sealed class TeleportCommand
     private readonly LifestreamIpc lifestream;
     private readonly VnavmeshIpc vnavmesh;
     private readonly MovementLockService movementLock;
+    private readonly Navigator navigator;
+    private readonly NavOptions navOptions;
 
     // Fixed at Apply time.
     private TeleportTarget? target;
@@ -75,20 +62,8 @@ public sealed class TeleportCommand
     private TeleportStage stage;
     private DateTime stageStartedAt;
     private bool observedTravelBusy;
-    private bool dismountSent;
     private DateTime lastProgressAt;
     private Vector3? lastProgressPosition;
-
-    private CancellationTokenSource? pathCancel;
-    private Task<List<Vector3>>? pendingPath;
-    private bool pendingPathFly;
-    private bool flying;
-    private bool navigationStarted;
-    private Vector3 navTarget;
-    private DateTime lastCheck;
-    private DateTime lastRetry;
-    private DateTime progressWindowStart;
-    private float progressWindowDistance;
 
     public TeleportCommand(PluginConfig config, LifestreamIpc lifestream, VnavmeshIpc vnavmesh, MovementLockService movementLock)
     {
@@ -96,6 +71,12 @@ public sealed class TeleportCommand
         this.lifestream = lifestream;
         this.vnavmesh = vnavmesh;
         this.movementLock = movementLock;
+        navigator = new Navigator(vnavmesh, "Teleport");
+        navOptions = new NavOptions
+        {
+            Goal = LiveGoal,
+            IsAtGoal = position => Vector3.Distance(position, LiveGoal()) <= ArrivalDistance,
+        };
     }
 
     public TeleportStage Stage => stage;
@@ -199,15 +180,12 @@ public sealed class TeleportCommand
         target = destination;
         sourcePairingId = source?.Id;
         ownerName = source?.PeerName;
-        navigationStarted = false;
-        flying = false;
-        dismountSent = false;
 
         // Input stays suppressed for the whole journey; Teleporting adds full immobilize for the cast and loading screen.
         movementLock.EngageSuppressInput(LockOwner);
 
         if (skipTravel)
-            EnterStage(TeleportStage.PreparingNav);
+            BeginNav();
         else if (!sameWorld)
             BeginChangingWorld();
         else
@@ -247,7 +225,7 @@ public sealed class TeleportCommand
                     Fail($"Ward travel didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
                     return;
                 }
-                EnterStage(TeleportStage.PreparingNav);
+                BeginNav();
                 return;
 
             case TeleportStage.Teleporting:
@@ -262,7 +240,7 @@ public sealed class TeleportCommand
                         Fail($"The estate teleport didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
                         return;
                     }
-                    EnterStage(TeleportStage.PreparingNav);
+                    BeginNav();
                     return;
                 }
                 BeginChangingInstance();
@@ -271,26 +249,15 @@ public sealed class TeleportCommand
             case TeleportStage.ChangingInstance:
                 // A failed or refused instance change isn't fatal: navigate in the current instance.
                 if (WaitForTravel() is null) return;
-                EnterStage(TeleportStage.PreparingNav);
+                BeginNav();
                 return;
 
             case TeleportStage.PreparingNav:
-                if (Plugin.ObjectTable.LocalPlayer is null || !vnavmesh.TryIsReady()) return;
-                BeginMountingOrNavigating();
-                return;
-
             case TeleportStage.Mounting:
-                if (Plugin.Condition[ConditionFlag.Mounted] || DateTime.UtcNow - stageStartedAt > MountTimeout)
-                    BeginNavigating();
-                return;
-
             case TeleportStage.Navigating:
             case TeleportStage.Stuck:
-                UpdateNavigation();
-                return;
-
             case TeleportStage.Arriving:
-                UpdateArriving();
+                UpdateNavigation();
                 return;
         }
     }
@@ -307,8 +274,7 @@ public sealed class TeleportCommand
             return;
 
         var wasLifestreamStage = stage is TeleportStage.ChangingWorld or TeleportStage.TravelingToWard or TeleportStage.Teleporting or TeleportStage.ChangingInstance;
-        CancelPendingPath();
-        vnavmesh.TryStop();
+        navigator.Stop();
         if (wasLifestreamStage)
         {
             lifestream.TryAbort();
@@ -449,7 +415,7 @@ public sealed class TeleportCommand
         EnterStage(TeleportStage.ChangingInstance);
         var wanted = target!.Instance;
         if (wanted == 0 || lifestream.TryGetCurrentInstance() == wanted || !lifestream.TryCanChangeInstance() || !lifestream.TryChangeInstance(wanted))
-            EnterStage(TeleportStage.PreparingNav);
+            BeginNav();
     }
 
     /// Lifestream reports done when it fires the action, before the cast or loading screen. So travel finishes only after
@@ -472,33 +438,24 @@ public sealed class TeleportCommand
         || Plugin.Condition[ConditionFlag.BetweenAreas]
         || Plugin.Condition[ConditionFlag.BetweenAreas51];
 
-    private unsafe void BeginMountingOrNavigating()
+    private void BeginNav()
     {
-        var player = Plugin.ObjectTable.LocalPlayer;
-        var goal = LiveGoal();
-        if (player is null || Plugin.Condition[ConditionFlag.Mounted] || Vector3.Distance(player.Position, goal) <= MountDistance)
-        {
-            BeginNavigating();
-            return;
-        }
-
-        // Mount Roulette only when the game says it's usable here.
-        var actions = ActionManager.Instance();
-        if (actions == null || actions->GetActionStatus(ActionType.GeneralAction, MountRouletteAction) != 0)
-        {
-            BeginNavigating();
-            return;
-        }
-        EnterStage(TeleportStage.Mounting);
-        actions->UseAction(ActionType.GeneralAction, MountRouletteAction);
+        EnterStage(TeleportStage.PreparingNav);
+        navigator.Start(navOptions);
     }
 
-    private void BeginNavigating()
+    private void UpdateNavigation()
     {
-        EnterStage(TeleportStage.Navigating);
-        flying = Plugin.Condition[ConditionFlag.Mounted] && Player.CanFly;
-        ResetProgressWindow();
-        RequestPath(flying);
+        switch (navigator.Tick())
+        {
+            case NavStatus.Preparing: stage = TeleportStage.PreparingNav; break;
+            case NavStatus.Mounting: stage = TeleportStage.Mounting; break;
+            case NavStatus.Moving: stage = TeleportStage.Navigating; break;
+            case NavStatus.Stuck: stage = TeleportStage.Stuck; break;
+            case NavStatus.Landing: stage = TeleportStage.Arriving; break;
+            case NavStatus.Arrived: Finish(); break;
+            default: Fail("No path to your Owner could be found."); break;
+        }
     }
 
     /// The Owner's live position while visible, otherwise the commanded position.
@@ -514,165 +471,5 @@ public sealed class TeleportCommand
             return null;
         return Plugin.ObjectTable.FirstOrDefault(o => o is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter
             && string.Equals(o.Name.TextValue, ownerName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// Only the current pendingPath is polled, so a path finishing after Stop or a retarget is discarded.
-    private void RequestPath(bool fly)
-    {
-        var player = Plugin.ObjectTable.LocalPlayer;
-        if (player is null)
-            return;
-
-        CancelPendingPath();
-        var goal = LiveGoal();
-        navTarget = goal;
-        var to = fly ? goal : vnavmesh.TryNearestPointReachable(goal, 5f, 5f) ?? goal;
-
-        pathCancel = new CancellationTokenSource();
-        pendingPathFly = fly;
-        pendingPath = vnavmesh.TryPathfind(player.Position, to, fly, pathCancel.Token);
-        lastRetry = DateTime.UtcNow;
-        if (pendingPath is null)
-            OnPathResult(null);
-    }
-
-    private void CancelPendingPath()
-    {
-        pathCancel?.Cancel();
-        pathCancel?.Dispose();
-        pathCancel = null;
-        pendingPath = null;
-    }
-
-    private void UpdateNavigation()
-    {
-        var player = Plugin.ObjectTable.LocalPlayer;
-        if (player is null)
-            return;
-
-        if (pendingPath is { IsCompleted: true } done)
-        {
-            pendingPath = null;
-            OnPathResult(done.IsCompletedSuccessfully ? done.Result : null);
-            if (!IsInProgress)
-                return;
-        }
-
-        var goal = LiveGoal();
-        if (Vector3.Distance(player.Position, goal) <= ArrivalDistance)
-        {
-            BeginArriving();
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        if (now - lastCheck < CheckInterval)
-            return;
-        lastCheck = now;
-
-        // Keep the current path until the new one arrives.
-        if (pendingPath is null && Vector3.Distance(goal, navTarget) > RetargetDistance)
-        {
-            RequestPath(flying);
-            return;
-        }
-
-        UpdateProgress(player.Position, goal, now);
-    }
-
-    private void OnPathResult(List<Vector3>? path)
-    {
-        if (path is { Count: > 0 })
-        {
-            if (vnavmesh.TryMoveTo(path, pendingPathFly))
-                navigationStarted = true;
-            return;
-        }
-
-        // A flying path can fail near overhangs or interiors - fall back to the ground.
-        if (pendingPathFly)
-        {
-            flying = false;
-            RequestPath(false);
-            return;
-        }
-
-        if (!navigationStarted)
-        {
-            Fail("No path to your Owner could be found.");
-            return;
-        }
-        EnterStuck();
-    }
-
-    /// Stuck never releases the lock - it retries, and the header offers Stop.
-    private void UpdateProgress(Vector3 position, Vector3 goal, DateTime now)
-    {
-        var distance = Vector3.Distance(position, goal);
-        if (pendingPath is not null)
-        {
-            ResetProgressWindow(distance);
-            return;
-        }
-
-        var madeProgress = progressWindowDistance - distance >= ProgressMinDelta;
-        if (madeProgress)
-        {
-            if (stage == TeleportStage.Stuck)
-                EnterStage(TeleportStage.Navigating);
-            ResetProgressWindow(distance);
-            return;
-        }
-
-        var pathStopped = navigationStarted && !vnavmesh.TryIsRunning();
-        if (pathStopped || now - progressWindowStart >= ProgressWindow)
-            EnterStuck();
-
-        if (stage == TeleportStage.Stuck && now - lastRetry >= RetryInterval)
-        {
-            ResetProgressWindow(distance);
-            RequestPath(flying);
-        }
-    }
-
-    private void EnterStuck()
-    {
-        if (stage != TeleportStage.Stuck)
-        {
-            Plugin.Log.Info("Teleport navigation appears stuck - retrying; movement stays locked.");
-            stage = TeleportStage.Stuck;
-        }
-    }
-
-    private void ResetProgressWindow(float? distance = null)
-    {
-        progressWindowStart = DateTime.UtcNow;
-        var player = Plugin.ObjectTable.LocalPlayer;
-        progressWindowDistance = distance ?? (player is null ? float.MaxValue : Vector3.Distance(player.Position, LiveGoal()));
-    }
-
-    private void BeginArriving()
-    {
-        CancelPendingPath();
-        vnavmesh.TryStop();
-        EnterStage(TeleportStage.Arriving);
-    }
-
-    private unsafe void UpdateArriving()
-    {
-        if (!Plugin.Condition[ConditionFlag.Mounted])
-        {
-            Finish();
-            return;
-        }
-        if (!dismountSent)
-        {
-            var actions = ActionManager.Instance();
-            if (actions != null)
-                actions->UseAction(ActionType.GeneralAction, DismountAction);
-            dismountSent = true;
-        }
-        if (DateTime.UtcNow - stageStartedAt > DismountTimeout)
-            Finish();
     }
 }

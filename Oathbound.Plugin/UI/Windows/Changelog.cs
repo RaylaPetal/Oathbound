@@ -11,6 +11,18 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.3", "2026-11-07", "Flying cages",
+        [
+            new("Changed",
+            [
+                "Cage: when your cage is somewhere you can't walk to, like a rooftop or a ledge, you're mounted and flown there, landed on the spot and dismounted. The same happens if you fall off it. Bring & lock keeps you in the air all the way to the cage instead of landing you at the zone.",
+                "Cage: where flying isn't possible, a cage you can't reach on foot moves to where you stand within a few seconds, instead of after a minute stuck.",
+            ]),
+            new("Fixed",
+            [
+                "Cage: standing under a cage placed up high no longer counts as being in it.",
+            ]),
+        ]),
         new("0.2.6.2", "2026-10-24", "Party rolls, moved installs",
         [
             new("New",

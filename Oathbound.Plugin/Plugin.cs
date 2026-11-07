@@ -272,6 +272,7 @@ public sealed class Plugin : IDalamudPlugin
         TeleportCommand.IsCaged = () => CageService.IsCaged;
         FollowCommand.HeldByCage = () => CageService.IsCaged;
         ActionBlockService.IsCaged = () => CageService.IsCaged;
+        ActionBlockService.CageMountAllowed = () => CageService.IsMountingIn;
         cageExitGuard = new CageExitGuard(() => CageService.IsCaged);
 
         PanicHandler = new PanicHandler(PairingService, GlamourerIpc, SlotLockManager, HonorificIpc, MovementLockService, RestrictionRuleManager, RestraintCommand, ToyControlCommand, RuntimeState, FollowCommand, ActionBlockService.Visuals, MoodlesCommand.Ledger, GestureCommand, ReactionService, TeleportCommand, CageService);
