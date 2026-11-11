@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="75%">
+      <stop offset="0" stop-color="#3b2370"/>
+      <stop offset="1" stop-color="#140c26"/>
+    </radialGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a98bff"/>
+      <stop offset="1" stop-color="#6a3fd8"/>
+    </linearGradient>
+    <linearGradient id="lock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8fb6"/>
+      <stop offset="1" stop-color="#d0457a"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4eefc"/>
+      <stop offset="1" stop-color="#b9acd6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- collar: back of the band, then the front -->
+  <ellipse cx="256" cy="200" rx="160" ry="64" fill="none" stroke="#4a2c94" stroke-width="40"/>
+  <path d="M96 200 A160 64 0 0 0 416 200" fill="none" stroke="url(#band)" stroke-width="44" stroke-linecap="butt"/>
+  <path d="M110 214 A150 56 0 0 0 402 214" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="5" stroke-dasharray="2 14" stroke-linecap="round"/>
+  <!-- O-ring at the front -->
+  <circle cx="256" cy="282" r="30" fill="none" stroke="url(#metal)" stroke-width="13"/>
+  <!-- padlock shackle -->
+  <path d="M222 360 v-26 a34 34 0 0 1 68 0 v26" fill="none" stroke="url(#metal)" stroke-width="14" stroke-linecap="round"/>
+  <!-- heart padlock body -->
+  <path d="M256 466 C 196 424, 166 396, 166 362 C 166 336, 186 318, 210 318 C 230 318, 246 330, 256 346 C 266 330, 282 318, 302 318 C 326 318, 346 336, 346 362 C 346 396, 316 424, 256 466 Z" fill="url(#lock)" stroke="#2a1745" stroke-width="5"/>
+  <!-- keyhole -->
+  <circle cx="256" cy="372" r="13" fill="#2a1745"/>
+  <path d="M249 378 L244 408 H268 L263 378 Z" fill="#2a1745"/>
+  <!-- shine -->
+  <path d="M190 350 C 190 336, 200 330, 212 330" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
+</svg>

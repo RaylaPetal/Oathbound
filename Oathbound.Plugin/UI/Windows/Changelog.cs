@@ -11,6 +11,13 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.9", "2026-11-11", "A new icon",
+        [
+            new("New",
+            [
+                "Oathbound has its own icon in the plugin installer: a collar with a heart padlock.",
+            ]),
+        ]),
         new("0.2.6.8", "2026-11-11", "Safer rulebook templates",
         [
             new("Changed",

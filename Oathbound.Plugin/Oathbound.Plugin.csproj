@@ -8,7 +8,7 @@
          `dotnet build` on this csproj, an IDE's default build task, or the .slnx - instead of depending
          on everyone remembering to build through the solution file. -->
     <Platform>x64</Platform>
-    <Version>0.2.6.8</Version>
+    <Version>0.2.6.9</Version>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>Rayla Petal</Author>
     <Name>Oathbound</Name>
@@ -16,7 +16,12 @@
     <Description>A consent-based D/s control plugin. Gives full control over sub including restraints, movement, leashes and much more.</Description>
     <RepoUrl>https://github.com/RaylaPetal/Oathbound</RepoUrl>
     <Tags>roleplay;collar;glamourer;penumbra;honorific</Tags>
+    <IconUrl>https://raw.githubusercontent.com/RaylaPetal/Oathbound/master/Oathbound.Plugin/images/icon.png</IconUrl>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="images\icon.png" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Glamourer.Api" Version="2.8.2" />
