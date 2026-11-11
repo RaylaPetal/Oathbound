@@ -176,7 +176,7 @@ public sealed partial class ModuleWindow
         plugin.Configuration.Save();
     }
 
-    /// Offered on an empty draft; over a draft with rules it asks first.
+    /// Always asks first: a template wipes the whole draft and there's no undo.
     private void DrawTemplateCard(RulebookDocument draft)
     {
         using var section = Section.Begin("rbTemplates", "Start from a template");
@@ -192,20 +192,12 @@ public sealed partial class ModuleWindow
 #endif
         IconGlyph.WrappedDisabled(empty
             ? "Pick one to fill your rulebook with a ready set of oaths, cards, a shop and a milestone - then change anything you like. Nothing is sent until you publish."
-            : "Replaces everything in your draft. Nothing is sent until you publish.");
+            : "Applying a template replaces everything in your draft. Nothing is sent until you publish.");
         foreach (var template in RulebookTemplates.All)
         {
             ImGui.PushID(template.Name);
             if (ImGui.Button(template.Name))
-            {
-                if (empty)
-                {
-                    ApplyTemplate(draft, template);
-                    CloseTemplateCard();
-                }
-                else
-                    rbTemplateConfirm = template;
-            }
+                rbTemplateConfirm = template;
             ImGui.SameLine();
             IconGlyph.WrappedDisabled(template.Description);
             ImGui.PopID();
@@ -214,14 +206,17 @@ public sealed partial class ModuleWindow
             CloseTemplateCard();
         if (rbTemplateConfirm is { } pending)
         {
-            IconGlyph.WrappedColored(Theme.Warning, $"Replace your whole draft with \"{pending.Name}\"?");
-            if (ImGui.Button("Replace##template"))
+            IconGlyph.WrappedColored(Theme.Warning, empty
+                ? $"Apply the \"{pending.Name}\" template? Your draft's settings - shop, cards and milestones - are reset to the template's."
+                : $"Apply the \"{pending.Name}\" template? This resets your whole draft - every oath, rule, card, shop item and milestone you've made is deleted and replaced by the template. It can't be undone.");
+            IconGlyph.WrappedDisabled("Your Sub keeps the rulebook you last published until you publish again.");
+            if (ImGui.Button("Reset and apply##template"))
             {
                 ApplyTemplate(draft, pending);
                 CloseTemplateCard();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Keep my draft##template"))
+            if (ImGui.Button("Cancel##template"))
                 rbTemplateConfirm = null;
         }
     }

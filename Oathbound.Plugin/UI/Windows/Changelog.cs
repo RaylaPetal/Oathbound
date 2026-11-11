@@ -11,6 +11,13 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.8", "2026-11-11", "Safer rulebook templates",
+        [
+            new("Changed",
+            [
+                "Rulebook for Owners: picking a template now always asks first, and says plainly that it deletes everything in your draft - oaths, rules, cards, shop and milestones - and can't be undone. Your Sub keeps the rulebook you last published until you publish again.",
+            ]),
+        ]),
         new("0.2.6.7", "2026-11-11", "Others can see your leash",
         [
             new("New",
