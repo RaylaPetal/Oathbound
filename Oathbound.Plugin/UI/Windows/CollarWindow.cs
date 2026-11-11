@@ -42,10 +42,11 @@ public class CollarWindow : Window, IDisposable
         ("follow", FontAwesomeIcon.Link, "Follow / Leash"),
         ("cage", FontAwesomeIcon.Dungeon, "Cage"),
         ("games", FontAwesomeIcon.Dice, "Games"),
-        ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("rulebook", FontAwesomeIcon.Book, "Rulebook"),
+        ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
         (FavoritesNavId, FontAwesomeIcon.Star, "Favorites"),
+        ("achievements", FontAwesomeIcon.Trophy, "Achievements"),
     ];
 
     /// Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
@@ -115,7 +116,7 @@ public class CollarWindow : Window, IDisposable
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
         var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
-            id => id == FavoritesNavId ? TutorialAnchors.NavFavorites : null);
+            id => id switch { FavoritesNavId => TutorialAnchors.NavFavorites, "achievements" => TutorialAnchors.NavAchievements, _ => null });
         TutorialService.Anchor(TutorialAnchors.MainNav);
         if (clicked == FavoritesNavId)
             plugin.FavoritesWindow.IsOpen = true;

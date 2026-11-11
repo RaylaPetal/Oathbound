@@ -517,11 +517,15 @@ public sealed class GamesService
         AddLog(s, $"{s.NameOf(s.Peer)}'s {piece} came off.");
     }
 
+    /// Lost, and lost by running out of clothes. Static because GameOver is.
+    public static event Action<bool, bool>? GameEnded;
+
     private static void GameOver(GameSession s, Seat loser)
     {
         if (s.Over)
             return;
         s.GameLoser = loser;
+        GameEnded?.Invoke(loser == s.Me, loser == s.Me && s.End.Kind == GameEndKind.OutOfClothes);
         var who = loser == s.Me ? "You" : s.PeerName;
         AddLog(s, $"Game over: {s.NameOf(loser)} lost the game.");
         if (!s.Penalty.IsOff)

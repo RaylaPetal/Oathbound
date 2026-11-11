@@ -134,6 +134,8 @@ public class SettingsWindow : Window, IDisposable
                 recoveryView.Draw();
             using (Section.Begin("tutorialCard"))
                 DrawTutorialCard(config);
+            using (Section.Begin("achievementsCard"))
+                DrawAchievementsCard(config);
             ImGui.EndTabItem();
         }
 
@@ -625,6 +627,36 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.HelpMarker("Shows Collared, Leashed, Caged, Restrained, Gagged or Blindfolded while that's happening to you. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is used instead, as is one your Owner chose.");
         if (config.UseBuiltinMoodles && plugin.MoodlesIpc.BuiltinProblem is { } problem)
             IconGlyph.WrappedColored(Theme.Warning, problem);
+    }
+
+    private static readonly string[] AchievementSoundNames =
+        ["No sound", .. Enumerable.Range(1, 16).Select(n => $"<se.{n}>")];
+
+    /// Shown for both roles, so it sits outside the Sub-only permissions block.
+    private void DrawAchievementsCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Trophy, "Achievements");
+        ImGui.Separator();
+        var state = config.Achievements;
+        if (ImGuiCheckbox("Show a popup when I unlock an achievement", state.ShowToasts, out var show))
+        {
+            state.ShowToasts = show;
+            config.Save();
+        }
+        var sound = Math.Clamp(state.Sound, 0, 16);
+        Layout.ItemWidth(140);
+        if (ImGui.Combo("Sound##achievementSound", ref sound, AchievementSoundNames, AchievementSoundNames.Length))
+        {
+            state.Sound = sound;
+            config.Save();
+        }
+        ImGui.SameLine();
+        using (ImRaii.Disabled(sound == 0))
+        {
+            if (ImGui.Button("Preview##achievementSound"))
+                plugin.AchievementToastWindow.PlaySound(sound);
+        }
+        IconGlyph.HelpMarker("The same sounds as <se.1> to <se.16> in chat, at your game's sound effect volume.");
     }
 
     private static void DrawRawCommandTextCard(PluginConfig config)

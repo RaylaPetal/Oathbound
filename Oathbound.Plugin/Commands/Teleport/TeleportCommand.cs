@@ -115,6 +115,8 @@ public sealed class TeleportCommand
     public float NavBuildProgress => stage == TeleportStage.PreparingNav ? vnavmesh.TryGetBuildProgress() : -1f;
 
     /// Guards run in a fixed order so the reported reason is the first real blocker.
+    public event Action? OwnerTeleported;
+
     public (bool Success, string? Reason) Apply(TeleportTarget destination, PairingState? source)
     {
         if (IsCaged())
@@ -191,6 +193,8 @@ public sealed class TeleportCommand
         else
             BeginTravelInWorld();
 
+        if (IsInProgress && source is not null)
+            OwnerTeleported?.Invoke();
         return IsInProgress ? (true, null) : (false, lastFailure ?? "Teleport failed to start.");
     }
 

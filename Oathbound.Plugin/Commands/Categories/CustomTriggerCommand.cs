@@ -33,6 +33,8 @@ public sealed class CustomTriggerCommand
     }
 
     /// Only the restraint action uses `restraintLock`.
+    public event Action? Applied;
+
     public LocalTestResult Apply(List<CustomTriggerAction> actions, RestraintLock restraintLock = default, Guid? sourcePairingId = null)
     {
         var applied = new List<string>();
@@ -156,6 +158,8 @@ public sealed class CustomTriggerCommand
         }
 
         config.Save();
+        if (applied.Count > 0)
+            Applied?.Invoke();
         var skippedSuffix = skipped.Count > 0 ? $" (skipped: {string.Join(", ", skipped)})" : "";
         return applied.Count > 0
             ? LocalTestResult.Ok($"Applied: {string.Join(", ", applied)}{skippedSuffix}")

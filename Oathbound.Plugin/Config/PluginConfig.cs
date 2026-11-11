@@ -888,8 +888,14 @@ public class PluginConfig : IPluginConfiguration
     /// Persisted so moodles whose source didn't survive a reload can still be removed.
     public Dictionary<string, Guid> AttachedMoodleHolds { get; set; } = new();
 
+    /// Private: never synced, sent or included in the relay backup.
+    public Achievements.AchievementState Achievements { get; set; } = new();
+
     /// Oathbound's own Collared/Leashed/Caged/Restrained/Gagged when nothing else was picked. On for older configs too.
     public bool UseBuiltinMoodles { get; set; } = true;
+
+    /// The rulebook editor shows strikes, streaks, repeats, cooldowns and card weights.
+    public bool RulebookAdvanced { get; set; }
 
     /// Titles, outfits and moodles the Owner locked on the Sub, put back after a reload and ended by their timers.
     public OwnerLockState OwnerLocks { get; set; } = new();

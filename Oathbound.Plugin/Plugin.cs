@@ -134,6 +134,8 @@ public sealed class Plugin : IDalamudPlugin
     public UI.RestraintThumbnailWorker RestraintThumbnailWorker { get; }
     public RulebookMailboxService RulebookMailboxService { get; }
     public Rulebook.RulebookService RulebookService { get; }
+    public Achievements.AchievementService Achievements { get; }
+    public AchievementToastWindow AchievementToastWindow { get; }
     public ChatComposer ChatComposer { get; }
     public ChatSender ChatSender { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
@@ -291,6 +293,9 @@ public sealed class Plugin : IDalamudPlugin
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
         RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
+        Achievements = new Achievements.AchievementService(Configuration, FollowCommand, CageService, RestraintCommand, RestrictionRuleManager,
+            RuntimeState, OwnerStatusEstimates, ChatCommandListener, OutfitCommand, GestureCommand, TeleportCommand, ChatGagService,
+            RulebookService, ReactionService, CustomTriggerCommand);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
         safewordNotifier = new SafewordNotifier(Configuration, RelayClient, ChatComposer, ChatSender);
@@ -307,6 +312,7 @@ public sealed class Plugin : IDalamudPlugin
         CommandPickerWindow = new CommandPickerWindow(this);
         ItemPickerWindow = new ItemPickerWindow(this);
         FavoritesWindow = new FavoritesWindow(this);
+        AchievementToastWindow = new AchievementToastWindow(this);
         QuickAccessMenuHost = new QuickAccessMenuHost(this);
         RecoveryCodeWindow = new RecoveryCodeWindow(this);
         Snapshot = new SnapshotOverlay(this);
@@ -334,6 +340,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(CommandPickerWindow);
         WindowSystem.AddWindow(ItemPickerWindow);
         WindowSystem.AddWindow(FavoritesWindow);
+        WindowSystem.AddWindow(AchievementToastWindow);
         WindowSystem.AddWindow(QuickAccessMenuHost);
         WindowSystem.AddWindow(RecoveryCodeWindow);
 
@@ -587,6 +594,7 @@ public sealed class Plugin : IDalamudPlugin
         ActionBlockService.OnFrameworkUpdate();
         MoodlesCommand.Ledger.OnFrameworkUpdate();
         CollarCommand.OnFrameworkUpdate();
+        Achievements.OnFrameworkUpdate();
         TeleportCommand.OnFrameworkUpdate();
         leashTravelWatcher.OnFrameworkUpdate();
         TitleCommand.OnFrameworkUpdate();

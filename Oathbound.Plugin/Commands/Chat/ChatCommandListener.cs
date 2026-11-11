@@ -57,6 +57,9 @@ public sealed class ChatCommandListener : IDisposable
     /// Set once by Plugin.
     public OwnerSafewordAlerts? SafewordAlerts { get; set; }
 
+    /// A paired Owner's command applied on this client.
+    public event Action? CommandApplied;
+
     /// Set once by Plugin.
     public Games.GamesService? Games { get; set; }
 
@@ -196,6 +199,9 @@ public sealed class ChatCommandListener : IDisposable
             Plugin.Log.Error(ex, $"Failed to apply alias \"{alias}\" from a trigger tell.");
             outcome = LocalTestResult.Fail(ex.Message, $"sent \"{alias}\", but it failed on your side");
         }
+
+        if (outcome.Success)
+            CommandApplied?.Invoke();
 
         // A trigger word glued to the next word ("commandx") still dispatches, but only a whole word counts as a command line.
         if (!HasTriggerWord(text, trigger))

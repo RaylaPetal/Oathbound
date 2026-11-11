@@ -128,6 +128,11 @@ public sealed class CageService
         };
     }
 
+    /// Whether the cage being closed was sent with Bring & lock.
+    private bool broughtPending;
+
+    public event Action<SubCageState, bool>? Closed;
+
     /// Raised on every change of phase, end time or holder, and when the cage opens or is dropped.
     public event Action? StateChanged;
 
@@ -149,6 +154,7 @@ public sealed class CageService
         rest = LockTimerOption.StripSeconds(rest, out var lockSeconds);
         rest = StripArmSeconds(rest, out var armSeconds);
         rest = StripBring(rest, out var bring);
+        broughtPending = bring;
         var trimmed = rest.Trim();
         var space = trimmed.IndexOf(' ');
         var verb = space < 0 ? trimmed : trimmed[..space];
@@ -409,6 +415,8 @@ public sealed class CageService
         if (teleport.IsInProgress)
             teleport.Stop("caged");
         Plugin.Log.Information($"Cage \"{cage.Name}\" closed.");
+        Closed?.Invoke(cage, broughtPending);
+        broughtPending = false;
         var until = cage.EndsAtUtc is { } end ? $"for {RestraintLock.Format(end - now)}" : "until they open it";
         Notify("Caged", $"{cage.OwnerName} has you in \"{cage.Name}\" {until}. Panic still opens it.", NotificationType.Warning);
         StateChanged?.Invoke();

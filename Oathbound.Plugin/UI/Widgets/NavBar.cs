@@ -5,10 +5,10 @@ using Dalamud.Interface.Utility.Raii;
 
 namespace Oathbound.Plugin.UI;
 
-/// The icon+label grid of modules, three per row.
+/// The icon+label grid of modules, two per row, so labels never clip and an even count fills every row.
 public static class NavBar
 {
-    private const int Columns = 3;
+    private const int Columns = 2;
     private static float ButtonHeight => Layout.Scaled(36f);
 
     /// Computed from the same style values Draw uses, so callers never guess a constant.

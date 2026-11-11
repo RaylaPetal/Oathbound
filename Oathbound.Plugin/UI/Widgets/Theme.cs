@@ -20,6 +20,12 @@ public static class Theme
     /// Danger is too muted to read as red.
     public static readonly Vector4 StatusMissing = new(0.92f, 0.32f, 0.32f, 1f);
 
+    public static readonly Vector4 Bronze = new(0.80f, 0.52f, 0.30f, 1f);
+    public static readonly Vector4 Silver = new(0.78f, 0.80f, 0.86f, 1f);
+    public static readonly Vector4 Gold = new(0.98f, 0.80f, 0.30f, 1f);
+
+    public static Vector4 Tier(int tier) => tier switch { 0 => Bronze, 1 => Silver, _ => Gold };
+
     public const float CardRounding = 8f;
     public const float TileRounding = 6f;
 

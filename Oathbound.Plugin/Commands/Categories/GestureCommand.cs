@@ -323,6 +323,8 @@ public sealed class GestureCommand
 
     /// Every caller is an Owner command or the Sub's Perform on an oath they swore, so it holds the Sub like a Forced Pose.
     /// `playDelayMs` lets a redraw settle first; with nothing redrawn it plays on the next frame.
+    public event Action? OwnerAnimationPlayed;
+
     private void BeginHold(GestureTrigger trigger, Guid? sourcePairingId, int? holdSeconds, Action<bool>? onEnd, long now, long playDelayMs)
     {
         // A hold being replaced didn't run its course.
@@ -333,6 +335,8 @@ public sealed class GestureCommand
         pendingPlay = (trigger, now + playDelayMs);
         heldTrigger = trigger;
         heldBySourcePairingId = sourcePairingId;
+        if (sourcePairingId is not null)
+            OwnerAnimationPlayed?.Invoke();
         // Unknown commands stay held until stopped, like before.
         heldEmote = trigger.Kind == GestureTriggerKind.SlashCommand ? GestureTriggerResolver.LookupEmoteMode(trigger.SlashCommand) : null;
         heldEmoteSeenPlaying = false;

@@ -240,7 +240,12 @@ public sealed class RestraintCommand
         else
             config.WornRestraints.Add(entry);
         config.Save();
+        RestraintWorn?.Invoke(entry.Reference);
     }
+
+    /// Every restraint put on, by the name its command used.
+    public event Action<string>? RestraintWorn;
+    public event Action<StruggleLevel>? StruggleWon;
 
     private bool SubRedraws(WornRestraint worn) => worn.Kind switch
     {
@@ -573,6 +578,7 @@ public sealed class RestraintCommand
             Plugin.Log.Information("Struggled free of a restraint.");
             ReleaseDevice(runtimeId);
             StruggledFree?.Invoke(restraintLock.ByPairingId, worn.Reference);
+            StruggleWon?.Invoke(setting.Level);
             return LocalTestResult.Ok($"You struggled free of {worn.Reference}!");
         }
         restraintLock.StruggleNextTryUtc = DateTime.UtcNow + RestraintStruggle.Wait(setting.Level);

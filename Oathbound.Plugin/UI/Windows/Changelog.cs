@@ -11,6 +11,28 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.6", "2026-11-11", "Achievements, a clearer rulebook",
+        [
+            new("New",
+            [
+                "Achievements: about sixty milestones for Owners and Subs, from your first leash to a month collared or a thousand commands sent, most with Bronze, Silver and Gold tiers, plus a few secret ones. Open them from the Achievements tile in the main window.",
+                "A popup and a sound mark each unlock. They wait until you're out of combat and cutscenes. Turn the popup off or pick the sound in Settings > Identity & Pairing.",
+                "They're private: kept on your own computer, never sent to anyone, your partner included. Using your safeword never counts against, or towards, any of them.",
+            ]),
+            new("Changed",
+            [
+                "Main window: the modules are now two to a row, so every name shows in full and no row is left half empty.",
+                "Rulebook: every rule now reads as one plain sentence - what sets it off and what happens, points and card draws included - with the full details one click away.",
+                "Rulebook: a Points panel on both sides shows how points are earned and lost, what they buy, and how far each milestone is.",
+                "Rulebook for Owners: a bar at the top shows where your latest version is - unpublished changes, sent, picked up, accepted - with Publish right on it.",
+                "Rulebook for Subs: a Today section at the top lists what's due now, what's about to break, and what's done, with your balance. The full list of oaths, rules, shop and activity is folded underneath.",
+                "Rulebook for Owners: four tabs instead of eight - Overview, Rules, Points, and Rewards & Punishments. Oaths, place, presence and schedule rules are one list now.",
+                "Rulebook for Owners: + Add rule walks you through a new rule step by step, and ends with the rule as a sentence before you add it.",
+                "Rulebook for Owners: start from a template - Gentle, Strict or Point economy - then change anything. Nothing is sent until you publish.",
+                "Rulebook for Owners: every outcome starts with Give points, Take points, Draw a reward and Draw a punishment, with everything else under More.",
+                "Rulebook for Owners: strikes, streaks, repeats, cooldowns and card weights are tucked away until you tick Show advanced settings. Rules that already use them still show them.",
+            ]),
+        ]),
         new("0.2.6.5", "2026-11-11", "Blindfolds, safeword notice",
         [
             new("New",

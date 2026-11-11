@@ -146,6 +146,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "games":
                 DrawGamesModule();
                 break;
+            case "achievements":
+                DrawAchievementsModule();
+                break;
         }
     }
 

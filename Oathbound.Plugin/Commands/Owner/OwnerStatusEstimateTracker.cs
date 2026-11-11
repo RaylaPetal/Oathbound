@@ -94,10 +94,21 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         // A command goes to the active pairing, same as ChatComposer.Wrap.
         if (config.GetActivePairing() is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
         if (StripEnvelope(text, pairing) is not { Length: > 0 } body) return;
+        if (HasTrigger(text, pairing))
+            CommandSent?.Invoke(body);
 
         if (!estimates.TryGetValue(pairing.Id, out var estimate))
             estimates[pairing.Id] = estimate = new OwnerStatusEstimate();
         Apply(estimate, body);
+    }
+
+    /// A command to the active Sub, as its body after the trigger phrase. Notices carry no trigger and aren't raised.
+    public event Action<string>? CommandSent;
+
+    private bool HasTrigger(string text, PairingState pairing)
+    {
+        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
+        return trigger.Length > 0 && text.Contains(" " + trigger + " ", StringComparison.OrdinalIgnoreCase);
     }
 
     /// Leaves the command body exactly as ChatComposer.Wrap received it.

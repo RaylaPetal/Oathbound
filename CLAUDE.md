@@ -127,6 +127,7 @@ Oathbound.Plugin/
   Relay/        everything that talks to the Cloudflare relay (see below)
   Rulebook/     rulebooks, oaths, decks and the ledger
   Games/        games between the two people of a pairing
+  Achievements/ private, local achievements: the catalog, counters and unlocks (never sent anywhere)
 ```
 
 Subfolders are for finding things only: every file in `Commands/` is in namespace `Oathbound.Plugin.Commands` and every

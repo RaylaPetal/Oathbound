@@ -237,6 +237,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     {
         var activity = pairing.Rulebook.Activity;
         activity.Add(new RulebookEvent { At = Now(), Kind = kind, RuleId = ruleId, Text = text });
+        Logged?.Invoke(pairing, kind);
         if (activity.Count > MaxActivity)
             activity.RemoveRange(0, activity.Count - MaxActivity);
         config.Save();
@@ -1120,6 +1121,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             Fire(pairing, item.Id, $"Bought \"{name}\"", item.Consequence, null, 0);
         Notify("Bought", $"\"{name}\" for {item.Price} points.", NotificationType.Success);
         config.SaveNow();
+        Bought?.Invoke();
         return null;
     }
 
@@ -1491,7 +1493,20 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 
     // ---- Owner side actions ----
 
-    public System.Threading.Tasks.Task<string?> PublishAsync(PairingState pairing) => mailbox.PublishRulebookAsync(pairing, CancellationToken.None);
+    public async System.Threading.Tasks.Task<string?> PublishAsync(PairingState pairing)
+    {
+        var error = await mailbox.PublishRulebookAsync(pairing, CancellationToken.None);
+        if (error is null)
+            await Plugin.Framework.RunOnFrameworkThread(() => Published?.Invoke());
+        return error;
+    }
+
+    /// Shared with achievements, so duty and area events are only hooked once.
+    public RulebookGameEvents GameEvents => events;
+
+    public event Action<PairingState, RulebookEventKind>? Logged;
+    public event Action? Published;
+    public event Action? Bought;
 
     /// The `collarrulebook` nudge, only after a successful publish the Owner clicked.
     public void SendNudge(PairingState pairing)

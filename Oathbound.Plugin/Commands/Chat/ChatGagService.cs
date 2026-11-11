@@ -134,7 +134,10 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
                 if (rewritten.Length > MaxChatLength)
                     rewritten = rewritten[..MaxChatLength];
                 if (!string.Equals(rewritten, original, StringComparison.Ordinal) && rewritten.Length > 0)
+                {
                     message->SetString(rewritten);
+                    GaggedLineSent?.Invoke();
+                }
             }
         }
         catch (Exception ex)
@@ -146,6 +149,8 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
     }
 
     private const int MaxChatLength = 500;
+
+    public event Action? GaggedLineSent;
 
     /// Rewrites speech in chat channels, keeping the slash command and a tell's recipient. Other slash commands
     /// pass through unchanged.

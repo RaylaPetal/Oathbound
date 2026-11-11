@@ -157,6 +157,9 @@ public sealed class ReactionService : IDisposable
             string.Equals(p.Name.TextValue, name, StringComparison.OrdinalIgnoreCase) &&
             (string.IsNullOrEmpty(world) || (p.HomeWorld.IsValid && string.Equals(p.HomeWorld.Value.Name.ExtractText(), world, StringComparison.OrdinalIgnoreCase))));
 
+    /// A real trigger, not the editor's Test.
+    public event Action? Fired;
+
     private void TryFire(ReactionRule rule, IGameObject? source)
     {
         var now = Environment.TickCount64;
@@ -164,6 +167,7 @@ public sealed class ReactionService : IDisposable
             return;
         lastFiredTicks[rule.Id] = now;
         Fire(rule, source);
+        Fired?.Invoke();
     }
 
     /// Each action is independent: one failing never stops the others. `source` is who set it off, null when not nearby.

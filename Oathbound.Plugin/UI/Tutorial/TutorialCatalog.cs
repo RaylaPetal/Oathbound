@@ -17,6 +17,7 @@ public static class TutorialAnchors
     public const string MainNav = "main:nav";
     public const string MainSettings = "main:settings";
     public const string NavFavorites = "nav:favorites";
+    public const string NavAchievements = "nav:achievements";
     public const string ModuleHelp = "module:help";
     public const string QuickRow = "quick:row";
     public const string QuickStar = "quick:star";
@@ -83,8 +84,9 @@ public static class TutorialCatalog
             new("Revert all", "Takes everything off your active Sub at once: restraints, outfit, title, leash, animation, toys and moodles. It needs two clicks. The collar and the pairing are never touched.", TutorialAnchors.MainRevertAll, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Sub Control", "Opens every command you have, from every module, in one console docked beside this window.", TutorialAnchors.MainSubControl, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Safeword", "Your own safeword. Typing /obpanic always takes everything off you, whatever role you're in.", TutorialAnchors.MainSafeword, n => n.Main()),
-            new("Modules", "Each tile opens a module: titles, outfits, animations, moodles, restraints, toys, custom triggers, the collar, the leash, reactions and sync. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
-            new("Favorites", "The Favorites tile, last in the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Modules", "Each tile opens a module: titles, outfits, animations, moodles, restraints, toys, custom triggers, the collar, the leash, the cage, games, the rulebook, reactions and sync. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
+            new("Favorites", "The Favorites tile, near the bottom of the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Achievements", "Achievements mark your milestones. They're private: nothing about them is ever sent to anyone.", TutorialAnchors.NavAchievements, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
             new("Role & trigger phrase", "Your role (Owner, Sub or Switch) and the trigger phrase that starts every command tell.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Pairing", "Pair with someone by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
@@ -189,16 +191,16 @@ public static class TutorialCatalog
         ["rulebook"] =
         [
             Help("rulebook", "Write rules that keep running while you're away: oaths, a deck of cards, places, your presence and a ledger."),
-            new("Send", "Sends your rulebook to your Sub, encrypted. They review it and accept it before anything runs.", S("rbPublish"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
+            new("Publish", "Where your latest version is: your unpublished changes, sent, picked up by their plugin, and accepted. Publish sends it, encrypted; nothing runs until they accept it.", S("rbPublishBar"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
             new("What's happening", "Their client reports back here by itself: oaths kept or broken, cards drawn, the ledger. Draw a card or award points from here too.", S("rbReport"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
-            new("Oaths", "Something they swear to - no deaths next duty, a curfew, staying out of a city. Keeping or breaking it runs what you set.", S("rbOaths"), n => n.RulebookTab(ModuleWindow.RulebookOathsTab)),
-            new("Automatic draws", "Pick what draws a card: bad things draw a punishment, a kept oath draws a reward.", S("rbDeckDraws"), n => n.RulebookTab(ModuleWindow.RulebookDeckTab)),
-            new("Cards", "Your punishments and rewards. Each shows its chance of coming up.", S("rbDeck"), n => n.RulebookTab(ModuleWindow.RulebookDeckTab)),
-            new("Places", "Run something when they enter or leave a place.", S("rbPlaces"), n => n.RulebookTab(ModuleWindow.RulebookPlacesTab)),
-            new("Presence", "Run something when your character comes near them, or leaves.", S("rbPresence"), n => n.RulebookTab(ModuleWindow.RulebookPresenceTab)),
-            new("Ledger", "A running score. A threshold runs something when it's reached.", S("rbLedger"), n => n.RulebookTab(ModuleWindow.RulebookLedgerTab)),
-            new("Schedule", "Run something at a time of day on the days you pick, or each time they log in.", S("rbTimes"), n => n.RulebookTab(ModuleWindow.RulebookScheduleTab)),
-            new("Shop", "Things they can buy with ledger points when they choose - a reward card, or something you set.", S("rbShop"), n => n.RulebookTab(ModuleWindow.RulebookShopTab)),
+            new("Rules", "Everything your Sub has to do, as one list - oaths, places, when you're near, times of day. Each reads as a sentence; pick one to change it.", S("rbRules"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab)),
+            new("Add a rule", "+ Add rule walks you through it: what they should do, the details, what happens when they do or don't, then a last look before it's added.", S("rbRules"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab)),
+            new("Templates", "Not sure where to start? A template fills an empty rulebook with a ready set you can change. Nothing is sent until you publish.", S("rbTemplates"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab), "Shown while your rulebook is empty, or after Templates..."),
+            new("Points", "Where their points come from and go, read from your rules.", S("rbOwnerPoints"), n => n.RulebookTab(ModuleWindow.RulebookPointsTab)),
+            new("Milestones", "Run something when their points reach a number you set.", S("rbLedger"), n => n.RulebookTab(ModuleWindow.RulebookPointsTab)),
+            new("Automatic draws", "Pick what draws a card: bad things draw a punishment, a kept oath draws a reward.", S("rbDeckDraws"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
+            new("Cards", "Your punishments and rewards. Each shows its chance of coming up.", S("rbDeck"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
+            new("Shop", "Things they can buy with their points when they choose - a reward card, or something you set.", S("rbShop"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
         ],
         ["sync"] =
         [
@@ -307,9 +309,11 @@ public static class TutorialCatalog
             Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and only they can change a rule after that."),
             new("New version", "When your Owner publishes, review what changed here and accept or decline it.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
             new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
-            new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
-            new("Ledger", "Your score and the cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
-            new("Shop", "Spend your ledger points on what your Owner put up for sale. Only you can buy.", S("rbSubShop"), n => n.Module("rulebook"), "Shown when your Owner's rulebook has a shop."),
+            new("Today", "What's due now, what's about to break, and what you've already done today, with your balance.", S("rbSubToday"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Points", "How you earn and lose points, what you can buy with them, and the milestones ahead.", S("rbSubPoints"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've accepted a rulebook."),
+            new("Card draws", "The cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've drawn a card."),
+            new("Shop", "Spend your ledger points on what your Owner put up for sale. Only you can buy.", S("rbSubShop"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", when your Owner's rulebook has a shop."),
             new("Rules", "Every rule you accepted, laid out line by line. Only your Owner can change or remove one; your safeword pauses them all.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Activity", "Everything the rulebook did, newest first.", S("rbSubActivity"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
         ],
