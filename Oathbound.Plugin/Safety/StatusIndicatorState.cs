@@ -28,6 +28,9 @@ public sealed class StatusIndicatorState
         this.estimates = estimates;
     }
 
+    /// Set once by Plugin: other players' shared tags, for characters with no pairing to this client.
+    public SharedStatusReader? Shared { get; set; }
+
     public CharacterStatus Get(IPlayerCharacter character)
     {
         if (Plugin.ObjectTable.LocalPlayer is { } me && me.Address == character.Address)
@@ -53,7 +56,12 @@ public sealed class StatusIndicatorState
             pairing = p;
             break;
         }
-        if (pairing is null || estimates.For(pairing) is not { } estimate) return CharacterStatus.None;
+        // A pairing's own state wins; only an unpaired character falls back to their shared tag.
+        if (pairing is null)
+            return Shared?.For(character.GameObjectId) is { } shared
+                ? new CharacterStatus(shared.Gagged, shared.Restrained, shared.Leashed, shared.Leashed ? Shared.OwnerOf(character.GameObjectId) : 0)
+                : CharacterStatus.None;
+        if (estimates.For(pairing) is not { } estimate) return CharacterStatus.None;
 
         var localId = Plugin.ObjectTable.LocalPlayer?.GameObjectId ?? 0;
         return new CharacterStatus(estimate.Gagged, estimate.Restrained, estimate.Leashed, estimate.Leashed ? localId : 0);
@@ -64,6 +72,8 @@ public sealed class StatusIndicatorState
     public IEnumerable<(Guid PairingId, IPlayerCharacter? Sub, IPlayerCharacter? Owner, float Length)> ActiveLeashes()
     {
         if (Plugin.ObjectTable.LocalPlayer is not { } me) yield break;
+        // Pairs this client already draws from its own pairings, so a shared tag doesn't draw them twice.
+        var drawn = new HashSet<ulong>();
 
         if (runtimeState.MovementLockActive && follow.LeashedPairingId is { } leashedId)
         {
@@ -78,8 +88,26 @@ public sealed class StatusIndicatorState
             // Paused on the Sub's side, so no line, even with the Sub standing right here.
             var sub = estimate.PauseInDuties && TeleportDestinations.InDuty() ? null : FindPlayer(pairing.PeerName!, pairing.PeerWorld!);
             yield return (pairing.Id, sub, me, estimate.LeashLength);
+            if (sub is not null)
+                drawn.Add(sub.GameObjectId);
+        }
+
+        if (Shared is null)
+            yield break;
+        foreach (var (subId, status) in Shared.All())
+        {
+            if (!status.Leashed || subId == me.GameObjectId || drawn.Contains(subId)) continue;
+            if (Plugin.ObjectTable.SearchById(subId) is not IPlayerCharacter sub) continue;
+            var ownerId = Shared.OwnerOf(subId);
+            var owner = ownerId == 0 ? null : Plugin.ObjectTable.SearchById(ownerId) as IPlayerCharacter;
+            yield return (SharedLeashId(sub), sub, owner, status.LeashLength!.Value);
         }
     }
+
+    /// Stable per Sub, so render range and zoning don't read as the leash going on and off.
+    private static Guid SharedLeashId(IPlayerCharacter sub) =>
+        new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(
+            $"oathbound-shared-leash:{sub.Name.TextValue}@{sub.HomeWorld.ValueNullable?.Name.ExtractText()}")));
 
     /// Every rendered character with drawn cuffs: the local player's engaged restraints, and each Owner-side estimate's.
     public IEnumerable<(IPlayerCharacter Sub, CuffSet Cuffs)> ActiveCuffs()

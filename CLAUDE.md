@@ -232,7 +232,10 @@ verified against the tell's sender and a paired `PairingState` of the right dire
 The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner
 sent. Three pieces of real state flow back: the leash-off notice, and the collar and cage status the Sub's
 `CollarStatusReporter` / `CageStatusReporter` post to the relay (read by the Owner into `OwnerCollarStatusStore` /
-`OwnerCageStatusStore` during the pair status check). Panic (`PanicHandler`) reverts everything
+`OwnerCageStatusStore` during the pair status check). Separately, with SimpleHeels installed, `SharedStatusPublisher`
+puts the Sub's gagged/restrained/leashed flags, leash length and a hashed Owner name on an `oathbound` SimpleHeels tag
+that sync services carry to synced players; `SharedStatusReader` reads it from nearby players into
+`StatusIndicatorState` for unpaired characters only. It's visual only, always on, and cleared on panic/unpair/unload. Panic (`PanicHandler`) reverts everything
 local except a locked collar - the collar only comes off via the owning Owner's `collar unlock` or unpairing.
 
 A cage (`CageService`) closes the Sub's own escapes while it holds them; every Sub-side escape (permission toggles,
@@ -250,5 +253,4 @@ removing or adding a module section needs the matching tour step updated there.
 ## Code comments
 
 Keep comments minimal: only the non-obvious *why* (workarounds, threading, wire-format/security invariants).
-No spec/design references (`collar/...`, `design D4`), no change history, nothing that restates the code, and
-no mentions of non-dependency plugins (GagSpeak, Lightless, PoseKit, ReactToMe, ...).
+No spec/design references (`collar/...`, `design D4`), no change history, nothing that restates the code.

@@ -29,6 +29,8 @@ public sealed partial class ModuleWindow
 
     /// Gear is optional; a rules-only ad-hoc device leaves mod/slot/item unset.
     private string newAdHocLabel = "";
+    /// The label of the saved restraint the builder is editing, or null for a new one.
+    private string? editingSavedRestraint;
 
     private readonly RestraintRuleEditState newAdHocRuleEdit = new();
 
@@ -86,7 +88,7 @@ public sealed partial class ModuleWindow
         foreach (var cmd in quick.Where(x => x.RestraintCatalogId is null))
             items.Add(new ListDetailItem($"shared:{cmd.Label}", cmd.Label, "rules-only", Marker(cmd.Label), null, FontAwesomeIcon.Handcuffs));
         if (creatingOwnerAdHoc)
-            items.Add(new ListDetailItem(NewAdHocKey, "One-off rules-only restraint", "rules-only", null, null, FontAwesomeIcon.Handcuffs));
+            items.Add(new ListDetailItem(NewAdHocKey, "New rules-only restraint", "rules-only", null, null, FontAwesomeIcon.Handcuffs));
         return items;
     }
 
@@ -100,8 +102,9 @@ public sealed partial class ModuleWindow
         if (!ImGui.BeginPopup("newOwnerRestraint"))
             return;
 
-        if (ImGui.Selectable("One-off rules-only restraint (no gear)"))
+        if (ImGui.Selectable("Rules-only restraint (no gear)"))
         {
+            editingSavedRestraint = null;
             creatingOwnerAdHoc = true;
             ownerRestraintList.Select(NewAdHocKey);
         }
@@ -150,7 +153,10 @@ public sealed partial class ModuleWindow
     private void OnOwnerRestraintSelected(ListDetailItem? item, List<QuickCommand> quick)
     {
         if (item?.Key != NewAdHocKey)
+        {
             creatingOwnerAdHoc = false;
+            editingSavedRestraint = null;
+        }
         if (FindOwnerRestraint(quick, item?.Key) is { RestraintCatalogId: not null } cmd)
             restraintRuleEdits[cmd.Label] = FromRules(cmd.RestraintRules);
     }
@@ -174,12 +180,15 @@ public sealed partial class ModuleWindow
         }
         if (item.Key == NewAdHocKey)
         {
-            DrawDetailHeader("One-off rules-only restraint", "Sent with its rules, not saved", null, FontAwesomeIcon.Handcuffs, null, () =>
+            var editing = editingSavedRestraint;
+            DrawDetailHeader(editing is null ? "New rules-only restraint" : $"Editing {editing}",
+                editing is null ? "Send it once, or save it to your restraints" : "Save changes to update it in your list", null, FontAwesomeIcon.Handcuffs, null, () =>
             {
                 if (ImGui.Button("Cancel##adHocRestraint"))
                 {
                     creatingOwnerAdHoc = false;
-                    ownerRestraintList.Select(null);
+                    editingSavedRestraint = null;
+                    ownerRestraintList.Select(editing is null ? null : $"shared:{editing}");
                 }
             });
             DrawAdHocRestraintSection(canSend);
@@ -189,7 +198,12 @@ public sealed partial class ModuleWindow
             return;
         if (cmd.RestraintCatalogId is null)
         {
-            DrawDetailHeader(cmd.Label, "Rules-only restraint from your Sub", null, FontAwesomeIcon.Handcuffs, null, () => { });
+            var own = cmd.SourcePairIdHash is null;
+            DrawDetailHeader(cmd.Label, own ? "Your rules-only restraint" : "Rules-only restraint from your Sub", null, FontAwesomeIcon.Handcuffs, null, () =>
+            {
+                if (own && ImGui.Button("Edit##savedRestraint"))
+                    EditSavedRestraint(cmd);
+            });
             DrawSavedQuickRow(cmd, quick, canSend);
             if (cmd.RestraintRules is { Count: > 0 })
                 DrawOwnerRedraw(cmd);
@@ -317,7 +331,55 @@ public sealed partial class ModuleWindow
         ImGui.PopID();
     }
 
-    /// Rules-only and sent with its full definition in the command, so it isn't added to the quick list.
+    /// Loads a saved rules-only restraint back into the builder; Save changes replaces it in place.
+    private void EditSavedRestraint(QuickCommand cmd)
+    {
+        newAdHocLabel = cmd.Label;
+        CopyRuleEdit(FromRules(cmd.RestraintRules), newAdHocRuleEdit);
+        adHocRedraw = cmd.RestraintRedraw;
+        adHocMoodleOverride = cmd.MoodleOverride;
+        adHocLockSeconds = cmd.LockSeconds;
+        adHocLockKey = cmd.LockKey ?? "";
+        adHocStruggle = cmd.Struggle;
+        adHocStrugglePenalty = cmd.StrugglePenaltyMinutes;
+        editingSavedRestraint = cmd.Label;
+        creatingOwnerAdHoc = true;
+        ownerRestraintList.Select(NewAdHocKey);
+    }
+
+    /// An Owner-made entry: catalog sync only replaces entries it imported, so this one stays.
+    private void SaveAdHocRestraint(List<QuickCommand> quick, string command)
+    {
+        var label = newAdHocLabel.Trim();
+        var index = editingSavedRestraint is { } old
+            ? quick.FindIndex(x => x.SourcePairIdHash is null && x.RestraintCatalogId is null && string.Equals(x.Label, old, StringComparison.OrdinalIgnoreCase))
+            : -1;
+        var favorite = index >= 0 && quick[index].IsFavorite;
+        if (index >= 0)
+            quick.RemoveAt(index);
+        quick.Insert(index >= 0 ? index : quick.Count, new QuickCommand
+        {
+            IsFavorite = favorite,
+            Label = label,
+            Command = command,
+            Source = ImportSource.Manual,
+            RestraintRules = ToRules(newAdHocRuleEdit, rulesOnly: true),
+            RestraintRedraw = adHocRedraw,
+            MoodleOverride = adHocMoodleOverride,
+            LockSeconds = adHocLockSeconds,
+            LockKey = string.IsNullOrEmpty(adHocLockKey) ? null : adHocLockKey,
+            Struggle = adHocStruggle,
+            StrugglePenaltyMinutes = adHocLockSeconds is null ? 0 : adHocStrugglePenalty,
+        });
+        plugin.Configuration.Save();
+        creatingOwnerAdHoc = false;
+        editingSavedRestraint = null;
+        newAdHocLabel = "";
+        CopyRuleEdit(new RestraintRuleEditState(), newAdHocRuleEdit);
+        ownerRestraintList.Select($"shared:{label}");
+    }
+
+    /// Built with its full definition in the command, so it can be sent once or saved to the list.
     private void DrawAdHocRestraintSection(bool canSend)
     {
         IconGlyph.WrappedDisabled("Send rules like forced pose, walk-only, gag or action block without any gear.");
@@ -350,6 +412,18 @@ public sealed partial class ModuleWindow
             ContinueRowOrWrap(ButtonWidth("Send"));
             var withStruggle = RestraintStruggle.Insert(command, new StruggleSetting(adHocStruggle, adHocLockSeconds is null ? 0 : adHocStrugglePenalty));
             DrawSendCopyButtons(OwnerLockOption.Apply(OwnerMoodleOverride.Apply(withStruggle, adHocMoodleOverride), adHocLockSeconds, adHocLockKey), canSend, "adHocRestraint");
+
+            var quick = plugin.Configuration.QuickCommands.Restraints;
+            var taken = quick.Any(x => string.Equals(x.Label, newAdHocLabel.Trim(), StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(x.Label, editingSavedRestraint, StringComparison.OrdinalIgnoreCase));
+            using (ImRaii.Disabled(taken))
+            {
+                if (ImGui.Button(editingSavedRestraint is null ? "Save to my restraints##adHocRestraint" : "Save changes##adHocRestraint"))
+                    SaveAdHocRestraint(quick, command);
+            }
+            IconGlyph.HelpMarker(taken
+                ? "You already have a restraint with this label - pick another one to save it."
+                : "Keeps it in your list with its rules, lock, key, struggle and moodle, so you can send it again with one click.");
         }
         else
         {

@@ -11,6 +11,18 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.7", "2026-11-11", "Others can see your leash",
+        [
+            new("New",
+            [
+                "With SimpleHeels installed, Oathbound players you're synced with now see your status icons - gagged, restrained, leashed - and your leash line when your Owner is nearby. You see theirs the same way, in your own leash colour.",
+                "It's always on while SimpleHeels is installed. It carries no names in the clear, can't make anyone's game do anything, and clears at once when you're unleashed, use your safeword or unpair.",
+            ]),
+            new("Changed",
+            [
+                "Restraints for Owners: a rules-only restraint you build can now be saved to your list, with its lock, key, struggle and moodle, sent again with one click, and edited later.",
+            ]),
+        ]),
         new("0.2.6.6", "2026-11-11", "Achievements, a clearer rulebook",
         [
             new("New",

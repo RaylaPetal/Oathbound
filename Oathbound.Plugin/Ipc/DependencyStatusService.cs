@@ -15,6 +15,7 @@ public enum DependencyId
     Lifestream,
     Vnavmesh,
     Intiface,
+    SimpleHeels,
 }
 
 public enum DependencyState
@@ -45,6 +46,7 @@ public sealed class DependencyStatusService : IDisposable
         new(DependencyId.Lifestream, "Lifestream", "Teleport (world change, aetheryte and housing-ward travel)", "Sub, for Teleport. Owners don't need it to send Teleport."),
         new(DependencyId.Vnavmesh, "vnavmesh", "Teleport (navigating to the Owner's side)", "Sub, for Teleport. Owners don't need it to send Teleport."),
         new(DependencyId.Intiface, "Intiface Central", "Toy control (desktop app, connected from Toy Control)", "Sub, for toys."),
+        new(DependencyId.SimpleHeels, "SimpleHeels", "Sharing your leash and status icons with Oathbound players you're synced with, and seeing theirs", "Optional, for both roles. While it's installed, your leash and status icons are always shared."),
     ];
 
     private static readonly Dictionary<DependencyId, string> InternalNames = new()
@@ -56,6 +58,7 @@ public sealed class DependencyStatusService : IDisposable
         [DependencyId.CustomizePlus] = "CustomizePlus",
         [DependencyId.Lifestream] = "Lifestream",
         [DependencyId.Vnavmesh] = "vnavmesh",
+        [DependencyId.SimpleHeels] = "SimpleHeels",
     };
 
 
@@ -65,7 +68,7 @@ public sealed class DependencyStatusService : IDisposable
     private DateTime lastRefresh = DateTime.MinValue;
     private bool dirty = true;
 
-    public DependencyStatusService(GlamourerIpc glamourer, PenumbraIpc penumbra, HonorificIpc honorific, MoodlesIpc moodles, CustomizePlusIpc customizePlus, LifestreamIpc lifestream, VnavmeshIpc vnavmesh, IntifaceIpc intiface)
+    public DependencyStatusService(GlamourerIpc glamourer, PenumbraIpc penumbra, HonorificIpc honorific, MoodlesIpc moodles, CustomizePlusIpc customizePlus, LifestreamIpc lifestream, VnavmeshIpc vnavmesh, IntifaceIpc intiface, SimpleHeelsIpc simpleHeels)
     {
         probes = new()
         {
@@ -76,6 +79,7 @@ public sealed class DependencyStatusService : IDisposable
             [DependencyId.CustomizePlus] = () => customizePlus.IsAvailable,
             [DependencyId.Lifestream] = () => lifestream.IsAvailable,
             [DependencyId.Vnavmesh] = () => vnavmesh.IsAvailable,
+            [DependencyId.SimpleHeels] = () => simpleHeels.IsAvailable,
         };
         intifaceConnected = () => intiface.IsConnected;
         Plugin.PluginInterface.ActivePluginsChanged += OnActivePluginsChanged;

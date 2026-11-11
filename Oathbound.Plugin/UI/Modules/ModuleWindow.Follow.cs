@@ -48,9 +48,19 @@ public sealed partial class ModuleWindow
     }
 
     /// Only changes what this client draws; the leash keeps working with its line hidden.
-    private static void DrawLeashLineSection(PluginConfig config)
+    /// Sharing has no switch, so it's at least always said plainly.
+    private void DrawSharedStatusNote()
+    {
+        if (plugin.SimpleHeelsIpc.IsAvailable)
+            IconGlyph.WrappedDisabled("SimpleHeels is installed, so your leash and status icons are visible to Oathbound players you're synced with, and theirs to you. This can't be turned off; uninstalling SimpleHeels stops it.");
+        else
+            IconGlyph.WrappedDisabled("With SimpleHeels installed, your leash and status icons would be visible to Oathbound players you're synced with, and theirs to you.");
+    }
+
+    private void DrawLeashLineSection(PluginConfig config)
     {
         using var box = Section.Begin("leashAppearance", "Leash line");
+        DrawSharedStatusNote();
         var shown = config.ShowLeashLine;
         DrawOptionRows("leashLineOptions",
             new OptionRow("Show", "Only changes what you see. Hiding it doesn't release the leash.", _ =>

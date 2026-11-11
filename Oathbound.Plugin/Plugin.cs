@@ -135,6 +135,7 @@ public sealed class Plugin : IDalamudPlugin
     public RulebookMailboxService RulebookMailboxService { get; }
     public Rulebook.RulebookService RulebookService { get; }
     public Achievements.AchievementService Achievements { get; }
+    public SimpleHeelsIpc SimpleHeelsIpc { get; }
     public AchievementToastWindow AchievementToastWindow { get; }
     public ChatComposer ChatComposer { get; }
     public ChatSender ChatSender { get; }
@@ -156,6 +157,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CageExitGuard cageExitGuard;
     private readonly CageStatusReporter cageStatusReporter;
     private readonly SafewordNotifier safewordNotifier;
+    private readonly SharedStatusPublisher sharedStatusPublisher;
+    private readonly SharedStatusReader sharedStatusReader;
     private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
@@ -189,7 +192,8 @@ public sealed class Plugin : IDalamudPlugin
         IntifaceIpc = new IntifaceIpc();
         LifestreamIpc = new LifestreamIpc();
         VnavmeshIpc = new VnavmeshIpc();
-        DependencyStatus = new DependencyStatusService(GlamourerIpc, PenumbraIpc, HonorificIpc, MoodlesIpc, CustomizePlusIpc, LifestreamIpc, VnavmeshIpc, IntifaceIpc);
+        SimpleHeelsIpc = new SimpleHeelsIpc();
+        DependencyStatus = new DependencyStatusService(GlamourerIpc, PenumbraIpc, HonorificIpc, MoodlesIpc, CustomizePlusIpc, LifestreamIpc, VnavmeshIpc, IntifaceIpc, SimpleHeelsIpc);
         MovementLockService = new MovementLockService();
         WalkOnlyService = new WalkOnlyService();
         ActionBlockService = new ActionBlockService(WalkOnlyService);
@@ -251,6 +255,9 @@ public sealed class Plugin : IDalamudPlugin
         RestraintCommand.StruggledFree += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleFreeWord, restraint);
         RestraintCommand.KeyUnlocked += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleKeyWord, restraint);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
+        sharedStatusPublisher = new SharedStatusPublisher(Configuration, SimpleHeelsIpc, StatusIndicators, FollowCommand);
+        sharedStatusReader = new SharedStatusReader(SimpleHeelsIpc);
+        StatusIndicators.Shared = sharedStatusReader;
         worldStrokes = new WorldStrokeRenderer();
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
         restraintRenderer = new RestraintRenderer(Configuration, StatusIndicators, worldStrokes);
@@ -300,6 +307,8 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.OnPanic = RulebookService.OnPanic;
         safewordNotifier = new SafewordNotifier(Configuration, RelayClient, ChatComposer, ChatSender);
         PanicHandler.NotifyOwners = safewordNotifier.OnPanic;
+        // Runs on panic and on unpairing alike.
+        PanicHandler.AfterLocalRevert += sharedStatusPublisher.Clear;
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -434,6 +443,8 @@ public sealed class Plugin : IDalamudPlugin
         TeleportCommand.Stop("plugin unloading");
         GestureCommand.Stop();
         DependencyStatus.Dispose();
+        sharedStatusPublisher.Dispose();
+        SimpleHeelsIpc.Dispose();
         TitleCommand.Dispose();
         HonorificIpc.Dispose();
         RestraintCommand.ReleaseAllBoundAnimationsForPanic();
@@ -579,6 +590,8 @@ public sealed class Plugin : IDalamudPlugin
         collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         cageStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         safewordNotifier.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+        sharedStatusPublisher.OnFrameworkUpdate();
+        sharedStatusReader.OnFrameworkUpdate();
         GestureCommand.OnFrameworkUpdate();
         RestraintCommand.OnFrameworkUpdate();
         ToyControlCommand.OnFrameworkUpdate();

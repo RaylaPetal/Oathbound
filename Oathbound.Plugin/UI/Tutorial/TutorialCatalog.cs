@@ -134,7 +134,7 @@ public static class TutorialCatalog
         [
             Help("restraints", "Restrain your Sub with gear or rules - forced pose, walk only, blocked actions, gagged chat, cuffs."),
             new("Commands", "Restraint unlock takes every restraint you put on them off again.", S("restraintQuickCommands"), n => n.Module("restraints")),
-            new("Your restraints", "Your saved restraint mods and the rules-only restraints your Sub shared. Pick one to set it up and send it, or use + New to add one of your Sub's mods or a one-off rules-only restraint.", S("restraintQuickConfigured"), n => n.Module("restraints")),
+            new("Your restraints", "Your saved restraint mods, the rules-only restraints your Sub shared, and the ones you saved yourself. Pick one to set it up and send it, or use + New to add one of your Sub's mods or build a rules-only restraint - send it once, or save it here.", S("restraintQuickConfigured"), n => n.Module("restraints")),
             new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
             new("Lock timer", "Locked restraints stay on until you unlock them, or until a timer you set here runs out.", TutorialAnchors.QuickLock, n => n.Module("restraints"), "Appears on a restraint row."),
             Star(),

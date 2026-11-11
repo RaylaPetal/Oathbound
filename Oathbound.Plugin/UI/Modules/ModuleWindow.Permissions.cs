@@ -29,6 +29,7 @@ public sealed partial class ModuleWindow
         IconGlyph.Text(FontAwesomeIcon.ShieldAlt, "Permissions");
         ImGui.Separator();
         IconGlyph.WrappedDisabled("What you'll accept from a paired Owner while you're set to Sub - each category is independent.");
+        DrawSharedStatusNote();
         if (plugin.CageService.IsCaged)
             IconGlyph.WrappedColored(Theme.Warning, "You're caged, so your permissions are locked as they are until the cage opens. Panic still opens it.");
         using var frozen = ImRaii.Disabled(plugin.CageService.IsCaged);

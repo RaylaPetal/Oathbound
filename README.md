@@ -94,6 +94,13 @@ Sync tab shows whether it's up to date.
 
 ## 🛡️ Consent & safety
 
+- **Your leash and status are visible to the people you sync with.** With SimpleHeels installed, Oathbound puts a
+  small tag on your own character saying whether you're gagged, restrained or leashed (with the leash length and a
+  scrambled form of your Owner's name), and your sync plugin carries it to the players you're synced with. Those
+  who also run Oathbound see your status icons, and your leash line when your Owner is nearby. It's always on and
+  there's no setting for it: the only way not to share is not to run SimpleHeels. It never carries text, names in
+  the clear, or anything that can make another player's game do something, and it clears at once when you unleash,
+  use your safeword or unpair.
 - **Nothing without the Sub's plugin.** No one can change your character from outside your own game. If
   you uninstall or disable the plugin, all of it stops.
 - **Permissions per category.** Titles, outfits, animations, moodles, restraints, leash, collar, toys,
@@ -164,6 +171,7 @@ Sync tab shows whether it's up to date.
 | **vnavmesh** | Teleport (walking, riding or flying to the Owner) | Sub · for teleport |
 | **Intiface Central** *(desktop app)* | Toy control | Sub · for toys |
 | **A sync plugin** (Lightless, PlayerSync or Snowcloak - any one) | Letting other players see your changes | Sub · recommended |
+| **SimpleHeels** | Sharing your leash and status icons with Oathbound players you're synced with, and seeing theirs | Anyone · optional |
 
 > [!TIP]
 > The Owner doesn't need any of these to send commands, Teleport included. Sending only needs Oathbound
@@ -271,7 +279,9 @@ is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own
 area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
 side (their safeword, or a leash their plugin couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
 leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
-from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The only
+from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The shared
+leash and status tag (see Consent & safety) isn't chat at all: it travels with your character through SimpleHeels
+and your sync plugin, never through chat or Oathbound's relay. The only
 other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing
 you accepted, or the optional "collarrulebook" tell when an Owner publishes a rulebook with **Tell them now**
 ticked, which only asks the Sub's plugin to pick it up right away. If you struggle free of a restraint lock, your
