@@ -170,9 +170,28 @@ public sealed class MoodlesCommand
     /// Both the Moodles permission and the Sub's opt-in to moodles their Owner writes.
     public bool CustomAllowed => config.Permissions.Moodles && config.Permissions.OwnerWrittenMoodles;
 
-    /// The Owner's `moodle:` override when allowed and found, else the Sub's default; with neither, releases
-    /// `source`. The Sub's default needs no Moodles permission - the action itself was already gated.
-    public void HoldAttached(string source, AttachedMoodleRef? subDefault, string? ownerOverride)
+    /// Raised when the built-in moodles are turned on, so each active state re-picks its moodle.
+    public event Action? BuiltinMoodlesEnabled;
+
+    public void SetUseBuiltinMoodles(bool use)
+    {
+        if (config.UseBuiltinMoodles == use)
+            return;
+        config.UseBuiltinMoodles = use;
+        config.Save();
+        if (use)
+            BuiltinMoodlesEnabled?.Invoke();
+        else
+            Ledger.ReleaseBuiltins();
+    }
+
+    /// Null when the built-in moodles are off.
+    public Guid? BuiltinId(BuiltinMoodleKind kind) => config.UseBuiltinMoodles ? BuiltinMoodles.IdOf(kind) : null;
+
+    /// The Owner's `moodle:` override when allowed and found, else the Sub's default, else Oathbound's own `builtin`
+    /// when turned on; with none, releases `source`. The Sub's default needs no Moodles permission - the action
+    /// itself was already gated.
+    public void HoldAttached(string source, AttachedMoodleRef? subDefault, string? ownerOverride, BuiltinMoodleKind? builtin = null)
     {
         Guid? statusId = null;
         if (!string.IsNullOrWhiteSpace(ownerOverride))
@@ -187,6 +206,9 @@ public sealed class MoodlesCommand
 
         if (statusId is null && subDefault is { } fallback && fallback.StatusId != Guid.Empty)
             statusId = fallback.StatusId;
+
+        if (statusId is null && builtin is { } kind)
+            statusId = BuiltinId(kind);
 
         if (statusId is { } id)
             Ledger.Hold(source, id);

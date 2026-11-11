@@ -78,7 +78,7 @@ public sealed partial class ModuleWindow
     {
         using (Section.Begin("collarMoodle", "Collar moodle"))
         {
-            var collarMoodleLabel = config.Collar.MoodleStatusName is { } assignedMoodleName ? MoodlesTextFormat.StripMarkup(assignedMoodleName) : "(none assigned)";
+            var collarMoodleLabel = config.Collar.MoodleStatusName is { } assignedMoodleName ? MoodlesTextFormat.StripMarkup(assignedMoodleName) : config.UseBuiltinMoodles ? "Collared (Oathbound's)" : "(none assigned)";
             TextWithActions($"Moodle: {collarMoodleLabel}", ImGui.CalcTextSize("(?)").X);
             IconGlyph.HelpMarker("Optional status shown while your collar is locked. Your safeword leaves it on.");
 

@@ -43,7 +43,7 @@ public sealed class CollarCommand
             return;
 
         RestoreLockIfNeeded(owningPairing.Id);
-        if (!config.Collar.HasMoodleAssigned)
+        if (EffectiveMoodleId is null)
             return;
 
         var now = Environment.TickCount64;
@@ -66,11 +66,15 @@ public sealed class CollarCommand
             Plugin.Log.Information("Collar lock restored.");
     }
 
+    /// The Sub's assigned moodle, else Oathbound's Collared when turned on.
+    private Guid? EffectiveMoodleId =>
+        Guid.TryParse(config.Collar.MoodleStatusId, out var assigned) ? assigned : moodles.BuiltinId(BuiltinMoodleKind.Collared);
+
     /// Released through the ledger's collar source, so only this one status is removed.
     private void ApplyAssignedMoodle()
     {
         nextMoodleReassertTicks = Environment.TickCount64 + MoodleReassertIntervalMs;
-        if (Guid.TryParse(config.Collar.MoodleStatusId, out var statusId))
+        if (EffectiveMoodleId is { } statusId)
             moodles.Ledger.Hold(AttachedMoodleLedger.CollarSource, statusId);
     }
 
@@ -147,8 +151,7 @@ public sealed class CollarCommand
         config.CollarOwningPairingId = pairingId;
         config.Save();
         runtimeState.CollarForceLocked = true;
-        if (config.Collar.HasMoodleAssigned)
-            ApplyAssignedMoodle();
+        ApplyAssignedMoodle();
 
         return true;
     }
@@ -181,7 +184,6 @@ public sealed class CollarCommand
         config.CollarOwningPairingId = null;
         config.Save();
 
-        if (config.Collar.HasMoodleAssigned)
-            moodles.Ledger.Release(AttachedMoodleLedger.CollarSource);
+        moodles.Ledger.Release(AttachedMoodleLedger.CollarSource);
     }
 }

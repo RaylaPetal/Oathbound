@@ -58,6 +58,7 @@ public sealed class RestraintCommand
         this.chatGagService = chatGagService;
         this.catalogStore = catalogStore;
         this.moodles = moodles;
+        moodles.BuiltinMoodlesEnabled += OnBuiltinMoodlesEnabled;
         catalogScanner = new GestureCatalogScanner(penumbra, config);
     }
 
@@ -500,9 +501,23 @@ public sealed class RestraintCommand
         engaged.Add((runtimeId, rules.ToList()));
 
         var configured = config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId && m.ItemId == itemId);
-        moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(runtimeId), configured?.AttachedMoodle, moodleOverride);
+        moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(runtimeId), configured?.AttachedMoodle, moodleOverride, BuiltinMoodleFor(rules));
         slotLocks.VerifySoon();
         return true;
+    }
+
+    private static BuiltinMoodleKind BuiltinMoodleFor(IEnumerable<RestraintRuleAssignment> rules) =>
+        rules.Any(r => r.Kind == RestraintRuleKind.Gagged) ? BuiltinMoodleKind.Gagged : BuiltinMoodleKind.Restrained;
+
+    /// A restraint holding nothing had no override or pick of its own, so it takes the built-in.
+    private void OnBuiltinMoodlesEnabled()
+    {
+        foreach (var (runtimeId, rules) in engaged)
+        {
+            var source = AttachedMoodleLedger.RestraintSource(runtimeId);
+            if (!moodles.Ledger.HoldsSource(source) && moodles.BuiltinId(BuiltinMoodleFor(rules)) is { } id)
+                moodles.Ledger.Hold(source, id);
+        }
     }
 
     /// Set by the Owner command's dispatch just before it applies; the lock it engages takes them over.
@@ -914,7 +929,7 @@ public sealed class RestraintCommand
 
         activeDeviceIds.Add(deviceId);
         engaged.Add((deviceId, device.Rules.ToList()));
-        moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(deviceId), device.AttachedMoodle, moodleOverride);
+        moodles.HoldAttached(AttachedMoodleLedger.RestraintSource(deviceId), device.AttachedMoodle, moodleOverride, BuiltinMoodleFor(device.Rules));
         if (forceRedraw && boundRules.Count == 0)
             penumbra.TryRedrawLocalPlayer(force: true);
         if (hasGear)

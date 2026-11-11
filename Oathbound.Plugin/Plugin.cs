@@ -214,7 +214,7 @@ public sealed class Plugin : IDalamudPlugin
         // Before Follow: the leash rides Teleport's journey across areas.
         TeleportCommand = new TeleportCommand(Configuration, LifestreamIpc, VnavmeshIpc, MovementLockService);
         FollowCommand = new FollowCommand(Configuration, MovementLockService, RuntimeState, MoodlesCommand, TeleportCommand);
-        CageService = new CageService(Configuration, MovementLockService, VnavmeshIpc, TeleportCommand, LifestreamIpc);
+        CageService = new CageService(Configuration, MovementLockService, VnavmeshIpc, TeleportCommand, LifestreamIpc, MoodlesCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
         ChatGagService.LevelSource = () => RestraintCommand.ActiveGagLevel;

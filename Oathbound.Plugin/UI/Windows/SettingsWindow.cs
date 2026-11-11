@@ -148,6 +148,8 @@ public class SettingsWindow : Window, IDisposable
                     plugin.ModuleWindow.DrawPermissionsCard();
                 using (Section.Begin("redrawCard"))
                     DrawRedrawCard(config);
+                using (Section.Begin("builtinMoodlesCard"))
+                    DrawBuiltinMoodlesCard(config);
             }
             ImGui.EndTabItem();
         }
@@ -612,6 +614,17 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("Only turn this on if animations, restraint mods or Reaction mods don't show up until something else redraws you. Penumbra can redraw on its own, and each extra redraw makes a sync plugin re-send your character, so people synced with you see you flash.");
+    }
+
+    private void DrawBuiltinMoodlesCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Tag, "Moodles");
+        ImGui.Separator();
+        if (ImGuiCheckbox("Use Oathbound's moodles", config.UseBuiltinMoodles, out var use))
+            plugin.MoodlesCommand.SetUseBuiltinMoodles(use);
+        IconGlyph.HelpMarker("Shows Collared, Leashed, Caged, Restrained or Gagged while that's happening to you. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is used instead, as is one your Owner chose.");
+        if (config.UseBuiltinMoodles && plugin.MoodlesIpc.BuiltinProblem is { } problem)
+            IconGlyph.WrappedColored(Theme.Warning, problem);
     }
 
     private static void DrawRawCommandTextCard(PluginConfig config)

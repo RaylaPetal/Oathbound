@@ -11,6 +11,14 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.4", "2026-11-11", "Oathbound's own moodles",
+        [
+            new("New",
+            [
+                "Moodles: while you're collared, leashed, caged, restrained or gagged, you now show a Collared, Leashed, Caged, Restrained or Gagged moodle, with nothing to set up. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is still used instead, as is one your Owner chooses.",
+                "They're on for everyone. To turn them off, untick Use Oathbound's moodles in Settings > Permissions. If they don't show, turn on \"Allow other plugins apply Moodles\" in Moodles' own settings.",
+            ]),
+        ]),
         new("0.2.6.3", "2026-11-07", "Flying cages",
         [
             new("Changed",

@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
+using Oathbound.Plugin.Safety;
 
 namespace Oathbound.Plugin.Commands;
 
@@ -104,8 +105,13 @@ public sealed class CageService
     private Vector2 playerGround;
     private Vector2 half;
 
-    public CageService(PluginConfig config, MovementLockService movementLock, VnavmeshIpc vnavmesh, TeleportCommand teleport, LifestreamIpc lifestream)
+    private readonly MoodlesCommand moodles;
+    private long nextMoodleTryTicks;
+    private const long MoodleRetryMs = 10_000;
+
+    public CageService(PluginConfig config, MovementLockService movementLock, VnavmeshIpc vnavmesh, TeleportCommand teleport, LifestreamIpc lifestream, MoodlesCommand moodles)
     {
+        this.moodles = moodles;
         this.lifestream = lifestream;
         this.config = config;
         this.movementLock = movementLock;
@@ -298,6 +304,7 @@ public sealed class CageService
 
     public void OnFrameworkUpdate()
     {
+        SyncMoodle();
         var cage = config.ActiveCage;
         if (cage is null)
         {
@@ -368,6 +375,24 @@ public sealed class CageService
         }
 
         Hold(cage, player, now);
+    }
+
+    /// Caged is held exactly while the cage is closed, so every way it opens (or re-arms) takes it off. Re-applied on
+    /// a timer like the collar's, since Moodles can drop it on an area change.
+    private void SyncMoodle()
+    {
+        var want = IsCaged ? moodles.BuiltinId(BuiltinMoodleKind.Caged) : null;
+        if (want is null)
+        {
+            if (moodles.Ledger.HoldsSource(AttachedMoodleLedger.CageSource))
+                moodles.Ledger.Release(AttachedMoodleLedger.CageSource);
+            return;
+        }
+        var now = Environment.TickCount64;
+        if (now < nextMoodleTryTicks || Plugin.ObjectTable.LocalPlayer is null)
+            return;
+        nextMoodleTryTicks = now + MoodleRetryMs;
+        moodles.Ledger.Hold(AttachedMoodleLedger.CageSource, want.Value);
     }
 
     private void Close(SubCageState cage, DateTime now)

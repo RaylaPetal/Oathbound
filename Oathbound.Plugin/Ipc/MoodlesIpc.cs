@@ -71,6 +71,43 @@ public sealed class MoodlesIpc
         }
     }
 
+    /// Why the last built-in moodle didn't go on, for Settings. Null once one is accepted.
+    public string? BuiltinProblem { get; private set; }
+
+    /// One of Oathbound's own moodles, applied as the Sub themself. False if it isn't a built-in or didn't go on.
+    public bool ApplyBuiltin(Guid id)
+    {
+        var player = Player.Object;
+        if (player is null || !BuiltinMoodles.TryGet(id, out var moodle))
+            return false;
+        var applier = player.HomeWorld.IsValid ? $"{player.Name.TextValue}@{player.HomeWorld.Value.Name.ExtractText()}" : player.Name.TextValue;
+        MoodleTuple data = (MoodleTupleVersion, moodle.Id, moodle.IconId, moodle.Title, moodle.Description, "", -1L,
+            (MoodlesStatusType)moodle.Kind, 1, 0, 0u, Guid.Empty, MoodlesChainTrigger.Dispel, applier, "", false);
+        try
+        {
+            addOrUpdateMoodleByDataByPlayer.InvokeAction(data, player);
+            if (getClientStatusManagerInfo.InvokeFunc().Any(s => s.GUID == moodle.Id))
+            {
+                BuiltinProblem = null;
+                return true;
+            }
+            BuiltinProblem = "Moodles didn't accept Oathbound's moodles. In Moodles' settings, turn on \"Allow other plugins apply Moodles.\"";
+            return false;
+        }
+        catch (Dalamud.Plugin.Ipc.Exceptions.IpcNotReadyError)
+        {
+            // Not installed is the Sub's choice, not a problem; this runs on the collar's and cage's timers.
+            BuiltinProblem = null;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Warning(ex, "Failed to apply one of Oathbound's moodles.");
+            BuiltinProblem = "Moodles isn't available, or is a version Oathbound doesn't know.";
+            return false;
+        }
+    }
+
     public MoodlesScanResult GetOwnStatuses()
     {
         try

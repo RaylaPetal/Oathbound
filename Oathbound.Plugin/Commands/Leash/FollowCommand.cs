@@ -70,6 +70,7 @@ public sealed class FollowCommand
     private bool areaChangePending;
     private uint moodleTerritory;
     private DateTime? moodleAreaLoadedAt;
+    private string? leashMoodleOverride;
     private bool wasInCombat;
     private bool pauseNotified;
     private int requestedLength = LengthOption.DefaultYalms;
@@ -108,6 +109,7 @@ public sealed class FollowCommand
         mount = new LeashMountController(config);
         GestureCommand.EmotePlayed += OnEmotePlayed;
         teleport.LeashJourneyEnded += OnLeashJourneyEnded;
+        moodles.BuiltinMoodlesEnabled += OnBuiltinMoodlesEnabled;
     }
 
     /// Read by the leash line for its hand anchor. 0 while waiting or traveling.
@@ -195,9 +197,19 @@ public sealed class FollowCommand
         }
 
         runtimeState.MovementLockActive = true;
-        moodles.HoldAttached(AttachedMoodleLedger.FollowSource, config.Aliases.Follow.AttachedMoodle, moodleOverride);
+        leashMoodleOverride = moodleOverride;
+        HoldLeashMoodle();
         moodleTerritory = Plugin.ClientState.TerritoryType;
         return true;
+    }
+
+    private void HoldLeashMoodle() =>
+        moodles.HoldAttached(AttachedMoodleLedger.FollowSource, config.Aliases.Follow.AttachedMoodle, leashMoodleOverride, BuiltinMoodleKind.Leashed);
+
+    private void OnBuiltinMoodlesEnabled()
+    {
+        if (state != LeashState.Released)
+            HoldLeashMoodle();
     }
 
     /// LeashEnded is raised only if a leash was on.
