@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { nowSeconds, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
 import { RelayError } from "../lib/errors";
-import { type CageState, type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow } from "../lib/pairs";
+import { type CageState, type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow, type SafewordMood } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
 import { rulebookMailboxSummary } from "./rulebook";
@@ -74,6 +74,8 @@ async function pairStatusBody(env: Env, pair: PairRow, activity: Awaited<ReturnT
     cageState: pair.cage_state ?? null,
     cageStateAt: pair.cage_state_at ?? null,
     cageEndsAt: pair.cage_ends_at ?? null,
+    safewordAt: pair.safeword_at ?? null,
+    safewordMood: pair.safeword_mood ?? null,
     catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     ...activity,
@@ -166,4 +168,39 @@ export async function putCageStatus(request: Request, env: Env, pairIdHash: stri
     .run();
 
   return Response.json({ type: "cage-status-ack", schemaVersion: 1 });
+}
+
+function isSafewordMood(value: unknown): value is SafewordMood {
+  return value === "stop" || value === "checkin";
+}
+
+/**
+ * collar/safeword-notice: the pair's Sub device reports that the Sub used their safeword, so an Owner who was
+ * offline still learns of it. Authorized exactly like putCageStatus. An older report than the stored one is ignored.
+ */
+export async function putSafeword(request: Request, env: Env, pairIdHash: string): Promise<Response> {
+  if (!isHex64(pairIdHash)) throw new RelayError("not_found");
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  await enforceQuota(env, "deviceSafeword", deviceKeyId);
+
+  const body = asRecord(bodyJson);
+  if (body.type !== "safeword" || body.schemaVersion !== 1) throw new RelayError("invalid_request");
+  const pairEpoch = requireField(body, "pairEpoch", isNonNegInt);
+  const at = requireField(body, "at", isUnixSeconds);
+  const mood = requireField(body, "mood", isSafewordMood);
+  if (at > nowSeconds() + TIMESTAMP_TOLERANCE_SECONDS) throw new RelayError("invalid_request");
+
+  const pair = await pairAtEpoch(env, pairIdHash, pairEpoch);
+  // One generic answer for wrong pair, wrong device or a revoked epoch, so a caller can't tell which.
+  if (!pair || pair.sub_device_key_id !== deviceKeyId || pair.revoked_at !== null) throw new RelayError("unauthorized");
+
+  await env.RELAY_DB.prepare(
+    `UPDATE pairs SET safeword_at = ?1, safeword_mood = ?2
+     WHERE pair_id_hash = ?3 AND pair_epoch = ?4 AND revoked_at IS NULL
+       AND (safeword_at IS NULL OR ?1 >= safeword_at)`,
+  )
+    .bind(at, mood, pairIdHash, pairEpoch)
+    .run();
+
+  return Response.json({ type: "safeword-ack", schemaVersion: 1 });
 }

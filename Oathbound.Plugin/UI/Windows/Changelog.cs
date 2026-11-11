@@ -11,6 +11,21 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.6.5", "2026-11-11", "Blindfolds, safeword notice",
+        [
+            new("New",
+            [
+                "Restraints: a Blindfolded rule. It darkens the game world on the Sub's own screen - Full (black), Heavy, or Light with a small clear circle around them - while chat, hotbars and the rest of the UI stay visible. Full and Heavy also hide nameplates. It lifts in cutscenes and GPose, and panic always takes it off. Locks, timers, keys and struggling work like any other rule.",
+                "Moodles: a built-in Blindfolded moodle for a blindfold with no moodle of its own.",
+                "Safeword: when you use your safeword, each of your Owners is told, with one short tell and a note left for an Owner who's offline. It says only \"I'm okay, just stop\" or \"Please check on me\" - pick which under your safeword, or turn it off there.",
+                "Owners: a red banner at the top of the window shows when your Sub used their safeword, until you dismiss it, and what you'd last sent them is cleared.",
+            ]),
+            new("Changed",
+            [
+                "Reactions: a gesture now goes to the person who set it off. If someone dotes on you while you're looking at someone else, your /dote goes back to them. It's aimed at no one if they aren't nearby.",
+                "Reactions: Keep my current facing is now a Face choice: Who set it off, My current target (how it worked before), or No one. Reactions that kept your facing are set to No one. Test actions uses your current target as who set it off.",
+            ]),
+        ]),
         new("0.2.6.4", "2026-11-11", "Oathbound's own moodles",
         [
             new("New",

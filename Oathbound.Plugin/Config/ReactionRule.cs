@@ -15,6 +15,15 @@ public enum ReactionTriggerKind
     ChatPhrase,
 }
 
+public enum GestureFacing
+{
+    /// The player who set the reaction off, or no one when they aren't nearby.
+    TriggerSource,
+    CurrentTarget,
+    /// Doesn't turn toward anyone.
+    NoOne,
+}
+
 /// A trigger plus fire-and-forget actions, run only on this client. `HasAnyAction` must be true to save or fire.
 [Serializable]
 public class ReactionRule
@@ -42,8 +51,12 @@ public class ReactionRule
     /// Null = none.
     public GestureTrigger? Gesture { get; set; }
 
-    /// Clears the target around the gesture so the character doesn't turn to face it.
-    public bool KeepFacing { get; set; }
+    /// Who the gesture is aimed at.
+    public GestureFacing Facing { get; set; } = GestureFacing.TriggerSource;
+
+    // Set-only: an older config's "keep my current facing" is read once, never written back.
+    [Newtonsoft.Json.JsonProperty("KeepFacing")]
+    private bool LegacyKeepFacing { set { if (value) Facing = GestureFacing.NoOne; } }
 
     /// Null ItemId = none. Never locked, never reverted.
     public ApiEquipSlot? ItemSlot { get; set; }

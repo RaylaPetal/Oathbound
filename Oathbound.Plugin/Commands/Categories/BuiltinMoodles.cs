@@ -6,7 +6,7 @@ using Lumina.Excel.Sheets;
 
 namespace Oathbound.Plugin.Commands;
 
-public enum BuiltinMoodleKind { Collared, Leashed, Caged, Restrained, Gagged }
+public enum BuiltinMoodleKind { Collared, Leashed, Caged, Restrained, Gagged, Blindfolded }
 
 /// Oathbound's own moodles, applied from data so nothing is added to the Sub's Moodles library. The IDs are fixed
 /// forever: held IDs are persisted, and leftovers from an earlier session are found by them.
@@ -29,6 +29,8 @@ public static class BuiltinMoodles
             "Bound and unable to get free.", Negative, ["Bind", "Fetters"]),
         [BuiltinMoodleKind.Gagged] = new(new Guid("0a7b0a7b-0000-4c11-a0a0-000000000005"), "Gagged",
             "Gagged and unable to speak clearly.", Negative, ["Silence", "Pacification"]),
+        [BuiltinMoodleKind.Blindfolded] = new(new Guid("0a7b0a7b-0000-4c11-a0a0-000000000006"), "Blindfolded",
+            "Blindfolded and unable to see.", Negative, ["Blind", "Darkness", "Blindness"]),
     };
 
     private static readonly Dictionary<Guid, BuiltinMoodleKind> ById = Definitions.ToDictionary(d => d.Value.Id, d => d.Key);

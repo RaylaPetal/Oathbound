@@ -507,7 +507,9 @@ public sealed class RestraintCommand
     }
 
     private static BuiltinMoodleKind BuiltinMoodleFor(IEnumerable<RestraintRuleAssignment> rules) =>
-        rules.Any(r => r.Kind == RestraintRuleKind.Gagged) ? BuiltinMoodleKind.Gagged : BuiltinMoodleKind.Restrained;
+        rules.Any(r => r.Kind == RestraintRuleKind.Gagged) ? BuiltinMoodleKind.Gagged
+        : rules.Any(r => r.Kind == RestraintRuleKind.Blindfolded) ? BuiltinMoodleKind.Blindfolded
+        : BuiltinMoodleKind.Restrained;
 
     /// A restraint holding nothing had no override or pick of its own, so it takes the built-in.
     private void OnBuiltinMoodlesEnabled()
@@ -1201,6 +1203,12 @@ public sealed class RestraintCommand
                 yield return CuffToken("fullbodycuffed", r);
                 if (r.Drawn) yield return DrawFullBodyToken;
                 break;
+            case RestraintRuleKind.Blindfolded:
+                yield return BlindfoldToken;
+                // Full sends no level, like a Heavy gag.
+                if (r.BlindfoldLevel != BlindfoldLevel.Full)
+                    yield return $"{BlindfoldLevelToken}{(r.BlindfoldLevel == BlindfoldLevel.Light ? "light" : "heavy")}";
+                break;
         }
     }
 
@@ -1209,6 +1217,9 @@ public sealed class RestraintCommand
         string.IsNullOrWhiteSpace(r.AnimationId) && string.IsNullOrWhiteSpace(r.AnimationLabel) ? name : $"{name}={ReadableAnimation(r)}";
 
     private const string GagLevelToken = "gaglevel=";
+    /// An older Sub skips both and applies the restraint's other rules.
+    private const string BlindfoldToken = "blindfold";
+    private const string BlindfoldLevelToken = "blindfoldlevel=";
 
     /// One per drawn cuff rule; an older Sub skips them.
     private const string DrawArmsToken = "drawarms";
@@ -1367,6 +1378,16 @@ public sealed class RestraintCommand
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.WalkOnly });
             else if (token.Equals("actionblock", StringComparison.OrdinalIgnoreCase))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ActionBlock });
+            else if (token.Equals(BlindfoldToken, StringComparison.OrdinalIgnoreCase))
+                rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.Blindfolded });
+            else if (token.StartsWith(BlindfoldLevelToken, StringComparison.OrdinalIgnoreCase))
+            {
+                var level = token[BlindfoldLevelToken.Length..];
+                if (rules.LastOrDefault(r => r.Kind == RestraintRuleKind.Blindfolded) is { } blindfold)
+                    blindfold.BlindfoldLevel = level.Equals("light", StringComparison.OrdinalIgnoreCase) ? BlindfoldLevel.Light
+                        : level.Equals("heavy", StringComparison.OrdinalIgnoreCase) ? BlindfoldLevel.Heavy
+                        : BlindfoldLevel.Full;
+            }
             else if (token.Equals("gagged", StringComparison.OrdinalIgnoreCase))
                 rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.Gagged });
             else if (token.StartsWith("gagged=", StringComparison.OrdinalIgnoreCase))

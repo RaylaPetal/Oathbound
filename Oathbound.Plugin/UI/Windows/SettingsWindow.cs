@@ -622,7 +622,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         if (ImGuiCheckbox("Use Oathbound's moodles", config.UseBuiltinMoodles, out var use))
             plugin.MoodlesCommand.SetUseBuiltinMoodles(use);
-        IconGlyph.HelpMarker("Shows Collared, Leashed, Caged, Restrained or Gagged while that's happening to you. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is used instead, as is one your Owner chose.");
+        IconGlyph.HelpMarker("Shows Collared, Leashed, Caged, Restrained, Gagged or Blindfolded while that's happening to you. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is used instead, as is one your Owner chose.");
         if (config.UseBuiltinMoodles && plugin.MoodlesIpc.BuiltinProblem is { } problem)
             IconGlyph.WrappedColored(Theme.Warning, problem);
     }

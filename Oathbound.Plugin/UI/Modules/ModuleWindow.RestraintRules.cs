@@ -33,6 +33,8 @@ public sealed partial class ModuleWindow
         public string? GagCustomizePresetId;
         public string? GagCustomizePresetLabel;
         public GagLevel GagLevel;
+        public bool Blindfolded;
+        public BlindfoldLevel BlindfoldLevel;
         public bool ArmsCuffed;
         public string? ArmsCuffedAnimationId;
         public bool LegsCuffed;
@@ -73,7 +75,7 @@ public sealed partial class ModuleWindow
     private static string PoseName(int poseModeId) => poseModeId is >= 1 and <= 3 ? PoseNames[poseModeId - 1] : "unknown";
 
     private static bool HasAnyRule(RestraintRuleEditState edit) =>
-        edit.ForcedPose || edit.WalkOnly || edit.ActionBlock || edit.Gagged || edit.ArmsCuffed || edit.LegsCuffed || edit.FullBodyCuffed;
+        edit.ForcedPose || edit.WalkOnly || edit.ActionBlock || edit.Gagged || edit.Blindfolded || edit.ArmsCuffed || edit.LegsCuffed || edit.FullBodyCuffed;
 
     /// Gagged's animation stays optional: its chat garble applies on its own. So do a rules-only restraint's cuff
     /// animations, since its cuffs are drawn.
@@ -160,6 +162,7 @@ public sealed partial class ModuleWindow
             ImGui.Checkbox($"Action block##{idSuffix}", ref edit.ActionBlock);
             IconGlyph.HelpMarker("Blocks hotbar action/skill usage until released, without affecting movement.");
         });
+        cells.Add(() => DrawBlindfoldPicker(edit, idSuffix));
 
         // A table, not legacy Columns: Columns break inside a ListDetail table cell and hide the left column. One row
         // per pair keeps each toggle's dependent controls under it.
@@ -178,6 +181,23 @@ public sealed partial class ModuleWindow
     }
 
     private static readonly string[] GagLevelNames = ["Heavy", "Medium", "Light"];
+    /// In BlindfoldLevel order.
+    private static readonly string[] BlindfoldLevelNames = ["Full", "Heavy", "Light"];
+
+    private static void DrawBlindfoldPicker(RestraintRuleEditState edit, string idSuffix)
+    {
+        ImGui.Checkbox($"Blindfolded##{idSuffix}", ref edit.Blindfolded);
+        IconGlyph.HelpMarker("Darkens the game world on your own screen. Chat, hotbars and other UI stay visible, so you can always read and use your safeword. Lifts during cutscenes and in GPose.");
+        if (!edit.Blindfolded)
+            return;
+        ImGui.Indent();
+        var level = (int)edit.BlindfoldLevel;
+        ItemWidth(140);
+        if (ImGui.Combo($"strength##{idSuffix}BlindfoldLevel", ref level, BlindfoldLevelNames, BlindfoldLevelNames.Length))
+            edit.BlindfoldLevel = (BlindfoldLevel)level;
+        IconGlyph.HelpMarker("Full is black and hides nameplates. Heavy leaves a faint trace of the world and hides nameplates. Light leaves a small clear circle around your character. A Sub on an older Oathbound version isn't blindfolded.");
+        ImGui.Unindent();
+    }
 
     private void DrawGaggedPicker(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset)
     {
@@ -315,6 +335,8 @@ public sealed partial class ModuleWindow
         target.GagCustomizePresetId = source.GagCustomizePresetId;
         target.GagCustomizePresetLabel = source.GagCustomizePresetLabel;
         target.GagLevel = source.GagLevel;
+        target.Blindfolded = source.Blindfolded;
+        target.BlindfoldLevel = source.BlindfoldLevel;
         target.ArmsCuffed = source.ArmsCuffed;
         target.ArmsCuffedAnimationId = source.ArmsCuffedAnimationId;
         target.LegsCuffed = source.LegsCuffed;
@@ -362,6 +384,7 @@ public sealed partial class ModuleWindow
                     edit.GagCustomizePresetLabel = rule.CustomizePresetLabel;
                     edit.GagLevel = rule.GagLevel;
                     break;
+                case RestraintRuleKind.Blindfolded: edit.Blindfolded = true; edit.BlindfoldLevel = rule.BlindfoldLevel; break;
                 case RestraintRuleKind.ArmsCuffed: edit.ArmsCuffed = true; edit.ArmsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.ArmsCuffedDrawn = rule.Drawn; break;
                 case RestraintRuleKind.LegsCuffed: edit.LegsCuffed = true; edit.LegsCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.LegsCuffedDrawn = rule.Drawn; break;
                 case RestraintRuleKind.FullBodyCuffed: edit.FullBodyCuffed = true; edit.FullBodyCuffedAnimationId = NullIfBlank(rule.AnimationId); edit.FullBodyCuffedDrawn = rule.Drawn; break;
@@ -402,6 +425,8 @@ public sealed partial class ModuleWindow
                 GagLevel = edit.GagLevel,
             });
         }
+        if (edit.Blindfolded)
+            rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.Blindfolded, BlindfoldLevel = edit.BlindfoldLevel });
         if (edit.ArmsCuffed)
             rules.Add(new RestraintRuleAssignment { Kind = RestraintRuleKind.ArmsCuffed, AnimationId = edit.ArmsCuffedAnimationId, AnimationLabel = LabelFor(edit.ArmsCuffedAnimationId), Drawn = rulesOnly || edit.ArmsCuffedDrawn });
         if (edit.LegsCuffed)

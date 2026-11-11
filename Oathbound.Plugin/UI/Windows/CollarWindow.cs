@@ -236,6 +236,7 @@ public class CollarWindow : Window, IDisposable
         DrawPairingsList(config);
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.MainPairing);
+        DrawSafewordWarnings(config);
         DrawCollarWarnings(config);
         DrawSubControlToggle();
         moduleWindow.DrawHeaderOaths();
@@ -311,6 +312,21 @@ public class CollarWindow : Window, IDisposable
             IconGlyph.WrappedColored(Theme.Warning, $"{peerLabel} ({pairing?.PeerName}@{pairing?.PeerWorld}) ended this pairing on their side.");
             if (ImGui.Button("Dismiss##peerUnpairedNotice"))
                 plugin.ChatCommandListener.DismissPeerUnpairedNotice(pairingId);
+            ImGui.PopID();
+        }
+    }
+
+    /// Owner side: a Sub's safeword, shown until dismissed, for every Sub rather than only the active one.
+    private void DrawSafewordWarnings(PluginConfig config)
+    {
+        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.OwnerSide && OwnerSafewordAlerts.IsShowing(p)).ToList())
+        {
+            ImGui.PushID($"safeword_{pairing.Id}");
+            Layout.TextWithActions($"{pairing.PeerName} used their safeword {OwnerSafewordAlerts.Ago(pairing.LastSafewordAt)}", Layout.ActionsWidth("Dismiss"),
+                t => ImGui.TextColored(Theme.StatusMissing, t));
+            if (ImGui.Button("Dismiss"))
+                plugin.OwnerSafewordAlerts.Dismiss(pairing);
+            IconGlyph.WrappedColored(Theme.StatusMissing, OwnerSafewordAlerts.MoodText(pairing.LastSafewordMood));
             ImGui.PopID();
         }
     }

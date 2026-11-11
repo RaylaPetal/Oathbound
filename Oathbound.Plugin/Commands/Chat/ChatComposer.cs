@@ -118,6 +118,25 @@ public sealed class ChatComposer
 
     public const string StruggleNoticeKeyword = "collarstruggle";
 
+    /// The Sub used their safeword: only a mood word and when, so the Owner can match it to the relay's copy.
+    public string ComposeSafewordNotice(string name, string world, SafewordMood mood, long at) =>
+        $"/tell {name}@{world} {SafewordNoticeKeyword} {SafewordMoodWord(mood)} {at}";
+
+    public const string SafewordNoticeKeyword = "collarsafeword";
+
+    public static string SafewordMoodWord(SafewordMood mood) => mood == SafewordMood.CheckIn ? "checkin" : "stop";
+
+    public static bool TryParseSafewordMood(string? word, out SafewordMood mood)
+    {
+        mood = SafewordMood.Stop;
+        switch (word?.Trim().ToLowerInvariant())
+        {
+            case "stop": return true;
+            case "checkin": mood = SafewordMood.CheckIn; return true;
+            default: return false;
+        }
+    }
+
     public string ComposeGame(string name, string world, string body) => $"/tell {name}@{world} {Games.GamesService.Keyword} {body}";
     public const string StruggleFreeWord = "free";
     public const string StruggleKeyWord = "key";

@@ -172,11 +172,13 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
     }
 }
 
+/// The plugin's one KamiToolKit host: status icons and the blindfold.
 public sealed class StatusIconRenderer : IDisposable
 {
     private readonly OverlayController? controller;
+    private BlindfoldOverlay? blindfoldNode;
 
-    public StatusIconRenderer(StatusIndicatorState state)
+    public StatusIconRenderer(StatusIndicatorState state, BlindfoldService blindfold)
     {
         try
         {
@@ -184,17 +186,21 @@ public sealed class StatusIconRenderer : IDisposable
             var iconIds = StatusIconOverlay.ResolveIconIds();
             controller = new OverlayController();
             controller.CreateNode(() => new StatusIconOverlay(state, iconIds));
+            controller.CreateNode(() => blindfoldNode = new BlindfoldOverlay(blindfold));
         }
         catch (Exception ex)
         {
-            // Fails closed: no icons, everything else keeps working.
+            // Fails closed: no icons, and a Blindfolded restraint is refused; everything else keeps working.
             controller = null;
-            Plugin.Log.Warning(ex, "Status icons: overlay failed to initialize - nameplate icons are off for this session.");
+            Plugin.Log.Warning(ex, "Status icons: overlay failed to initialize - nameplate icons and blindfolds are off for this session.");
         }
     }
 
+    public bool IsAvailable => controller is not null;
+
     public void Dispose()
     {
+        blindfoldNode?.ShowNameplates();
         controller?.Dispose();
         KamiToolKitLibrary.Dispose();
     }

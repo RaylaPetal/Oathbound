@@ -24,6 +24,7 @@ public static class OwnerStatusView
         {
             var parts = new List<string>();
             if (estimate.Gagged) parts.Add("gagged");
+            if (estimate.Blindfolded) parts.Add("blindfolded");
             if (estimate.Restrained) parts.Add("restrained");
             if (estimate.Leashed) parts.Add("leashed");
             Layout.TextWithActions($"Estimated state: {string.Join(", ", parts)}", Layout.ActionsWidth("Clear estimate"), t => ImGui.TextColored(Theme.Success, t));

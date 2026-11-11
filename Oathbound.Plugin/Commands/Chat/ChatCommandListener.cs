@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.UI;
 using Oathbound.Plugin.Relay;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -52,6 +53,9 @@ public sealed class ChatCommandListener : IDisposable
 
     /// Set once by Plugin.
     public CageService? Cage { get; set; }
+
+    /// Set once by Plugin.
+    public OwnerSafewordAlerts? SafewordAlerts { get; set; }
 
     /// Set once by Plugin.
     public Games.GamesService? Games { get; set; }
@@ -140,6 +144,7 @@ public sealed class ChatCommandListener : IDisposable
                 || TryHandleLeashOffNoticeMessage(text, message.Sender)
                 || TryHandleRulebookNudgeMessage(text, message.Sender)
                 || TryHandleStruggleNoticeMessage(text, message.Sender)
+                || TryHandleSafewordNoticeMessage(text, message.Sender)
                 || TryHandleGameMessage(text, message.Sender))
             {
                 Swallow(message);
@@ -268,7 +273,8 @@ public sealed class ChatCommandListener : IDisposable
     private static readonly string[] NoticeKeywords =
     [
         PairingAckKeyword, InviteKeyword, UnpairNoticeKeyword, CatalogRequestKeyword, CatalogPermissionDeniedKeyword,
-        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword, global::Oathbound.Plugin.Games.GamesService.Keyword,
+        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword, ChatComposer.SafewordNoticeKeyword,
+        global::Oathbound.Plugin.Games.GamesService.Keyword,
     ];
 
     private static bool IsNoticeLine(string text) =>
@@ -480,6 +486,21 @@ public sealed class ChatCommandListener : IDisposable
             Content = usedKey ? $"{ownerPairing.PeerName} used the key on {what}." : $"{ownerPairing.PeerName} struggled free of {what}.",
             Type = Dalamud.Interface.ImGuiNotification.NotificationType.Warning,
         });
+        return true;
+    }
+
+    /// `collarsafeword <mood> <at>`: only a paired Sub of an Owner-side pairing counts; anything else is swallowed unread.
+    private bool TryHandleSafewordNoticeMessage(string text, SeString sender)
+    {
+        if (!text.StartsWith(ChatComposer.SafewordNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var (moodWord, rest) = SplitFirstToken(text[ChatComposer.SafewordNoticeKeyword.Length..].Trim());
+        if (!ChatComposer.TryParseSafewordMood(moodWord, out var mood) || !long.TryParse(SplitFirstToken(rest).First, out var at) || at <= 0)
+            return true;
+        var (name, world) = ExtractNameAndWorld(sender);
+        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
+            return true;
+        SafewordAlerts?.Accept(ownerPairing, at, mood);
         return true;
     }
 

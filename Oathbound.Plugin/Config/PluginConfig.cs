@@ -21,6 +21,9 @@ public enum PluginRole
 }
 
 /// Which side of a specific pairing this device is on, independent of its Role.
+/// Wire words "stop" and "checkin".
+public enum SafewordMood { Stop, CheckIn }
+
 public enum PairingDirection
 {
     OwnerSide,
@@ -75,6 +78,12 @@ public class PairingState
     public int IncomingRevocationSequence { get; set; }
 
     public long LastRevocationCheckUnixSeconds { get; set; }
+
+    /// Owner side: the Sub's latest safeword, from a tell or the relay; 0 = none. A notice not newer than this is a duplicate.
+    public long LastSafewordAt { get; set; }
+    public SafewordMood LastSafewordMood { get; set; }
+    /// The banner shows while LastSafewordAt is newer than this.
+    public long SafewordDismissedAt { get; set; }
 
     public long LastAcceptedCatalogSyncUnixSeconds { get; set; }
 
@@ -485,6 +494,16 @@ public enum RestraintRuleKind
     ArmsCuffed,
     LegsCuffed,
     FullBodyCuffed,
+    /// Last, so saved values don't shift.
+    Blindfolded,
+}
+
+/// Strongest first: when several are active, the lowest value applies.
+public enum BlindfoldLevel
+{
+    Full,
+    Heavy,
+    Light,
 }
 
 /// Heavy is 0 so configs and commands from before levels stay Heavy.
@@ -542,6 +561,8 @@ public class RestraintRuleAssignment
     public string? CustomizePresetLabel { get; set; }
     /// Gagged only.
     public GagLevel GagLevel { get; set; }
+    /// Blindfolded only.
+    public BlindfoldLevel BlindfoldLevel { get; set; }
 
     /// Cuff kinds only: also draw the cuffs.
     public bool Drawn { get; set; }
@@ -920,6 +941,10 @@ public class PluginConfig : IPluginConfiguration
 
     /// Case-insensitive. Unset means `/obpanic` always triggers - a missing safeword must never block panic.
     public string? PanicSafeword { get; set; }
+
+    /// Sub side: tell every Owner (by tell and through the relay) when panic is used.
+    public bool NotifyOwnersOnSafeword { get; set; } = true;
+    public SafewordMood SafewordMood { get; set; } = SafewordMood.Stop;
 
     /// Legacy; only seeds the mod picker during migration.
     public List<string> GestureFolderAllowlist { get; set; } = new();

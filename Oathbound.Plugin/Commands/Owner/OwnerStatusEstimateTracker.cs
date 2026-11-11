@@ -320,6 +320,7 @@ public sealed class EstimatedRestraint
     /// Null when the Owner's client doesn't know which gear slot it uses.
     public ApiEquipSlot? Slot { get; internal set; }
     public bool Gagged { get; internal set; }
+    public bool Blindfolded { get; internal set; }
     /// What its rules draw; None when the rules aren't known.
     public CuffSet Cuffs { get; internal set; }
     public bool Locked { get; internal set; }
@@ -336,6 +337,7 @@ public sealed class OwnerStatusEstimate
 
     public IReadOnlyList<EstimatedRestraint> Restraints => restraints;
     public bool Gagged => restraints.Any(r => r.Gagged);
+    public bool Blindfolded => restraints.Any(r => r.Blindfolded);
     public bool Restrained => restraints.Count > 0;
     public bool Leashed { get; internal set; }
 
@@ -413,6 +415,7 @@ public sealed class OwnerStatusEstimate
             Reference = reference.Trim(),
             Slot = slot,
             Gagged = rules?.Any(r => r.Kind == RestraintRuleKind.Gagged) == true,
+            Blindfolded = rules?.Any(r => r.Kind == RestraintRuleKind.Blindfolded) == true,
             Cuffs = CuffSets.Drawn(rules),
             Locked = true,
             ExpiresAtUtc = restraintLock.Duration is { } duration ? DateTime.UtcNow + duration : null,

@@ -26,6 +26,8 @@ public sealed partial class ModuleWindow
 
     private static readonly string[] ReactionTriggerNames = ["Emote used on me", "Chat phrase after my trigger word"];
     private static readonly string[] ReactionDirectionNames = ["Any direction", "In front of me", "Behind me"];
+    /// In GestureFacing order.
+    private static readonly string[] GestureFacingNames = ["Who set it off", "My current target", "No one"];
 
     private static List<(uint Id, string Name, string Command)>? emoteRows;
 
@@ -183,7 +185,7 @@ public sealed partial class ModuleWindow
             : $"When {(rule.AllowAnyone ? "anyone" : "a paired player")} says \"{plugin.Configuration.TriggerPhrase.Trim()} {rule.ChatPhrase.Trim()}\"";
 
         var actions = new List<string>();
-        if (rule.Gesture is { } g) actions.Add($"play {g.DisplayName}{(rule.KeepFacing ? " (keep facing)" : "")}");
+        if (rule.Gesture is { } g) actions.Add($"play {g.DisplayName}{rule.Facing switch { GestureFacing.TriggerSource => " (at who set it off)", GestureFacing.NoOne => " (no facing)", _ => "" }}");
         if (rule.ItemId is > 0) actions.Add($"wear {(rule.ItemLabel.Length > 0 ? rule.ItemLabel : "an item")}");
         if (!string.IsNullOrWhiteSpace(rule.ModDirectory)) actions.Add($"turn on {(rule.ModName.Length > 0 ? rule.ModName : rule.ModDirectory)}");
         if (rule.MoodleId is not null) actions.Add($"apply {MoodlesTextFormat.StripMarkup(rule.MoodleLabel)}");
@@ -288,9 +290,9 @@ public sealed partial class ModuleWindow
         using (ImRaii.Disabled(!draft.HasAnyAction))
         {
             if (ImGui.Button("Test actions##reaction"))
-                plugin.ReactionService.Fire(draft);
+                plugin.ReactionService.Fire(draft, Plugin.TargetManager.Target);
         }
-        IconGlyph.HelpMarker("Runs this reaction on yourself now. A chat message is really sent.");
+        IconGlyph.HelpMarker("Runs this reaction on yourself now. A chat message is really sent. Your current target stands in for who set it off.");
     }
 
     /// Null when the draft can be saved.
@@ -387,10 +389,11 @@ public sealed partial class ModuleWindow
 
         if (draft.Gesture is not null)
         {
-            var keep = draft.KeepFacing;
-            if (ImGui.Checkbox("Keep my current facing", ref keep))
-                draft.KeepFacing = keep;
-            IconGlyph.HelpMarker("Keeps you facing the way you are instead of turning to your target.");
+            var facing = (int)draft.Facing;
+            ItemWidth(260);
+            if (ImGui.Combo("Face##reactionFacing", ref facing, GestureFacingNames, GestureFacingNames.Length))
+                draft.Facing = (GestureFacing)facing;
+            IconGlyph.HelpMarker("Who the gesture is aimed at. \"Who set it off\" aims at the player who used the emote or said the phrase, or at no one if they aren't nearby. \"No one\" keeps you facing the way you are. Your own target is put back afterwards.");
         }
     }
 

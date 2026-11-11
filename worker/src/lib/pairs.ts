@@ -23,11 +23,15 @@ export interface PairRow {
   cage_state: CageState | null;
   cage_state_at: number | null;
   cage_ends_at: number | null;
+  safeword_at: number | null;
+  safeword_mood: SafewordMood | null;
 }
 
 export type CollarState = "locked" | "unlocked" | "broken";
 
 export type CageState = "none" | "armed" | "caged";
+
+export type SafewordMood = "stop" | "checkin";
 
 export async function latestPair(env: Env, pairIdHash: string): Promise<PairRow | null> {
   return env.RELAY_DB.prepare(

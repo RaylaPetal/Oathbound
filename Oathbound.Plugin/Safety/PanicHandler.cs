@@ -56,6 +56,9 @@ public sealed class PanicHandler
     /// Set once by Plugin.
     public Games.GamesService? Games { get; set; }
 
+    /// Panic only, not unpair: tells the Sub's Owners. Last, so it never holds up a revert.
+    public Action? NotifyOwners { get; set; }
+
     public void Panic()
     {
         // First, so nothing the cage drives keeps moving the Sub once the movement lock is released.
@@ -64,6 +67,8 @@ public sealed class PanicHandler
         RevertLocalState(LeashEnd.Panic);
         if (OnPanic is { } onPanic)
             RunStep("suspend rulebooks", onPanic);
+        if (NotifyOwners is { } notify)
+            RunStep("notify owners", notify);
         Plugin.Log.Information("Panic triggered: outfit reverted, title cleared, leash and movement lock released, all slot locks except the collar's and all restriction rules released. Every pairing and the collar remain.");
     }
 

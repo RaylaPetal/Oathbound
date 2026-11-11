@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/safeword.schema.json",
+  "title": "Safeword report",
+  "description": "Signed by the pair's Sub device (request signing) and posted to /v1/pairs/{pairIdHash}/safeword when the Sub uses their safeword, so an Owner who was offline learns of it. Carries only when it happened and one of two moods; no text, character name or world. A report whose at is older than the stored one leaves the stored safeword unchanged.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "schemaVersion", "pairEpoch", "at", "mood"],
+  "properties": {
+    "type": { "const": "safeword" },
+    "schemaVersion": { "const": 1 },
+    "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+    "at": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+    "mood": { "description": "stop: the Sub is okay and wants it to stop; checkin: the Sub asks to be checked on.", "enum": ["stop", "checkin"] }
+  }
+}

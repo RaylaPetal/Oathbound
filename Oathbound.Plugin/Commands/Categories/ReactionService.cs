@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
@@ -100,7 +102,7 @@ public sealed class ReactionService : IDisposable
                 SourceAllowed(r, emote.SourceName, emote.SourceWorld) &&
                 DirectionClassifier.Matches(r.Direction, localPlayer.Position, localPlayer.Rotation, emote.SourcePosition));
             if (match is not null)
-                TryFire(match);
+                TryFire(match, Plugin.ObjectTable.SearchById(emote.SourceObjectId));
         }
 
         foreach (var chat in chatThisTick)
@@ -114,7 +116,7 @@ public sealed class ReactionService : IDisposable
                 PhraseMatches(said, r.ChatPhrase) &&
                 SourceAllowed(r, chat.SenderName, chat.SenderWorld));
             if (match is not null)
-                TryFire(match);
+                TryFire(match, NearbyPlayer(chat.SenderName, chat.SenderWorld));
         }
     }
 
@@ -149,19 +151,25 @@ public sealed class ReactionService : IDisposable
             (string.IsNullOrEmpty(world) || string.Equals(p.PeerWorld, world, StringComparison.OrdinalIgnoreCase)));
     }
 
-    private void TryFire(ReactionRule rule)
+    /// A sender with no world matches on name alone, as in SourceAllowed.
+    private static IPlayerCharacter? NearbyPlayer(string name, string? world) =>
+        Plugin.ObjectTable.OfType<IPlayerCharacter>().FirstOrDefault(p =>
+            string.Equals(p.Name.TextValue, name, StringComparison.OrdinalIgnoreCase) &&
+            (string.IsNullOrEmpty(world) || (p.HomeWorld.IsValid && string.Equals(p.HomeWorld.Value.Name.ExtractText(), world, StringComparison.OrdinalIgnoreCase))));
+
+    private void TryFire(ReactionRule rule, IGameObject? source)
     {
         var now = Environment.TickCount64;
         if (lastFiredTicks.TryGetValue(rule.Id, out var last) && now - last < rule.EffectiveCooldownSeconds * 1000L)
             return;
         lastFiredTicks[rule.Id] = now;
-        Fire(rule);
+        Fire(rule, source);
     }
 
-    /// Each action is independent: one failing never stops the others.
-    public void Fire(ReactionRule rule)
+    /// Each action is independent: one failing never stops the others. `source` is who set it off, null when not nearby.
+    public void Fire(ReactionRule rule, IGameObject? source = null)
     {
-        Run("gesture", () => PlayGesture(rule));
+        Run("gesture", () => PlayGesture(rule, source));
         Run("item", () => EquipItem(rule));
         Run("mod", () => EnableMod(rule));
         Run("moodle", () => { if (rule.MoodleId is { } id) moodles.ApplyStatus(id); });
@@ -179,8 +187,9 @@ public sealed class ReactionService : IDisposable
         catch (Exception ex) { Plugin.Log.Warning(ex, $"Reaction {what} action failed."); }
     }
 
-    /// Skipped while a restraint holds a pose. Keep facing clears the target around the gesture and restores it next frame.
-    private void PlayGesture(ReactionRule rule)
+    /// Skipped while a restraint holds a pose. The game aims a gesture at the current target, so any other aim swaps
+    /// the target in for the gesture and puts the user's own back next frame - unless they've picked another since.
+    private void PlayGesture(ReactionRule rule, IGameObject? source)
     {
         if (rule.Gesture is not { } gesture)
             return;
@@ -188,14 +197,21 @@ public sealed class ReactionService : IDisposable
             restrictionRules.IsActive(RestraintRuleKind.LegsCuffed) || restrictionRules.IsActive(RestraintRuleKind.FullBodyCuffed))
             return;
 
-        var previousTarget = rule.KeepFacing ? Plugin.TargetManager.Target : null;
-        if (previousTarget is not null)
-            Plugin.TargetManager.Target = null;
+        var previousTarget = Plugin.TargetManager.Target;
+        var aim = rule.Facing switch
+        {
+            GestureFacing.CurrentTarget => previousTarget,
+            GestureFacing.TriggerSource => source,
+            _ => null,
+        };
+        var swapped = aim?.GameObjectId != previousTarget?.GameObjectId;
+        if (swapped)
+            Plugin.TargetManager.Target = aim;
         GestureCommand.Play(gesture);
-        if (previousTarget is not null)
+        if (swapped)
             Plugin.Framework.RunOnTick(() =>
             {
-                if (Plugin.TargetManager.Target is null)
+                if (Plugin.TargetManager.Target?.GameObjectId == aim?.GameObjectId)
                     Plugin.TargetManager.Target = previousTarget;
             }, delayTicks: 1);
     }

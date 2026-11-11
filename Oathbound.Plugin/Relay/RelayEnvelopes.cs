@@ -74,6 +74,9 @@ public sealed class PairEnvelope
     [JsonPropertyName("cageState")] public string? CageState { get; set; }
     [JsonPropertyName("cageStateAt")] public long? CageStateAt { get; set; }
     [JsonPropertyName("cageEndsAt")] public long? CageEndsAt { get; set; }
+    /// Null from a relay that predates safeword notices, or when the Sub never used theirs in this pairing.
+    [JsonPropertyName("safewordAt")] public long? SafewordAt { get; set; }
+    [JsonPropertyName("safewordMood")] public string? SafewordMood { get; set; }
     /// Null only from a relay that predates the field, which puts automatic catalog sync back on its hourly checks.
     [JsonPropertyName("catalogMailbox")] public CatalogMailboxSummary? CatalogMailbox { get; set; }
     /// Null from a relay that predates rulebooks; rulebook work is skipped then.

@@ -140,6 +140,8 @@ public sealed class Plugin : IDalamudPlugin
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
     public OwnerCollarStatusStore OwnerCollarStatus { get; }
     public OwnerCageStatusStore OwnerCageStatus { get; }
+    public OwnerSafewordAlerts OwnerSafewordAlerts { get; }
+    public BlindfoldService BlindfoldService { get; }
     public RelayActivity RelayActivity { get; } = new();
     private readonly CollarStatusReporter collarStatusReporter;
     public StatusIndicatorState StatusIndicators { get; }
@@ -151,6 +153,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly LeashOffNotifier leashOffNotifier;
     private readonly CageExitGuard cageExitGuard;
     private readonly CageStatusReporter cageStatusReporter;
+    private readonly SafewordNotifier safewordNotifier;
     private readonly StatusIconRenderer statusIconRenderer;
     public ChatCommandListener ChatCommandListener { get; }
 
@@ -195,6 +198,8 @@ public sealed class Plugin : IDalamudPlugin
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.WalkOnly, WalkOnlyService);
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.ActionBlock, ActionBlockService);
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.Gagged, ChatGagService);
+        BlindfoldService = new BlindfoldService();
+        RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.Blindfolded, BlindfoldService);
         RestrictionRuleManager.RegisterEnforcer(RestraintRuleKind.FullBodyCuffed, new MovementLockEnforcer(MovementLockService, "RestraintsFullBody"));
 
         Configuration.DeviceIdentity ??= new(); // A hand-edited config can null it out.
@@ -217,6 +222,7 @@ public sealed class Plugin : IDalamudPlugin
         CageService = new CageService(Configuration, MovementLockService, VnavmeshIpc, TeleportCommand, LifestreamIpc, MoodlesCommand);
         CollarCommand = new CollarCommand(Configuration, SlotLockManager, RuntimeState, MoodlesCommand);
         RestraintCommand = new RestraintCommand(Configuration, GlamourerIpc, PenumbraIpc, SlotLockManager, RestrictionRuleManager, RuntimeState, temporaryModSettings, ChatGagService, CatalogStore, MoodlesCommand);
+        BlindfoldService.ActiveRules = () => RestraintCommand.Engaged.SelectMany(e => e.Rules);
         ChatGagService.LevelSource = () => RestraintCommand.ActiveGagLevel;
         ChatGagService.SoundsSource = () => Configuration.GagSounds;
         ToyControlCommand = new ToyControlCommand(IntifaceIpc, RuntimeState, Configuration);
@@ -232,6 +238,8 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
         OwnerCageStatus = new OwnerCageStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCageStatus.Update;
+        OwnerSafewordAlerts = new OwnerSafewordAlerts(Configuration, OwnerStatusEstimates);
+        RevocationService.PairStatusFetched += OwnerSafewordAlerts.OnPairStatus;
         RevocationService.PairStatusFetched += RelayActivity.Update;
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         cageStatusReporter = new CageStatusReporter(Configuration, RelayClient, CageService);
@@ -245,7 +253,8 @@ public sealed class Plugin : IDalamudPlugin
         leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
         restraintRenderer = new RestraintRenderer(Configuration, StatusIndicators, worldStrokes);
         cageRenderer = new CageRenderer(this, worldStrokes);
-        statusIconRenderer = new StatusIconRenderer(StatusIndicators);
+        statusIconRenderer = new StatusIconRenderer(StatusIndicators, BlindfoldService);
+        BlindfoldService.OverlayAvailable = () => statusIconRenderer.IsAvailable;
         PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
@@ -266,6 +275,7 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
         ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
         ChatCommandListener.Cage = CageService;
+        ChatCommandListener.SafewordAlerts = OwnerSafewordAlerts;
         Games = new Games.GamesService(Configuration, ChatComposer, ChatSender, new Games.StripService(Configuration, GlamourerIpc, SlotLockManager));
         ChatCommandListener.Games = Games;
         RestraintCommand.IsCaged = () => CageService.IsCaged;
@@ -283,6 +293,8 @@ public sealed class Plugin : IDalamudPlugin
         RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
+        safewordNotifier = new SafewordNotifier(Configuration, RelayClient, ChatComposer, ChatSender);
+        PanicHandler.NotifyOwners = safewordNotifier.OnPanic;
 
         ModuleWindow = new ModuleWindow(this);
         CollarWindow = new CollarWindow(this, ModuleWindow);
@@ -454,6 +466,7 @@ public sealed class Plugin : IDalamudPlugin
         OwnerToyStatus.Dispose();
         RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
         RevocationService.PairStatusFetched -= OwnerCageStatus.Update;
+        RevocationService.PairStatusFetched -= OwnerSafewordAlerts.OnPairStatus;
         RevocationService.PairStatusFetched -= RelayActivity.Update;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
         RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
@@ -558,6 +571,7 @@ public sealed class Plugin : IDalamudPlugin
         UpdateQuickAccessText();
         collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         cageStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+        safewordNotifier.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         GestureCommand.OnFrameworkUpdate();
         RestraintCommand.OnFrameworkUpdate();
         ToyControlCommand.OnFrameworkUpdate();
