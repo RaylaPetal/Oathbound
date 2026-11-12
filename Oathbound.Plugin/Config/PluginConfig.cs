@@ -126,6 +126,166 @@ public class PairingState
     public long LastRevocationDeliveryUpdatedAt { get; set; }
 
     public bool IsPaired => Paired && !string.IsNullOrWhiteSpace(PeerName) && !string.IsNullOrWhiteSpace(PeerWorld);
+
+    /// Every character of the other person this pairing knows. PeerName/PeerWorld above is only where tells go now;
+    /// identity checks go through IsConfirmedCharacter.
+    public List<PeerCharacter> PeerCharacters { get; set; } = new();
+
+    /// User-chosen send target; ignored unless it's still a confirmed character.
+    public string? PinnedTargetName { get; set; }
+    public string? PinnedTargetWorld { get; set; }
+
+    /// The character the peer's latest record said it was on, and when that record was published.
+    public string? PresenceName { get; set; }
+    public string? PresenceWorld { get; set; }
+    public long PresenceAt { get; set; }
+
+    /// Records at or below this are stale or replayed and are ignored.
+    public long LastAppliedPeerRecordSeq { get; set; }
+    /// The relay only stores a record whose seq is higher than the last one. Never below the publish time, so an
+    /// install restored from a backup can't fall behind what the relay already holds.
+    public long OutgoingCharactersSeq { get; set; }
+
+    public long NextOutgoingCharactersSeq()
+    {
+        OutgoingCharactersSeq = Math.Max(OutgoingCharactersSeq + 1, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        return OutgoingCharactersSeq;
+    }
+    /// The peer has published at least one record, so it runs a version that knows about linked characters.
+    public bool PeerPublishesCharacters { get; set; }
+    /// Owner side: my characters the Sub has confirmed, from the Sub's latest record.
+    public List<CharacterRef> PeerAcceptedMine { get; set; } = new();
+
+    /// This install's character the pairing was made from; null for pairings made before linked characters existed.
+    public string? PairedFromName { get; set; }
+    public string? PairedFromWorld { get; set; }
+    /// Set at activation (possibly off the main thread); the characters publisher fills PairedFrom* on the next frame.
+    public bool RecordPairedFrom { get; set; }
+
+    /// A pairing saved before linked characters existed knows only PeerName/PeerWorld; that becomes its first one.
+    public void EnsureCharactersMigrated()
+    {
+        if (PeerCharacters.Count > 0 || string.IsNullOrWhiteSpace(PeerName) || string.IsNullOrWhiteSpace(PeerWorld)) return;
+        PeerCharacters.Add(new PeerCharacter { Name = PeerName!, World = PeerWorld!, State = PeerCharacterState.Confirmed, ConfirmedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() });
+    }
+
+    public PeerCharacter? FindPeerCharacter(string? name, string? world)
+    {
+        EnsureCharactersMigrated();
+        return PeerCharacters.FirstOrDefault(c => c.Is(name, world));
+    }
+
+    public bool IsConfirmedCharacter(string? name, string? world) => FindPeerCharacter(name, world) is { State: PeerCharacterState.Confirmed };
+
+    /// For chat types that carry no world; callers still require the match to be unambiguous across pairings.
+    public bool HasConfirmedName(string? name) => ConfirmedCharacters.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
+    public IEnumerable<PeerCharacter> ConfirmedCharacters
+    {
+        get
+        {
+            EnsureCharactersMigrated();
+            return PeerCharacters.Where(c => c.State == PeerCharacterState.Confirmed);
+        }
+    }
+
+    /// Records an accepted tell from one of the peer's confirmed characters; returns true if the send target moved.
+    public bool NoteTellFrom(string? name, string? world)
+    {
+        if (FindPeerCharacter(name, world) is not { State: PeerCharacterState.Confirmed } character) return false;
+        character.LastSeenAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        return ResolveTarget();
+    }
+
+    /// Pin, else the fresher of the published presence and the last tell, else the first confirmed character.
+    /// Rewrites PeerName/PeerWorld so every sender and label follows; returns true if it changed.
+    public bool ResolveTarget()
+    {
+        var confirmed = ConfirmedCharacters.ToList();
+        if (confirmed.Count == 0) return false;
+
+        var target = confirmed.FirstOrDefault(c => c.Is(PinnedTargetName, PinnedTargetWorld));
+        if (target is null)
+        {
+            var presence = confirmed.FirstOrDefault(c => c.Is(PresenceName, PresenceWorld));
+            var lastSeen = confirmed.Where(c => c.LastSeenAt > 0).OrderByDescending(c => c.LastSeenAt).FirstOrDefault();
+            target = (presence, lastSeen) switch
+            {
+                ({ } p, { } s) => s.LastSeenAt > PresenceAt ? s : p,
+                ({ } p, null) => p,
+                (null, { } s) => s,
+                _ => confirmed.FirstOrDefault(c => c.Is(PeerName, PeerWorld)) ?? confirmed[0],
+            };
+        }
+
+        if (PeerName == target.Name && PeerWorld == target.World) return false;
+        PeerName = target.Name;
+        PeerWorld = target.World;
+        return true;
+    }
+
+    /// Unpairing forgets every character, pin and presence of this pairing.
+    public void ClearCharacters()
+    {
+        PeerCharacters.Clear();
+        PeerAcceptedMine.Clear();
+        PinnedTargetName = PinnedTargetWorld = null;
+        PresenceName = PresenceWorld = null;
+        PresenceAt = 0;
+        LastAppliedPeerRecordSeq = 0;
+        PeerPublishesCharacters = false;
+    }
+}
+
+public enum PeerCharacterState
+{
+    Confirmed,
+
+    /// Sub side only: an Owner character announced but not yet confirmed by the Sub. Its tells are ignored.
+    Pending,
+
+    /// Sub side only: refused by the Sub; not offered again unless the Owner unlinks and re-links it.
+    Rejected,
+}
+
+[Serializable]
+public class CharacterRef
+{
+    public string Name { get; set; } = "";
+    public string World { get; set; } = "";
+
+    public bool Is(string? name, string? world) =>
+        string.Equals(Name, name, StringComparison.OrdinalIgnoreCase) && string.Equals(World, world, StringComparison.OrdinalIgnoreCase);
+
+    public override string ToString() => $"{Name}@{World}";
+}
+
+[Serializable]
+public class PeerCharacter : CharacterRef
+{
+    public PeerCharacterState State { get; set; }
+    public long ConfirmedAt { get; set; }
+    /// Last accepted tell from this character; 0 = never.
+    public long LastSeenAt { get; set; }
+}
+
+public enum MyCharacterState
+{
+    Linked,
+
+    /// Was linked; kept so it can be published as removed.
+    Unlinked,
+
+    /// The user asked never to be prompted for it. Never published.
+    Never,
+}
+
+[Serializable]
+public class MyCharacter : CharacterRef
+{
+    public MyCharacterState State { get; set; }
+    public long ChangedAt { get; set; }
 }
 
 /// The private key is DPAPI-protected on Windows; under Wine that gives no real confidentiality, and Settings must say so.
@@ -835,6 +995,45 @@ public class PluginConfig : IPluginConfiguration
 
     public List<PairingState> Pairings { get; set; } = new();
 
+    /// This install's own characters and whether each is linked to all of its pairings.
+    public List<MyCharacter> MyCharacters { get; set; } = new();
+
+    /// The linked character last published as current, kept so a record sent from an unlinked character doesn't
+    /// tell the other person which one the user is on.
+    public string? LastPublishedCurrentName { get; set; }
+    public string? LastPublishedCurrentWorld { get; set; }
+
+    /// Set when a pairing completes, possibly off the main thread; the characters publisher links whoever is logged in.
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
+    public volatile bool LinkCurrentCharacterRequested;
+
+    public const int MyCharactersMax = 20;
+    public const int PeerCharactersMax = 32;
+
+    public MyCharacter? FindMyCharacter(string? name, string? world) => MyCharacters.FirstOrDefault(c => c.Is(name, world));
+
+    [JsonIgnore, Newtonsoft.Json.JsonIgnore]
+    public IEnumerable<MyCharacter> LinkedCharacters => MyCharacters.Where(c => c.State == MyCharacterState.Linked);
+
+    /// Returns true if anything changed. Old Unlinked/Never entries are dropped first when the list is full.
+    public bool SetMyCharacterState(string name, string world, MyCharacterState state)
+    {
+        var existing = FindMyCharacter(name, world);
+        if (existing is not null && existing.State == state) return false;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (existing is null)
+        {
+            existing = new MyCharacter { Name = name, World = world };
+            MyCharacters.Add(existing);
+        }
+        existing.State = state;
+        existing.ChangedAt = now;
+        while (MyCharacters.Count > MyCharactersMax &&
+               MyCharacters.Where(c => c.State != MyCharacterState.Linked).OrderBy(c => c.ChangedAt).FirstOrDefault() is { } oldest)
+            MyCharacters.Remove(oldest);
+        return true;
+    }
+
     /// Sub side: the relay reference for each shared picture's small copy, by its SHA-256, so unchanged content keeps
     /// one id and key across publishes and an unchanged picture is never uploaded again.
     public Dictionary<string, PictureReference> SharedPictureRefs { get; set; } = new();
@@ -1031,25 +1230,29 @@ public class PluginConfig : IPluginConfiguration
 
     public PairingState? GetActivePairing() => ActivePairing;
 
-    /// Ambiguous for a mutual Owner/Sub pair - prefer the direction overload. Names are matched case-insensitively.
+    /// Ambiguous for a mutual Owner/Sub pair - prefer the direction overload. Matches any confirmed character of the peer.
     public PairingState? FindPairing(string? name, string? world)
     {
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world)) return null;
-        return Pairings.FirstOrDefault(p => p.IsPaired &&
-            string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(p.PeerWorld, world, StringComparison.OrdinalIgnoreCase));
+        return Pairings.FirstOrDefault(p => p.IsPaired && p.IsConfirmedCharacter(name, world));
     }
 
     /// Use this whenever the direction is known, or a mutual pair can resolve to the wrong pairing.
     public PairingState? FindPairing(string? name, string? world, PairingDirection direction)
     {
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world)) return null;
-        return Pairings.FirstOrDefault(p => p.IsPaired && p.Direction == direction &&
-            string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(p.PeerWorld, world, StringComparison.OrdinalIgnoreCase));
+        return Pairings.FirstOrDefault(p => p.IsPaired && p.Direction == direction && p.IsConfirmedCharacter(name, world));
     }
 
     public PairingState? FindPairingById(Guid id) => Pairings.FirstOrDefault(p => p.Id == id);
+
+    /// An active pairing with that device in that direction; a second one would be the same two people again.
+    public PairingState? FindActivePairingWithDevice(string? deviceKeyId, PairingDirection direction) =>
+        deviceKeyId is null ? null : Pairings.FirstOrDefault(p => p.IsPaired && p.Direction == direction && p.PeerDeviceKeyId == deviceKeyId);
+
+    public static string AlreadyPairedMessage(PairingState existing) =>
+        $"You're already paired with {existing.ConfirmedCharacters.FirstOrDefault()?.ToString() ?? "this person"} this way. " +
+        "To use this character with them, link it instead - from the prompt at the top of the Oathbound window, or under Settings > Pairing.";
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public IEnumerable<PairingState> ActivePairings => Pairings.Where(p => p.IsPaired);

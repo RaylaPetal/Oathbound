@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Ipc;
@@ -45,8 +46,11 @@ public sealed class SharedStatusPublisher : IDisposable
         if (current.Leashed)
         {
             length = Math.Clamp((int)MathF.Round(follow.EffectiveLength), 1, 100);
-            if (follow.LeashedPairingId is { } id && config.FindPairingById(id) is { PeerName: { } name, PeerWorld: { } world })
-                owner = SharedStatus.OwnerHashOf(name, world);
+            if (follow.LeashedPairingId is { } id && config.FindPairingById(id) is { PeerName: { } name, PeerWorld: { } world } pairing)
+            {
+                var followed = pairing.ConfirmedCharacters.FirstOrDefault(c => string.Equals(c.Name, follow.FollowedOwnerName, StringComparison.OrdinalIgnoreCase));
+                owner = SharedStatus.OwnerHashOf(followed?.Name ?? name, followed?.World ?? world);
+            }
         }
         Write(new SharedStatus(current.Gagged, current.Restrained, length, owner).Format());
     }

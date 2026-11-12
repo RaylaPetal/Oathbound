@@ -79,6 +79,15 @@ internal sealed class SafewordBody
     [JsonPropertyName("mood")] public string Mood { get; set; } = "";
 }
 
+internal sealed class PairCharactersBody
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "pair-characters";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("seq")] public long Seq { get; set; }
+    [JsonPropertyName("record")] public EncryptedCharacterRecord Record { get; set; } = new();
+}
+
 internal sealed class PairStatusBatchRequest
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "pair-status-batch-request";
@@ -353,6 +362,10 @@ public sealed class RelayClient : IDisposable
             new CageStatusBody { PairEpoch = pairEpoch, State = state, StateAt = stateAt, EndsAt = endsAt }, ct);
 
     /// Sub only, like the cage status.
+    public Task PutPairCharactersAsync(string pairIdHash, int pairEpoch, long seq, EncryptedCharacterRecord record, CancellationToken ct) =>
+        SendSignedAsync<CollarStatusAck>(HttpMethod.Post, $"/v1/pairs/{pairIdHash}/characters",
+            new PairCharactersBody { PairEpoch = pairEpoch, Seq = seq, Record = record }, ct);
+
     public Task PutSafewordAsync(string pairIdHash, int pairEpoch, long at, string mood, CancellationToken ct) =>
         SendSignedAsync<CollarStatusAck>(HttpMethod.Post, $"/v1/pairs/{pairIdHash}/safeword",
             new SafewordBody { PairEpoch = pairEpoch, At = at, Mood = mood }, ct);

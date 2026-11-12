@@ -77,6 +77,8 @@ public sealed class PairEnvelope
     /// Null from a relay that predates safeword notices, or when the Sub never used theirs in this pairing.
     [JsonPropertyName("safewordAt")] public long? SafewordAt { get; set; }
     [JsonPropertyName("safewordMood")] public string? SafewordMood { get; set; }
+    /// The other member's latest characters record; null from an older relay or when it never published one.
+    [JsonPropertyName("peerCharacters")] public PeerCharactersSummary? PeerCharacters { get; set; }
     /// Null only from a relay that predates the field, which puts automatic catalog sync back on its hourly checks.
     [JsonPropertyName("catalogMailbox")] public CatalogMailboxSummary? CatalogMailbox { get; set; }
     /// Null from a relay that predates rulebooks; rulebook work is skipped then.
@@ -84,6 +86,12 @@ public sealed class PairEnvelope
     /// Installs that checked in with the relay recently; null from an older relay or before its first count.
     [JsonPropertyName("relayActiveDevices")] public int? RelayActiveDevices { get; set; }
     [JsonPropertyName("relayActiveDevicesAt")] public long? RelayActiveDevicesAt { get; set; }
+}
+
+public sealed class PeerCharactersSummary
+{
+    [JsonPropertyName("seq")] public long Seq { get; set; }
+    [JsonPropertyName("record")] public EncryptedCharacterRecord Record { get; set; } = new();
 }
 
 public sealed class RulebookMailboxSummary

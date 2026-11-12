@@ -36,6 +36,8 @@ export const QUOTA_LIMITS = {
   deviceCageStatus: { windowSeconds: 3600, maxCount: 30 },
   // One per safeword plus retries; a Sub mashing the hotkey is already held to one per minute client-side.
   deviceSafeword: { windowSeconds: 3600, maxCount: 30 },
+  // One per login on a linked character per pairing, plus list changes and retries.
+  deviceCharacters: { windowSeconds: 3600, maxCount: 30 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
   // catalog-pictures: a first publish after updating sends every picture once (dozens at most 64 KB each); after

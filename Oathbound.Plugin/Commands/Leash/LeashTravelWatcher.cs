@@ -119,8 +119,7 @@ public sealed class LeashTravelWatcher
         foreach (var obj in Plugin.ObjectTable)
         {
             if (obj is IPlayerCharacter pc && pc.GameObjectId != me.GameObjectId
-                && string.Equals(pc.Name.TextValue, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(pc.HomeWorld.ValueNullable?.Name.ExtractText(), pairing.PeerWorld, StringComparison.OrdinalIgnoreCase))
+                && pairing.IsConfirmedCharacter(pc.Name.TextValue, pc.HomeWorld.ValueNullable?.Name.ExtractText()))
                 return Vector2.Distance(Ground(pc.Position), Ground(me.Position)) <= BesideReach;
         }
         return false;

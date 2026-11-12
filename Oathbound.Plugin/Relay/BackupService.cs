@@ -248,6 +248,9 @@ public sealed class BackupService
         }
 
         config.Pairings = payload.Pairings.Select(p => p.ToState()).ToList();
+        foreach (var restored in config.Pairings)
+            restored.EnsureCharactersMigrated();
+        RestoreMyCharacters(config, payload.MyCharacters);
         config.ActivePairingId = payload.ActivePairingId is { } active && config.Pairings.Any(p => p.Id == active)
             ? active
             : config.Pairings.FirstOrDefault()?.Id;
@@ -280,6 +283,7 @@ public sealed class BackupService
                 Identity = new BackupIdentity { PublicKeyX = x, PublicKeyY = y, PrivateD = RelayCrypto.Base64UrlEncode(d) },
                 Pairings = config.Pairings.Where(p => p.IsPaired).Select(BackupPairing.From).ToList(),
                 ActivePairingId = config.ActivePairingId,
+                MyCharacters = BackupMyCharacters(),
             };
             return JsonSerializer.SerializeToUtf8Bytes(payload);
         }
@@ -296,7 +300,30 @@ public sealed class BackupService
         sb.Append('|').Append(config.ActivePairingId);
         foreach (var p in config.Pairings.Where(p => p.IsPaired).OrderBy(p => p.Id))
             sb.Append('|').Append(JsonSerializer.Serialize(BackupPairing.From(p)));
+        sb.Append('|').Append(JsonSerializer.Serialize(BackupMyCharacters()));
         return RelayCrypto.Sha256Hex(sb.ToString());
+    }
+
+    /// Unlinked entries only matter to the next publish, so they're left out of the backup.
+    private List<BackupCharacter> BackupMyCharacters() =>
+        config.MyCharacters.Where(c => c.State != MyCharacterState.Unlinked)
+            .Select(c => new BackupCharacter { Name = c.Name, World = c.World, State = c.State.ToString() }).ToList();
+
+    private static void RestoreMyCharacters(PluginConfig config, List<BackupCharacter>? saved)
+    {
+        if (saved is null) return;
+        config.MyCharacters = saved
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.World) && Enum.TryParse<MyCharacterState>(c.State, out _))
+            .Select(c => new MyCharacter { Name = c.Name, World = c.World, State = Enum.Parse<MyCharacterState>(c.State), ChangedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() })
+            .Take(PluginConfig.MyCharactersMax)
+            .ToList();
+    }
+
+    private sealed class BackupCharacter
+    {
+        [JsonPropertyName("n")] public string Name { get; set; } = "";
+        [JsonPropertyName("w")] public string World { get; set; } = "";
+        [JsonPropertyName("s")] public string State { get; set; } = "";
     }
 
     private sealed class BackupPayload
@@ -306,6 +333,8 @@ public sealed class BackupService
         [JsonPropertyName("identity")] public BackupIdentity? Identity { get; set; }
         [JsonPropertyName("pairings")] public List<BackupPairing> Pairings { get; set; } = new();
         [JsonPropertyName("activePairingId")] public Guid? ActivePairingId { get; set; }
+        /// Absent from backups made before linked characters existed.
+        [JsonPropertyName("myCharacters")] public List<BackupCharacter>? MyCharacters { get; set; }
     }
 
     private sealed class BackupIdentity
@@ -330,8 +359,22 @@ public sealed class BackupService
         [JsonPropertyName("peerTriggerPhrase")] public string? PeerTriggerPhrase { get; set; }
         [JsonPropertyName("outgoingRevocationSequence")] public int OutgoingRevocationSequence { get; set; }
         [JsonPropertyName("incomingRevocationSequence")] public int IncomingRevocationSequence { get; set; }
+        /// Absent from older backups; ToState then falls back to PeerName/PeerWorld alone.
+        [JsonPropertyName("characters")] public List<BackupCharacter>? Characters { get; set; }
 
-        public static BackupPairing From(PairingState p) => new()
+        /// PeerName is the first confirmed character, not the moving send target, so switching characters doesn't
+        /// make the backup look stale and upload again.
+        public static BackupPairing From(PairingState p)
+        {
+            var first = p.ConfirmedCharacters.FirstOrDefault();
+            var b = FromCore(p);
+            b.PeerName = first?.Name ?? p.PeerName;
+            b.PeerWorld = first?.World ?? p.PeerWorld;
+            b.Characters = p.PeerCharacters.Select(c => new BackupCharacter { Name = c.Name, World = c.World, State = c.State.ToString() }).ToList();
+            return b;
+        }
+
+        private static BackupPairing FromCore(PairingState p) => new()
         {
             Id = p.Id,
             Direction = p.Direction,
@@ -362,6 +405,11 @@ public sealed class BackupService
             OutgoingRevocationSequence = OutgoingRevocationSequence,
             IncomingRevocationSequence = IncomingRevocationSequence,
             Paired = true,
+            PeerCharacters = (Characters ?? new())
+                .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.World) && Enum.TryParse<PeerCharacterState>(c.State, out _))
+                .Select(c => new PeerCharacter { Name = c.Name, World = c.World, State = Enum.Parse<PeerCharacterState>(c.State) })
+                .Take(PluginConfig.PeerCharactersMax)
+                .ToList(),
         };
     }
 }

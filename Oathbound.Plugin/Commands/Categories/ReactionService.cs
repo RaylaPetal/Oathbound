@@ -146,9 +146,7 @@ public sealed class ReactionService : IDisposable
     {
         if (rule.AllowAnyone)
             return true;
-        return config.Pairings.Any(p => p.IsPaired &&
-            string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase) &&
-            (string.IsNullOrEmpty(world) || string.Equals(p.PeerWorld, world, StringComparison.OrdinalIgnoreCase)));
+        return config.Pairings.Any(p => p.IsPaired && (string.IsNullOrEmpty(world) ? p.HasConfirmedName(name) : p.IsConfirmedCharacter(name, world)));
     }
 
     /// A sender with no world matches on name alone, as in SourceAllowed.

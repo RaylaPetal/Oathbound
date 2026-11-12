@@ -112,6 +112,15 @@ public sealed class ChatComposer
     public string ComposeLeashOnNotice(string name, string world) =>
         $"/tell {name}@{world} {LeashOffNoticeKeyword} {LeashOnWord}";
 
+    // Teleport refusals ride on `collarleash` because every Owner build since 0.1.11.0 swallows any unknown word
+    // after it; a keyword of their own would show up raw in older Owners' chat logs.
+    public const string LeashPausedWord = "paused";
+    public const string TeleportFailedWord = "tpfail";
+
+    /// Carries only the keyword, the word and one code.
+    public string ComposeTeleportRefusalNotice(string name, string world, string word, TeleportRefusal code) =>
+        $"/tell {name}@{world} {LeashOffNoticeKeyword} {word} {code.ToNoticeWord()}";
+
     /// The Sub struggled free of (`free`) or used the key on (`key`) a restraint this Owner locked, named as their command named it.
     public string ComposeStruggleNotice(string name, string world, string word, string restraint) =>
         $"/tell {name}@{world} {StruggleNoticeKeyword} {word} {restraint}".TrimEnd();

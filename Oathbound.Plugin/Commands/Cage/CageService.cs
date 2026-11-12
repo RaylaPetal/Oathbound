@@ -220,7 +220,7 @@ public sealed class CageService
     {
         if (BringTarget(place, position, out var why) is not { } target)
             return (false, why);
-        var (success, reason) = teleport.Apply(target, source);
+        var (success, reason, _) = teleport.Apply(target, source, JourneyOrigin.Cage);
         if (!success)
             return (false, (reason ?? "Teleport failed to start.").TrimEnd('.'));
         if (place.Kind == CagePlaceKind.House)

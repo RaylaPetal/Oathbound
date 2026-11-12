@@ -217,7 +217,8 @@ model is a constraint on any new feature here, not just documentation.
 
 Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
 Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
-a leash ends on its side (`LeashOffNotifier`), the Sub's `collarleash on` notice and an Owner-written /tell from an
+a leash ends on its side, and its `collarleash paused <code>` / `collarleash tpfail <code>` notices when a leash trip or an
+Owner's Teleport doesn't reach the Owner (`LeashOffNotifier`; they ride on `collarleash` so older Owner builds hide them), the Sub's `collarleash on` notice and an Owner-written /tell from an
 accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices after struggling free of a lock or unlocking it with its key (`RestraintCommand.StruggledFree` / `KeyUnlocked`), a user-configured Reactions chat reply, the `collargame` piece report (`stripped`) and game-ended (`quit`) tells during a game (`GamesService`), the Sub's
 `collarsafeword <mood> <at>` tell to each Owner on panic (`SafewordNotifier`, opt-out, at most once a minute), and lifecycle tells tied
 to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
@@ -228,6 +229,16 @@ Sub's Follow / Custom chat permissions. Only `ChatSender` transmits chat. Peer-n
 tells are trigger-less keywords (`collarinvite`, `collarpairack`, `collarunpair`, `collarcatalogreq`,
 `collarcatalogdenied`, `collarleash`, `collarrulebook`, `collarstruggle`, `collargame`, `collarsafeword`) composed in `ChatComposer` and matched in `ChatCommandListener`, always
 verified against the tell's sender and a paired `PairingState` of the right direction - fail closed otherwise.
+
+A pairing is between two people, each with one or more characters. `PairingState.PeerCharacters` holds the
+peer's characters, and identity checks go through `PairingState.IsConfirmedCharacter` / `PluginConfig.FindPairing`,
+never `PeerName`. `PeerName`/`PeerWorld` is only the resolved send target (`PairingState.ResolveTarget`: pin, then the
+fresher of the peer's published presence and its last tell, then the first confirmed character). An Owner's new
+character stays `Pending` (its tells ignored) until the Sub confirms it; a Sub's are confirmed automatically.
+`CharacterRecordService` publishes this install's `MyCharacters` (plus the current one, and the Sub's confirmations)
+as an end-to-end-encrypted record on each pair row (`POST /v1/pairs/:id/characters`) and applies the peer's record
+from the pair status check. Plugin state stays per install, so everything applied to a Sub follows them to every
+character.
 
 The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner
 sent. Three pieces of real state flow back: the leash-off notice, and the collar and cage status the Sub's

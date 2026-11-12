@@ -192,6 +192,9 @@ async function measureEveryRoute(): Promise<void> {
   await measure("POST /v1/pairs/:id/cage-status", () =>
     signedFetch(`/v1/pairs/${p.pairIdHash}/cage-status`, "POST", { type: "cage-status", schemaVersion: 1, pairEpoch: 0, state: "caged", stateAt: now(), endsAt: null }, p.sub.privateKey, p.subId),
   );
+  await measure("POST /v1/pairs/:id/characters", () =>
+    signedFetch(`/v1/pairs/${p.pairIdHash}/characters`, "POST", { type: "pair-characters", schemaVersion: 1, pairEpoch: 0, seq: 1, record: blob() }, p.sub.privateKey, p.subId),
+  );
 
   // Catalog request/response.
   let request!: Awaited<ReturnType<typeof catalogRequest>>;

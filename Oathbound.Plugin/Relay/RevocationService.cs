@@ -266,6 +266,7 @@ public sealed class RevocationService
         {
             pairing.Paired = false;
             pairing.Rulebook = new();
+            pairing.ClearCharacters();
             config.SaveNow();
             PairingRevoked?.Invoke();
         }
@@ -289,6 +290,7 @@ public sealed class RevocationService
         pairing.IncomingRevocationSequence = revocation.Sequence;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.ClearCharacters();
         PairingRevoked?.Invoke();
         config.SaveNow();
         Plugin.Log.Information($"Pairing ended locally: a valid signed revocation (sequence {revocation.Sequence}, reason \"{revocation.Reason}\") was observed from the paired peer.");

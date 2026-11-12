@@ -268,6 +268,9 @@ public class SettingsWindow : Window, IDisposable
         using (Section.Begin("yourPairings", activePairings.Count > 0 ? $"Your pairings ({activePairings.Count})" : "Your pairings"))
             DrawPairingsList(config, activePairings);
 
+        using (Section.Begin("characters", "Characters"))
+            DrawCharactersSection(config, activePairings);
+
         using (Section.Begin("pairWith", "Pair with someone"))
             DrawPairWithSection(config);
 
@@ -359,6 +362,98 @@ public class SettingsWindow : Window, IDisposable
         }
 
         DrawRevocationDeliveryStatus(config);
+    }
+
+    /// Which of this install's characters the pairings know about, and which of each peer's characters count as them.
+    private void DrawCharactersSection(PluginConfig config, List<PairingState> activePairings)
+    {
+        var records = plugin.CharacterRecords;
+        IconGlyph.WrappedDisabled("Every character you link counts as you for all your pairings. Restrictions follow you to every character either way.");
+
+        ImGui.TextUnformatted("Your characters");
+        if (records.Current is { } current && config.FindMyCharacter(current.Name, current.World) is null)
+        {
+            ImGui.BulletText($"{current} (this character, not linked)");
+            ImGui.SameLine();
+            if (ImGui.Button("Link##linkCurrent")) records.LinkCurrent();
+        }
+        foreach (var mine in config.MyCharacters.ToList())
+        {
+            ImGui.PushID($"mine_{mine}");
+            var state = mine.State switch
+            {
+                MyCharacterState.Linked => "linked",
+                MyCharacterState.Never => "never linked",
+                _ => "unlinked",
+            };
+            ImGui.BulletText($"{mine} ({state})");
+            ImGui.SameLine();
+            if (mine.State == MyCharacterState.Linked)
+            {
+                using (ImRaii.Disabled(!records.CanUnlink(mine)))
+                    if (ImGui.Button("Unlink")) records.SetMine(mine.Name, mine.World, MyCharacterState.Unlinked);
+                if (!records.CanUnlink(mine) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip("Your only linked character. Unpair instead to end a pairing.");
+            }
+            else if (ImGui.Button("Link"))
+            {
+                records.SetMine(mine.Name, mine.World, MyCharacterState.Linked);
+            }
+            ImGui.PopID();
+        }
+        if (config.MyCharacters.Count == 0 && records.Current is null)
+            IconGlyph.WrappedDisabled("Log in to link this character.");
+
+        foreach (var pairing in activePairings)
+        {
+            ImGui.PushID($"peerCharacters_{pairing.Id}");
+            ImGui.Spacing();
+            var peerIsOwner = pairing.Direction == PairingDirection.SubSide;
+            var who = pairing.ConfirmedCharacters.FirstOrDefault()?.ToString() ?? "them";
+            ImGui.TextUnformatted(peerIsOwner ? $"Your Owner {who}" : $"Your Sub {who}");
+            foreach (var character in pairing.PeerCharacters.ToList())
+            {
+                ImGui.PushID(character.ToString());
+                var state = character.State switch
+                {
+                    PeerCharacterState.Confirmed => character.Is(pairing.PeerName, pairing.PeerWorld) ? "confirmed, tells go here" : "confirmed",
+                    PeerCharacterState.Pending => "waiting for you to confirm",
+                    _ => "rejected",
+                };
+                ImGui.BulletText($"{character} ({state})");
+                if (peerIsOwner)
+                {
+                    if (character.State != PeerCharacterState.Confirmed)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("Confirm")) records.Confirm(pairing, character);
+                    }
+                    if (character.State == PeerCharacterState.Pending)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("Reject")) records.Reject(pairing, character);
+                    }
+                    if (records.CanRemove(pairing, character))
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("Remove")) records.Remove(pairing, character);
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Stop accepting commands from this character.");
+                    }
+                }
+                ImGui.PopID();
+            }
+
+            if (!peerIsOwner && config.LinkedCharacters.Any())
+            {
+                ImGui.TextDisabled("Your characters, as they see them:");
+                foreach (var mine in config.LinkedCharacters)
+                    ImGui.BulletText($"{mine} ({(CharacterRecordService.IsAcceptedBySub(pairing, mine) ? "confirmed" : "waiting for them to confirm")})");
+                if (!pairing.PeerPublishesCharacters)
+                    IconGlyph.WrappedDisabled("Their plugin hasn't reported their characters yet. If it stays this way, it may be out of date, and only the character you paired from reaches them.");
+            }
+            ImGui.PopID();
+        }
     }
 
     /// Sub-side: always our own. Owner-side: the peer's, falling back to ours when they never sent one.

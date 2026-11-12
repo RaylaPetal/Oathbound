@@ -25,7 +25,8 @@ public enum TeleportStage
     Arriving,
 }
 
-public enum LeashJourneyOutcome { Arrived, Failed, StoppedBySub }
+/// Cancelled is an end the Owner already knows about or caused (panic, revert all, unpair, unload, replaced).
+public enum LeashJourneyOutcome { Arrived, Failed, StoppedBySub, Cancelled }
 
 /// The Sub's whole journey to the Owner: world change, aetheryte or ward travel, instance change, then vnavmesh
 /// navigation, with movement locked throughout. Every guard runs on the Sub's client before anything moves.
@@ -56,8 +57,8 @@ public sealed class TeleportCommand
     private int housingPlot;
     /// The Teleporting stage is a jump straight to the Sub's own estate in the Owner's ward.
     private bool estateTravel;
-    /// Started by ApplyLeashTravel rather than the Owner's own Teleport.
-    private bool isLeashJourney;
+    /// Set only once the journey has started, so a failure inside Apply is reported by Apply's result alone.
+    private JourneyOrigin? origin;
 
     private TeleportStage stage;
     private DateTime stageStartedAt;
@@ -81,28 +82,28 @@ public sealed class TeleportCommand
 
     public TeleportStage Stage => stage;
     public bool IsInProgress => stage != TeleportStage.Idle;
-    public bool IsLeashJourneyInProgress => IsInProgress && isLeashJourney;
+    public bool IsLeashJourneyInProgress => IsInProgress && origin == JourneyOrigin.Leash;
 
     /// Set once by Plugin. A caged Sub can't be teleported by anyone.
     public Func<bool> IsCaged { get; set; } = static () => false;
 
-    /// Not raised when a newer leash travel replaces the journey.
-    public event Action<LeashJourneyOutcome>? LeashJourneyEnded;
+    /// Not raised when a newer leash travel replaces the journey. The code is meaningful for Failed and StoppedBySub.
+    public event Action<LeashJourneyOutcome, TeleportRefusal>? LeashJourneyEnded;
+
+    /// An Owner-sent journey that started and then failed or was stopped by the Sub.
+    public event Action<Guid, TeleportRefusal>? OwnerTeleportFailed;
 
     /// A leash journey from the same pairing is replaced silently; anything else in progress wins.
-    public (bool Success, string? Reason) ApplyLeashTravel(TeleportTarget destination, PairingState source)
+    public (bool Success, string? Reason, TeleportRefusal Code) ApplyLeashTravel(TeleportTarget destination, PairingState source)
     {
         if (IsInProgress)
         {
-            if (!isLeashJourney || sourcePairingId != source.Id)
-                return (false, "Refused: a Teleport is already in progress.");
-            StopCore("replaced by a newer leash travel", LeashJourneyOutcome.Failed, notifyLeash: false);
+            if (origin != JourneyOrigin.Leash || sourcePairingId != source.Id)
+                return (false, "Refused: a Teleport is already in progress.", TeleportRefusal.Busy);
+            StopCore("replaced by a newer leash travel", LeashJourneyOutcome.Cancelled, TeleportRefusal.Other, notifyLeash: false);
         }
 
-        var result = Apply(destination, source);
-        if (result.Success)
-            isLeashJourney = true;
-        return result;
+        return Apply(destination, source, JourneyOrigin.Leash);
     }
 
     public void StopLeashJourney(string reason)
@@ -117,33 +118,33 @@ public sealed class TeleportCommand
     /// Guards run in a fixed order so the reported reason is the first real blocker.
     public event Action? OwnerTeleported;
 
-    public (bool Success, string? Reason) Apply(TeleportTarget destination, PairingState? source)
+    public (bool Success, string? Reason, TeleportRefusal Code) Apply(TeleportTarget destination, PairingState? source, JourneyOrigin journeyOrigin)
     {
         if (IsCaged())
-            return (false, "Refused: you're caged.");
+            return Refuse(TeleportRefusal.Caged, "Refused: you're caged.");
         if (!config.Permissions.Teleport)
-            return (false, "Teleport permission is not enabled.");
+            return Refuse(TeleportRefusal.Permission, "Teleport permission is not enabled.");
         if (!config.TosAcknowledged)
-            return (false, "The automation-risk acknowledgement has not been given.");
+            return Refuse(TeleportRefusal.Permission, "The automation-risk acknowledgement has not been given.");
         if (Plugin.Condition[ConditionFlag.BoundByDuty] || Plugin.Condition[ConditionFlag.BoundByDuty56] || Plugin.Condition[ConditionFlag.BoundByDuty95])
-            return (false, "Refused: currently bound by a duty.");
+            return Refuse(TeleportRefusal.Busy, "Refused: currently bound by a duty.");
         if (Plugin.Condition[ConditionFlag.InCombat])
-            return (false, "Refused: currently in combat.");
+            return Refuse(TeleportRefusal.Busy, "Refused: currently in combat.");
         if (IsInProgress)
-            return (false, "Refused: a Teleport is already in progress.");
+            return Refuse(TeleportRefusal.Busy, "Refused: a Teleport is already in progress.");
         if (!lifestream.IsAvailable)
-            return (false, "Lifestream is not installed or not responding.");
+            return Refuse(TeleportRefusal.Setup, "Lifestream is not installed or not responding.");
         if (!vnavmesh.IsAvailable)
-            return (false, "vnavmesh is not installed or not responding.");
+            return Refuse(TeleportRefusal.Setup, "vnavmesh is not installed or not responding.");
         if (!movementLock.IsImmobilizeAvailable)
-            return (false, "Refused: the movement lock can't be enforced on this game version.");
+            return Refuse(TeleportRefusal.Setup, "Refused: the movement lock can't be enforced on this game version.");
         if (TeleportDestinations.IsHousingInterior(destination.Territory))
-            return (false, "Refused: housing interiors are not supported.");
+            return Refuse(TeleportRefusal.Interior, "Refused: housing interiors are not supported.");
 
         var player = Plugin.ObjectTable.LocalPlayer;
         var currentWorld = player?.CurrentWorld.Value.Name.ExtractText();
         if (player is null || currentWorld is null)
-            return (false, "Refused: your character can't be read right now.");
+            return Refuse(TeleportRefusal.Busy, "Refused: your character can't be read right now.");
 
         var sameWorld = string.Equals(currentWorld, destination.World, StringComparison.OrdinalIgnoreCase);
         var sameTerritory = sameWorld && Plugin.ClientState.TerritoryType == destination.Territory;
@@ -160,9 +161,9 @@ public sealed class TeleportCommand
             {
                 districtName = TeleportDestinations.FindDistrictName(lifestream, destination.Territory);
                 if (districtName is null)
-                    return (false, "Refused: Lifestream doesn't recognize your Owner's residential district.");
+                    return Refuse(TeleportRefusal.Setup, "Refused: Lifestream doesn't recognize your Owner's residential district.");
                 if (TeleportDestinations.FindNearestPlot(lifestream, destination.Territory, destination.Subdivision, destination.Position) is not { } plot)
-                    return (false, "Refused: Lifestream has no plot data for your Owner's ward.");
+                    return Refuse(TeleportRefusal.Setup, "Refused: Lifestream has no plot data for your Owner's ward.");
                 housingPlot = plot;
             }
         }
@@ -174,11 +175,12 @@ public sealed class TeleportCommand
             var ownDistance = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), new Vector2(destination.Position.X, destination.Position.Z));
             skipTravel = sameTerritory && sameInstance && (aetheryte is null || ownDistance < aetheryte.Value.Distance);
             if (!skipTravel && aetheryte is null)
-                return (false, "Refused: you have no attuned aetheryte in your Owner's zone.");
+                return Refuse(TeleportRefusal.NoAetheryte, "Refused: you have no attuned aetheryte in your Owner's zone.");
             aetheryteId = aetheryte?.AetheryteId ?? 0;
         }
 
         lastFailure = null;
+        lastFailureCode = TeleportRefusal.Other;
         target = destination;
         sourcePairingId = source?.Id;
         ownerName = source?.PeerName;
@@ -193,12 +195,19 @@ public sealed class TeleportCommand
         else
             BeginTravelInWorld();
 
-        if (IsInProgress && source is not null)
+        if (!IsInProgress)
+            return (false, lastFailure ?? "Teleport failed to start.", lastFailureCode);
+
+        origin = journeyOrigin;
+        if (source is not null)
             OwnerTeleported?.Invoke();
-        return IsInProgress ? (true, null) : (false, lastFailure ?? "Teleport failed to start.");
+        return (true, null, TeleportRefusal.Other);
     }
 
+    private static (bool Success, string? Reason, TeleportRefusal Code) Refuse(TeleportRefusal code, string reason) => (false, reason, code);
+
     private string? lastFailure;
+    private TeleportRefusal lastFailureCode;
 
     public void OnFrameworkUpdate()
     {
@@ -207,7 +216,7 @@ public sealed class TeleportCommand
 
         if (IsLifestreamTravelStage(stage) && HasTravelStalled())
         {
-            Fail($"Travel stalled while {StageLabel(stage)}.");
+            Fail(TeleportRefusal.Travel, $"Travel stalled while {StageLabel(stage)}.");
             return;
         }
 
@@ -215,18 +224,18 @@ public sealed class TeleportCommand
         {
             case TeleportStage.ChangingWorld:
                 if (WaitForTravel() is not { } worldDone) return;
-                if (!worldDone) { Fail("Lifestream didn't start the world change."); return; }
+                if (!worldDone) { Fail(TeleportRefusal.Travel, "Lifestream didn't start the world change."); return; }
                 var world = Plugin.ObjectTable.LocalPlayer?.CurrentWorld.Value.Name.ExtractText();
-                if (!string.Equals(world, target.World, StringComparison.OrdinalIgnoreCase)) { Fail($"World change didn't reach \"{target.World}\"."); return; }
+                if (!string.Equals(world, target.World, StringComparison.OrdinalIgnoreCase)) { Fail(TeleportRefusal.Travel, $"World change didn't reach \"{target.World}\"."); return; }
                 BeginTravelInWorld();
                 return;
 
             case TeleportStage.TravelingToWard:
                 if (WaitForTravel() is not { } wardDone) return;
-                if (!wardDone) { Fail("Lifestream didn't start traveling to your Owner's ward."); return; }
+                if (!wardDone) { Fail(TeleportRefusal.Travel, "Lifestream didn't start traveling to your Owner's ward."); return; }
                 if (Plugin.ClientState.TerritoryType != target.Territory || TeleportDestinations.CurrentWard() != (target.Ward, target.Subdivision))
                 {
-                    Fail($"Ward travel didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
+                    Fail(TeleportRefusal.Travel, $"Ward travel didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
                     return;
                 }
                 BeginNav();
@@ -235,13 +244,13 @@ public sealed class TeleportCommand
             case TeleportStage.Teleporting:
                 if (WaitForTravel() is not { } teleportDone) return;
                 movementLock.ReleaseImmobilize(LockOwner);
-                if (!teleportDone) { Fail("The teleport didn't start."); return; }
-                if (Plugin.ClientState.TerritoryType != target.Territory) { Fail("The teleport didn't arrive in your Owner's zone."); return; }
+                if (!teleportDone) { Fail(TeleportRefusal.Travel, "The teleport didn't start."); return; }
+                if (Plugin.ClientState.TerritoryType != target.Territory) { Fail(TeleportRefusal.Travel, "The teleport didn't arrive in your Owner's zone."); return; }
                 if (estateTravel)
                 {
                     if (TeleportDestinations.CurrentWard() != (target.Ward, target.Subdivision))
                     {
-                        Fail($"The estate teleport didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
+                        Fail(TeleportRefusal.Travel, $"The estate teleport didn't reach ward {target.Ward}{(target.Subdivision ? " (subdivision)" : "")}.");
                         return;
                     }
                     BeginNav();
@@ -266,13 +275,13 @@ public sealed class TeleportCommand
         }
     }
 
-    /// Safe to call when idle.
-    public void Stop(string reason) => StopCore(reason, LeashJourneyOutcome.Failed, notifyLeash: true);
+    /// Safe to call when idle. For ends the Owner already knows about or caused: never reported back to them.
+    public void Stop(string reason) => StopCore(reason, LeashJourneyOutcome.Cancelled, TeleportRefusal.Other, notifyLeash: true);
 
     /// The Sub's own Stop button: a leash journey stopped this way isn't retried.
-    public void StopBySub(string reason) => StopCore(reason, LeashJourneyOutcome.StoppedBySub, notifyLeash: true);
+    public void StopBySub(string reason) => StopCore(reason, LeashJourneyOutcome.StoppedBySub, TeleportRefusal.Stopped, notifyLeash: true);
 
-    private void StopCore(string reason, LeashJourneyOutcome outcome, bool notifyLeash)
+    private void StopCore(string reason, LeashJourneyOutcome outcome, TeleportRefusal code, bool notifyLeash)
     {
         if (!IsInProgress)
             return;
@@ -288,14 +297,17 @@ public sealed class TeleportCommand
         movementLock.ReleaseImmobilize(LockOwner);
         movementLock.ReleaseSuppressInput(LockOwner);
         Plugin.Log.Info($"Teleport stopped at {stage}: {reason}");
+        var endedOrigin = origin;
+        var endedPairingId = sourcePairingId;
         stage = TeleportStage.Idle;
         target = null;
         sourcePairingId = null;
         ownerName = null;
-        var wasLeashJourney = isLeashJourney;
-        isLeashJourney = false;
-        if (wasLeashJourney && notifyLeash)
-            LeashJourneyEnded?.Invoke(outcome);
+        origin = null;
+        if (endedOrigin == JourneyOrigin.Leash && notifyLeash)
+            LeashJourneyEnded?.Invoke(outcome, code);
+        if (endedOrigin == JourneyOrigin.Owner && outcome is LeashJourneyOutcome.Failed or LeashJourneyOutcome.StoppedBySub && endedPairingId is { } pairingId)
+            OwnerTeleportFailed?.Invoke(pairingId, code);
     }
 
     /// Pairing-ended events don't say which pairing, so check whether it was this journey's.
@@ -308,10 +320,11 @@ public sealed class TeleportCommand
     }
 
     /// Before navigation began: lock released, Sub told why.
-    private void Fail(string reason)
+    private void Fail(TeleportRefusal code, string reason)
     {
         lastFailure = reason;
-        Stop(reason);
+        lastFailureCode = code;
+        StopCore(reason, LeashJourneyOutcome.Failed, code, notifyLeash: true);
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Teleport stopped",
@@ -322,7 +335,7 @@ public sealed class TeleportCommand
 
     private void Finish()
     {
-        StopCore("arrived", LeashJourneyOutcome.Arrived, notifyLeash: true);
+        StopCore("arrived", LeashJourneyOutcome.Arrived, TeleportRefusal.Other, notifyLeash: true);
     }
 
     private void EnterStage(TeleportStage next)
@@ -370,7 +383,7 @@ public sealed class TeleportCommand
     {
         EnterStage(TeleportStage.ChangingWorld);
         if (!lifestream.TryChangeWorld(target!.World))
-            Fail($"Failed to change world to \"{target.World}\".");
+            Fail(TeleportRefusal.Travel, $"Failed to change world to \"{target.World}\".");
     }
 
     private void BeginTravelInWorld()
@@ -386,7 +399,7 @@ public sealed class TeleportCommand
             if (!lifestream.TryTeleport(estate.AetheryteId, estate.SubIndex))
             {
                 movementLock.ReleaseImmobilize(LockOwner);
-                Fail("Lifestream failed to teleport to your estate in your Owner's ward.");
+                Fail(TeleportRefusal.Travel, "Lifestream failed to teleport to your estate in your Owner's ward.");
             }
             return;
         }
@@ -396,11 +409,11 @@ public sealed class TeleportCommand
             EnterStage(TeleportStage.TravelingToWard);
             if (lifestream.TryBuildAddressBookEntry(target.World, districtName!, target.Ward, housingPlot) is not { } entry)
             {
-                Fail("Lifestream couldn't build an address for your Owner's ward.");
+                Fail(TeleportRefusal.Travel, "Lifestream couldn't build an address for your Owner's ward.");
                 return;
             }
             if (!lifestream.TryGoToHousingAddress(entry))
-                Fail("Lifestream failed to start traveling to your Owner's ward.");
+                Fail(TeleportRefusal.Travel, "Lifestream failed to start traveling to your Owner's ward.");
             return;
         }
 
@@ -410,7 +423,7 @@ public sealed class TeleportCommand
         if (!lifestream.TryTeleport(aetheryteId, 0))
         {
             movementLock.ReleaseImmobilize(LockOwner);
-            Fail("Lifestream failed to teleport to the chosen aetheryte.");
+            Fail(TeleportRefusal.Travel, "Lifestream failed to teleport to the chosen aetheryte.");
         }
     }
 
@@ -458,7 +471,7 @@ public sealed class TeleportCommand
             case NavStatus.Stuck: stage = TeleportStage.Stuck; break;
             case NavStatus.Landing: stage = TeleportStage.Arriving; break;
             case NavStatus.Arrived: Finish(); break;
-            default: Fail("No path to your Owner could be found."); break;
+            default: Fail(TeleportRefusal.NoPath, "No path to your Owner could be found."); break;
         }
     }
 

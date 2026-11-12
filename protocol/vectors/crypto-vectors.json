@@ -232,5 +232,20 @@
     "plaintextBase64Url": "_9j_4G9hdGhib3VuZCBwaWN0dXJlIHZlY3Rvcv_Z",
     "plaintextSha256Hex": "742e74bbff074763bac469a965c8b1b4ca3572b04c48cff5143a015a94d5dfeb",
     "blobBase64Url": "BRAbJjE8R1JdaHN-b4OZDRovVR31VE0BdQhuaXuCQCD5PmmTbDWg2ghL75Oep4micrQAGHk-dCwbZA"
+  },
+  "pairCharacters": {
+    "description": "pair-characters record: static-static ECDH between the two device keys (ecdhHkdfAesGcmCatalogEnvelope's sub and owner keys stand in for them), salt SHA-256(UTF-8 pairIdHash + \"|\" + pairEpoch), HKDF-SHA256 with info \"oathbound-relay-characters-v1\" + pairIdHash + pairEpoch, and AES-256-GCM over the record JSON with AAD = JCS of {pairIdHash, pairEpoch, side, seq}. Both sides must derive the same key.",
+    "pairIdHash": "65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f",
+    "pairEpoch": 2,
+    "side": "sub",
+    "seq": 7,
+    "sharedSecretHex": "780dc0923dac82ca3947113b1f7729f3a3c5c3a3d5500a65118462c91b86aa95",
+    "saltSha256Hex": "407d9d08cf3bd154c6795ee2375e75471fa657d30a050b82ece7a43d190eca2d",
+    "infoUtf8": "oathbound-relay-characters-v165628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f2",
+    "derivedAesKeyHex": "c3b093615ca882f39b2a4523f9081409e98d863764ae6f2d0cc2fe3dfacb4dcf",
+    "additionalAuthenticatedDataCanonicalJson": "{\"pairEpoch\":2,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"seq\":7,\"side\":\"sub\"}",
+    "plaintextUtf8": "{\"v\":1,\"seq\":7,\"at\":1700003000,\"linked\":[{\"n\":\"Mira A\",\"w\":\"Odin\"},{\"n\":\"Mira B\",\"w\":\"Lich\"}],\"unlinked\":[],\"current\":1,\"accepted\":[{\"n\":\"Kai A\",\"w\":\"Odin\"}]}",
+    "nonceBase64Url": "AAECAwQFBgcICQoL",
+    "ciphertextWithTagBase64Url": "xYNS0MMmCT5g3OANamfRoBMrFm422s1l5mccp3gfGTZRtm5o4fd4m0yw9vpR2Hxgoa8tdOecGkOG7t42S4AnHWAtxX3QZEEFWjxBGVbNVASzXaXDTfS3CfazQ8DOoMP9EO9AuaTDmGYwCH61ymCqwEnWsQhdmtzcSF58U-T7Ce5n2SMEBUp6yo9VNukHQcfd3mIQA9UoVabPPX4a3mSFCbl_lIp0pYf-R1hXdwBe"
   }
 }

@@ -169,6 +169,12 @@ public sealed class PairingService
                 SetError("Pairing requires one Owner and one Sub. Change Role before accepting this invitation.");
                 return;
             }
+            var ownDirection = senderRole == PluginRole.Owner ? PairingDirection.SubSide : PairingDirection.OwnerSide;
+            if (config.FindActivePairingWithDevice(invitation.InviterDeviceKeyId, ownDirection) is { } already)
+            {
+                SetError(PluginConfig.AlreadyPairedMessage(already));
+                return;
+            }
             Pending = new PendingPairingRequest(invitationId, senderName, senderWorld, senderRole, invitation.TriggerPhrase, invitation.ExpiresAt);
             PendingChanged?.Invoke();
             OathboundChat.Print($"{senderName}@{senderWorld} sent you a pairing request - open Settings to answer it.");
@@ -325,6 +331,11 @@ public sealed class PairingService
                     Plugin.Log.Warning("Relay acknowledgement tell ignored: acceptance signature did not verify.");
                     return;
                 }
+                if (config.FindActivePairingWithDevice(acceptance.AccepterDeviceKeyId, outgoing.Direction) is { } already)
+                {
+                    SetError(PluginConfig.AlreadyPairedMessage(already));
+                    return;
+                }
 
                 var pair = await relay.ConsumeInvitationAsync(invitationId, ct).ConfigureAwait(false);
                 outgoingInvitation = null;
@@ -380,7 +391,12 @@ public sealed class PairingService
         pairing.PeerName = peerName;
         pairing.PeerWorld = peerWorld;
         pairing.PeerTriggerPhrase = peerTriggerPhrase;
+        // A new epoch starts over with just the character that paired; alts are announced again by their records.
+        pairing.ClearCharacters();
+        pairing.EnsureCharactersMigrated();
         pairing.Paired = true;
+        pairing.RecordPairedFrom = true;
+        config.LinkCurrentCharacterRequested = true;
         // The first pairing becomes active by default.
         if (existing is null)
         {
@@ -398,6 +414,7 @@ public sealed class PairingService
         if (!pairing.IsPaired) return;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.ClearCharacters();
         config.SaveNow();
         PairingEnded?.Invoke();
         // Ending an unrelated pairing never touches the collar.
@@ -444,6 +461,7 @@ public sealed class PairingService
         pairing.PairIdHash = null;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.ClearCharacters();
         config.SaveNow();
         PairingEnded?.Invoke();
         if (config.CollarOwningPairingId == pairing.Id)

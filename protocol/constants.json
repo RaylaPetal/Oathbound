@@ -56,6 +56,7 @@
       "info": "\"oathbound-relay-catalog-v1\" || pairIdHash || requestId, UTF-8 concatenation",
       "outputLengthBytes": 32,
       "pushInfo": "\"oathbound-relay-catalog-push-v1\" || pairIdHash || receiveKeyId, UTF-8 concatenation (catalog-push only; catalog-response keeps the info above)",
+      "pairCharactersInfo": "\"oathbound-relay-characters-v1\" || pairIdHash || pairEpoch (decimal), UTF-8 concatenation; salt is SHA-256(UTF-8 of pairIdHash + \"|\" + pairEpoch); the shared secret is static ECDH between the two members' device keys, so both derive the same key",
       "rulebookInfo": "\"oathbound-relay-rulebook-push-v1\" (rulebook-push) or \"oathbound-relay-rulebook-report-v1\" (rulebook-report) || pairIdHash || receiveKeyId, UTF-8 concatenation; salt is SHA-256(receivePublicKeyRaw || senderEphemeralPublicKeyRaw)"
     },
     "aead": {
@@ -63,6 +64,7 @@
       "nonceLengthBytes": 12,
       "nonceGeneration": "CSPRNG per encryption, never reused for the same derived key",
       "tagLengthBytes": 16,
+      "pairCharactersAad": "JCS({pairIdHash, pairEpoch, side: \"owner\" | \"sub\", seq}) of the record's request; the record is the plain JSON (no compression), stored as {nonce, ciphertext} base64url",
       "additionalAuthenticatedData": "JCS(catalog-response envelope with ciphertextDigest/nonce/signature fields removed), binding ciphertext to its envelope metadata"
     },
     "compression": {
@@ -98,7 +100,10 @@
     "picturesPerPairMaxBytes": 12582912,
     "pictureUnreferencedGraceSeconds": 86400,
     "pictureIdleExpirySeconds": 2592000,
-    "pictureFetchBatchMax": 16
+    "pictureFetchBatchMax": 16,
+    "pairCharactersCiphertextMaxBytes": 4096,
+    "myCharactersMax": 20,
+    "peerCharactersMax": 32
   },
   "pairingCode": {
     "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",

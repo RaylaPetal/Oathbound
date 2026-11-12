@@ -186,4 +186,41 @@ describe("cross-runtime crypto vectors", () => {
     expect(Buffer.from(await crypto.subtle.digest("SHA-256", plaintext)).toString("hex")).toBe(v.plaintextSha256Hex);
     expect(Buffer.from(blob.subarray(0, 12)).toString("base64url")).toBe(v.nonceBase64Url);
   });
+
+  it("derives the same pair-characters key from either device and decrypts the sample record", async () => {
+    const e = vectors.ecdhHkdfAesGcmCatalogEnvelope;
+    const v = vectors.pairCharacters;
+    const ecdh = { name: "ECDH", namedCurve: "P-256" };
+    const clean = (j: { kty: string; crv: string; x: string; y: string }) => ({ kty: j.kty, crv: j.crv, x: j.x, y: j.y });
+    const enc = new TextEncoder();
+
+    const derive = async (privateJwk: unknown, publicJwk: { kty: string; crv: string; x: string; y: string }) => {
+      const priv = await crypto.subtle.importKey("jwk", privateJwk as JsonWebKey, ecdh, false, ["deriveBits"]);
+      const pub = await crypto.subtle.importKey("jwk", clean(publicJwk), ecdh, true, []);
+      // workers-types spells the ECDH param `$public`; the runtime (and the WebCrypto spec) reads `public`.
+      const shared = await crypto.subtle.deriveBits({ name: "ECDH", public: pub } as never, priv, 256);
+      const salt = await crypto.subtle.digest("SHA-256", enc.encode(v.pairIdHash + "|" + v.pairEpoch));
+      const hk = await crypto.subtle.importKey("raw", shared, "HKDF", false, ["deriveBits"]);
+      const key = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: enc.encode(v.infoUtf8) }, hk, 256);
+      return { shared: Buffer.from(shared).toString("hex"), salt: Buffer.from(salt).toString("hex"), key: Buffer.from(key).toString("hex") };
+    };
+
+    expect(v.infoUtf8).toBe("oathbound-relay-characters-v1" + v.pairIdHash + v.pairEpoch);
+    const fromSub = await derive(e.subEphemeralPrivateKeyJwk, e.ownerEphemeralPublicKeyJwk);
+    const fromOwner = await derive(e.ownerEphemeralPrivateKeyJwk, e.subEphemeralPublicKeyJwk);
+    expect(fromSub).toEqual(fromOwner);
+    expect(fromSub.shared).toBe(v.sharedSecretHex);
+    expect(fromSub.salt).toBe(v.saltSha256Hex);
+    expect(fromSub.key).toBe(v.derivedAesKeyHex);
+
+    const aad = toCanonicalJson({ pairIdHash: v.pairIdHash, pairEpoch: v.pairEpoch, side: v.side, seq: v.seq });
+    expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
+    const key = await crypto.subtle.importKey("raw", Buffer.from(v.derivedAesKeyHex, "hex"), "AES-GCM", false, ["decrypt"]);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 },
+      key,
+      Buffer.from(v.ciphertextWithTagBase64Url, "base64url"),
+    );
+    expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
+  });
 });

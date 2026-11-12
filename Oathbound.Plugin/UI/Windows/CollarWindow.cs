@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.Relay;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
@@ -237,6 +238,7 @@ public class CollarWindow : Window, IDisposable
         DrawPairingsList(config);
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.MainPairing);
+        DrawCharacterPrompts(config);
         DrawSafewordWarnings(config);
         DrawCollarWarnings(config);
         DrawSubControlToggle();
@@ -267,6 +269,7 @@ public class CollarWindow : Window, IDisposable
             }
             TutorialService.Anchor(TutorialAnchors.MainChannel);
             IconGlyph.HelpMarker("The chat channel your commands go out on. Your Sub listens on all of them.");
+            DrawSendTarget(config);
             DrawTeleportHeaderAction();
         }
 
@@ -315,6 +318,64 @@ public class CollarWindow : Window, IDisposable
                 plugin.ChatCommandListener.DismissPeerUnpairedNotice(pairingId);
             ImGui.PopID();
         }
+    }
+
+    /// Linking the logged-in character, and (Sub side) confirming characters an Owner says are theirs.
+    private void DrawCharacterPrompts(PluginConfig config)
+    {
+        var records = plugin.CharacterRecords;
+        if (records.NeedsLinkPrompt && records.Current is { } current)
+        {
+            ImGui.PushID("linkCharacter");
+            IconGlyph.WrappedColored(Theme.Warning, $"{current} isn't linked to your pairings yet. Link it so they can reach you on this character?");
+            if (ImGui.Button("Link")) records.LinkCurrent();
+            IconGlyph.HelpMarker("Your pairings learn this character is also you. Your restrictions follow you to every character either way.");
+            ImGui.SameLine();
+            if (ImGui.Button("Not now")) records.NotNowForCurrent();
+            ImGui.SameLine();
+            if (ImGui.Button("Never for this character")) records.NeverForCurrent();
+            ImGui.PopID();
+        }
+
+        foreach (var (pairing, character) in CharacterRecordService.PendingOwnerCharacters(config).ToList())
+        {
+            ImGui.PushID($"pendingOwnerCharacter_{pairing.Id}_{character}");
+            var owner = pairing.ConfirmedCharacters.FirstOrDefault()?.ToString() ?? "Your Owner";
+            IconGlyph.WrappedColored(Theme.Warning, $"{owner} says {character} is also them. Its commands are ignored until you confirm.");
+            if (ImGui.Button("Confirm")) records.Confirm(pairing, character);
+            IconGlyph.HelpMarker("Commands from that character will count exactly like ones from your Owner. You can remove it again in Settings.");
+            ImGui.SameLine();
+            if (ImGui.Button("Reject")) records.Reject(pairing, character);
+            ImGui.PopID();
+        }
+    }
+
+    /// Owner side: which of the Sub's characters tells go to, with a pin to override it.
+    private void DrawSendTarget(PluginConfig config)
+    {
+        if (config.ActivePairing is not { Direction: PairingDirection.OwnerSide } pairing) return;
+        var confirmed = pairing.ConfirmedCharacters.ToList();
+        if (confirmed.Count < 2) return;
+
+        var pinned = confirmed.FirstOrDefault(c => c.Is(pairing.PinnedTargetName, pairing.PinnedTargetWorld));
+        var labels = new[] { $"Automatic ({pairing.PeerName}@{pairing.PeerWorld})" }.Concat(confirmed.Select(c => c.ToString())).ToArray();
+        var index = pinned is null ? 0 : confirmed.IndexOf(pinned) + 1;
+        Layout.ItemWidth(260);
+        if (ImGui.Combo("Send to##sendTarget", ref index, labels, labels.Length))
+            plugin.CharacterRecords.Pin(pairing, index == 0 ? null : confirmed[index - 1]);
+        IconGlyph.HelpMarker("Automatic follows whichever of your Sub's characters they were last on: the one their plugin last reported, or the one they last sent you a tell from.");
+        IconGlyph.WrappedDisabled(SeenText(pairing));
+    }
+
+    private static string SeenText(PairingState pairing)
+    {
+        var target = pairing.FindPeerCharacter(pairing.PeerName, pairing.PeerWorld);
+        var presence = target is not null && target.Is(pairing.PresenceName, pairing.PresenceWorld) ? pairing.PresenceAt : 0;
+        var seen = Math.Max(presence, target?.LastSeenAt ?? 0);
+        if (seen == 0) return $"Sending to {pairing.PeerName}@{pairing.PeerWorld}.";
+        var ago = TimeSpan.FromSeconds(Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - seen));
+        var text = ago.TotalMinutes < 1 ? "just now" : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago" : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago" : $"{(int)ago.TotalDays}d ago";
+        return $"Sending to {pairing.PeerName}@{pairing.PeerWorld}, last seen {text}.";
     }
 
     /// Owner side: a Sub's safeword, shown until dismissed, for every Sub rather than only the active one.

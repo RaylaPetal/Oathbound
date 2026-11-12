@@ -35,6 +35,7 @@ interface ProtocolConstants {
     pictureUnreferencedGraceSeconds: number;
     pictureIdleExpirySeconds: number;
     pictureFetchBatchMax: number;
+    pairCharactersCiphertextMaxBytes: number;
   };
 }
 
@@ -77,3 +78,4 @@ export const PICTURES_PER_PAIR_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.pictures
 export const PICTURE_UNREFERENCED_GRACE_SECONDS = PROTOCOL.sizeAndExpiryLimits.pictureUnreferencedGraceSeconds;
 export const PICTURE_IDLE_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.pictureIdleExpirySeconds;
 export const PICTURE_FETCH_BATCH_MAX = PROTOCOL.sizeAndExpiryLimits.pictureFetchBatchMax;
+export const PAIR_CHARACTERS_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.pairCharactersCiphertextMaxBytes;

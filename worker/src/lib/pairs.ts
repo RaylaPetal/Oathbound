@@ -25,6 +25,10 @@ export interface PairRow {
   cage_ends_at: number | null;
   safeword_at: number | null;
   safeword_mood: SafewordMood | null;
+  owner_characters: string | null;
+  owner_characters_seq: number | null;
+  sub_characters: string | null;
+  sub_characters_seq: number | null;
 }
 
 export type CollarState = "locked" | "unlocked" | "broken";

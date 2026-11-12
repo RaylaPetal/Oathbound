@@ -147,6 +147,7 @@ public sealed class Plugin : IDalamudPlugin
     public BlindfoldService BlindfoldService { get; }
     public RelayActivity RelayActivity { get; } = new();
     private readonly CollarStatusReporter collarStatusReporter;
+    public CharacterRecordService CharacterRecords { get; }
     public StatusIndicatorState StatusIndicators { get; }
     private readonly WorldStrokeRenderer worldStrokes;
     private readonly LeashRenderer leashRenderer;
@@ -247,10 +248,12 @@ public sealed class Plugin : IDalamudPlugin
         OwnerSafewordAlerts = new OwnerSafewordAlerts(Configuration, OwnerStatusEstimates);
         RevocationService.PairStatusFetched += OwnerSafewordAlerts.OnPairStatus;
         RevocationService.PairStatusFetched += RelayActivity.Update;
+        CharacterRecords = new CharacterRecordService(Configuration, RelayClient, DeviceIdentityService);
+        RevocationService.PairStatusFetched += CharacterRecords.OnPairStatus;
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         cageStatusReporter = new CageStatusReporter(Configuration, RelayClient, CageService);
         leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
-        leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, ChatComposer, ChatSender);
+        leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, TeleportCommand, ChatComposer, ChatSender);
         // One tell to the Owner who set the lock; failed tries and wrong keys send nothing.
         RestraintCommand.StruggledFree += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleFreeWord, restraint);
         RestraintCommand.KeyUnlocked += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleKeyWord, restraint);
@@ -486,6 +489,7 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched -= OwnerCageStatus.Update;
         RevocationService.PairStatusFetched -= OwnerSafewordAlerts.OnPairStatus;
         RevocationService.PairStatusFetched -= RelayActivity.Update;
+        RevocationService.PairStatusFetched -= CharacterRecords.OnPairStatus;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
         RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
         RulebookService.Dispose();
@@ -588,6 +592,7 @@ public sealed class Plugin : IDalamudPlugin
 
         UpdateQuickAccessText();
         collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
+        CharacterRecords.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         cageStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         safewordNotifier.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         sharedStatusPublisher.OnFrameworkUpdate();
@@ -719,6 +724,11 @@ public sealed class Plugin : IDalamudPlugin
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         if (Configuration.PendingRelayOperations.RemoveAll(o => o.ExpiresAt <= now) > 0)
             changed = true;
+        foreach (var pairing in Configuration.Pairings.Where(p => p.IsPaired && p.PeerCharacters.Count == 0))
+        {
+            pairing.EnsureCharactersMigrated();
+            changed = true;
+        }
 
         foreach (var cmd in Configuration.QuickCommands.Gestures)
         {

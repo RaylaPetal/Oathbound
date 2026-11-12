@@ -50,9 +50,9 @@ public sealed class StatusIndicatorState
         string? world = null;
         foreach (var p in config.Pairings)
         {
-            if (p.Direction != PairingDirection.OwnerSide || !p.IsPaired || !string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (p.Direction != PairingDirection.OwnerSide || !p.IsPaired || !p.HasConfirmedName(name)) continue;
             world ??= character.HomeWorld.ValueNullable?.Name.ExtractText();
-            if (!string.Equals(p.PeerWorld, world, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!p.IsConfirmedCharacter(name, world)) continue;
             pairing = p;
             break;
         }
@@ -86,7 +86,7 @@ public sealed class StatusIndicatorState
             if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
             if (estimates.For(pairing) is not { Leashed: true } estimate) continue;
             // Paused on the Sub's side, so no line, even with the Sub standing right here.
-            var sub = estimate.PauseInDuties && TeleportDestinations.InDuty() ? null : FindPlayer(pairing.PeerName!, pairing.PeerWorld!);
+            var sub = estimate.PauseInDuties && TeleportDestinations.InDuty() ? null : FindSub(pairing);
             yield return (pairing.Id, sub, me, estimate.LeashLength);
             if (sub is not null)
                 drawn.Add(sub.GameObjectId);
@@ -122,10 +122,15 @@ public sealed class StatusIndicatorState
         {
             if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
             if (estimates.For(pairing) is not { Restrained: true, Cuffs: not CuffSet.None } estimate) continue;
-            if (FindPlayer(pairing.PeerName!, pairing.PeerWorld!) is { } sub)
+            if (FindSub(pairing) is { } sub)
                 yield return (sub, estimate.Cuffs);
         }
     }
+
+    /// The send target if it's here, else any other confirmed character of the Sub that is.
+    private static IPlayerCharacter? FindSub(PairingState pairing) =>
+        FindPlayer(pairing.PeerName!, pairing.PeerWorld!) ??
+        pairing.ConfirmedCharacters.Select(c => FindPlayer(c.Name, c.World)).FirstOrDefault(pc => pc is not null);
 
     private static IPlayerCharacter? FindPlayer(string name, string world)
     {

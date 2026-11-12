@@ -61,6 +61,9 @@ public sealed class FollowCommand
     private ulong followedObjectId;
     /// Object ids change between areas, so the Owner is found again by name.
     private string? ownerName;
+
+    /// The Owner character actually being followed, which can differ from the pairing's send target.
+    public string? FollowedOwnerName => ownerName;
     private Guid ownerPairingId;
 
     /// The Owner's latest leash travel, retried while paused on the Sub's area change or combat end.
@@ -73,6 +76,10 @@ public sealed class FollowCommand
     private string? leashMoodleOverride;
     private bool wasInCombat;
     private bool pauseNotified;
+    /// Codes the Owner was already sent during this pause; cleared on re-attach and release.
+    private readonly HashSet<TeleportRefusal> pauseCodesSent = [];
+    /// False for a trip from a local test, which never reports to the Owner; its kept trip inherits this.
+    private bool tripReportable = true;
     private int requestedLength = LengthOption.DefaultYalms;
     /// From the Owner's `duty:pause`: while the Sub is in a duty the leash waits, even with the Owner right there.
     private bool pauseInDuties;
@@ -138,6 +145,25 @@ public sealed class FollowCommand
     /// Raised once whenever an engaged leash ends, with its pairing and why.
     public event Action<Guid, LeashEnd>? LeashEnded;
 
+    /// A leash trip couldn't happen and the leash paused; raised at most once per code per pause.
+    public event Action<Guid, TeleportRefusal>? LeashPaused;
+
+    private void ReportPause(TeleportRefusal code)
+    {
+        if (state == LeashState.Released || !tripReportable || !pauseCodesSent.Add(code))
+            return;
+        LeashPaused?.Invoke(ownerPairingId, code);
+    }
+
+    /// A leash travel from the Owner this Sub is leashed to, refused before reaching TravelTo.
+    public void ReportTravelRefused(Guid pairingId, TeleportRefusal code)
+    {
+        if (state == LeashState.Released || pairingId != ownerPairingId)
+            return;
+        tripReportable = true;
+        ReportPause(code);
+    }
+
     /// Read live so lowering the Sub's limit applies to the current leash immediately.
     public float EffectiveLength =>
         Math.Min(requestedLength, Math.Clamp(config.Aliases.Follow.MaxLeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms));
@@ -162,7 +188,10 @@ public sealed class FollowCommand
         if (!movementLock.IsSteerAvailable || source is null || string.IsNullOrEmpty(peerName))
             return false;
 
-        var owner = Plugin.ObjectTable.FirstOrDefault(o => string.Equals(o.Name.TextValue, peerName, StringComparison.OrdinalIgnoreCase));
+        // The send target first, then any other confirmed character of the Owner standing here.
+        var owner = new[] { peerName }.Concat(source.ConfirmedCharacters.Select(c => c.Name))
+            .Select(name => Plugin.ObjectTable.FirstOrDefault(o => o is IPlayerCharacter && string.Equals(o.Name.TextValue, name, StringComparison.OrdinalIgnoreCase)))
+            .FirstOrDefault(o => o is not null);
         if (owner is null)
         {
             Plugin.Log.Warning($"Leash refused: paired Owner '{peerName}' is not a targetable player in the current area.");
@@ -228,6 +257,7 @@ public sealed class FollowCommand
         ownerName = null;
         keptTrip = null;
         pauseNotified = false;
+        pauseCodesSent.Clear();
         crumbs.Clear();
         runtimeState.MovementLockActive = false;
         // State is already Released, so the journey's end event is ignored.
@@ -239,14 +269,15 @@ public sealed class FollowCommand
     }
 
     /// Only for the Owner this Sub is leashed to. A journey that can't start pauses the leash and keeps the trip.
-    public (bool Success, string? Reason) TravelTo(TeleportTarget destination, PairingState? source)
+    public (bool Success, string? Reason) TravelTo(TeleportTarget destination, PairingState? source, bool reportable)
     {
         if (state == LeashState.Released)
             return (false, "Not leashed - leash travel ignored.");
-        if (source is null || !string.Equals(source.PeerName, ownerName, StringComparison.OrdinalIgnoreCase))
+        if (source is null || source.Id != ownerPairingId || !source.HasConfirmedName(ownerName))
             return (false, "Not leashed to the sender - leash travel ignored.");
 
         keptTrip = (destination, source.Id);
+        tripReportable = reportable;
         if (FindOwner() is { } owner && Plugin.ObjectTable.LocalPlayer is { } player &&
             Vector2.Distance(Ground(player.Position), Ground(owner.Position)) <= ReattachReach)
         {
@@ -260,13 +291,14 @@ public sealed class FollowCommand
             return (true, null);
         }
 
-        var (success, reason) = StartTrip(destination, source);
+        var (success, reason, code) = StartTrip(destination, source);
         if (success)
             return (true, null);
 
         Plugin.Log.Info($"Leash paused: leash travel couldn't start ({reason}).");
         EnterWaiting(notify: false);
         pauseNotified = true;
+        ReportPause(code);
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Leash paused",
@@ -276,7 +308,7 @@ public sealed class FollowCommand
         return (false, reason);
     }
 
-    private (bool Success, string? Reason) StartTrip(TeleportTarget destination, PairingState source)
+    private (bool Success, string? Reason, TeleportRefusal Code) StartTrip(TeleportTarget destination, PairingState source)
     {
         StopFollowing();
         var result = teleport.ApplyLeashTravel(destination, source);
@@ -295,11 +327,13 @@ public sealed class FollowCommand
             keptTrip = null;
             return;
         }
-        var (success, reason) = StartTrip(trip.Destination, source);
+        var (success, reason, code) = StartTrip(trip.Destination, source);
         Plugin.Log.Info(success ? "Leash: retrying the kept trip to the Owner." : $"Leash: kept trip still can't start ({reason}).");
+        if (!success)
+            ReportPause(code);
     }
 
-    private void OnLeashJourneyEnded(LeashJourneyOutcome outcome)
+    private void OnLeashJourneyEnded(LeashJourneyOutcome outcome, TeleportRefusal code)
     {
         if (state != LeashState.Traveling) return;
         // Stopping is the Sub choosing not to go, so it isn't retried.
@@ -309,6 +343,8 @@ public sealed class FollowCommand
         {
             Plugin.Log.Info($"Leash paused: the leash journey ended ({outcome}).");
             EnterWaiting();
+            if (outcome is LeashJourneyOutcome.Failed or LeashJourneyOutcome.StoppedBySub)
+                ReportPause(code);
             return;
         }
         if (!TryReattach())
@@ -332,6 +368,7 @@ public sealed class FollowCommand
         state = LeashState.Free;
         keptTrip = null;
         pauseNotified = false;
+        pauseCodesSent.Clear();
         return true;
     }
 
@@ -419,7 +456,7 @@ public sealed class FollowCommand
         if (state == LeashState.Traveling)
         {
             if (!teleport.IsLeashJourneyInProgress)
-                OnLeashJourneyEnded(LeashJourneyOutcome.Arrived);
+                OnLeashJourneyEnded(LeashJourneyOutcome.Arrived, TeleportRefusal.Other);
             return;
         }
 

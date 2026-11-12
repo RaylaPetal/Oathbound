@@ -1,12 +1,12 @@
 import type { Env } from "../env";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
-import { nowSeconds, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
+import { nowSeconds, PAIR_CHARACTERS_CIPHERTEXT_MAX_BYTES, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
 import { RelayError } from "../lib/errors";
 import { type CageState, type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow, type SafewordMood } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
 import { rulebookMailboxSummary } from "./rulebook";
-import { asRecord, isHex64, isNonNegInt, isUnixSeconds, requireField } from "../lib/validate";
+import { asRecord, type EncryptedBlob, isAeadNonce, isHex64, isNonNegInt, isUnixSeconds, requireField } from "../lib/validate";
 
 /**
  * Authenticated lookup of a pair's current epoch. pairIdHash itself is derivable locally by both
@@ -29,7 +29,7 @@ export async function fetchPair(request: Request, env: Env, pairIdHash: string):
     throw new RelayError("unauthorized");
   }
 
-  return Response.json(await pairStatusBody(env, pair, await relayActivity(env)));
+  return Response.json(await pairStatusBody(env, pair, deviceKeyId, await relayActivity(env)));
 }
 
 /**
@@ -52,13 +52,13 @@ export async function fetchPairStatusBatch(request: Request, env: Env): Promise<
   for (const { pairIdHash, pairEpoch } of parsed) {
     const pair = await pairAtEpoch(env, pairIdHash, pairEpoch);
     pairs.push(pair && isMemberOfPair(pair, deviceKeyId)
-      ? { pairIdHash, pairEpoch, pair: await pairStatusBody(env, pair, activity) }
+      ? { pairIdHash, pairEpoch, pair: await pairStatusBody(env, pair, deviceKeyId, activity) }
       : { pairIdHash, pairEpoch, error: "unauthorized" as const });
   }
   return Response.json({ type: "pair-status-batch", schemaVersion: 1, pairs });
 }
 
-async function pairStatusBody(env: Env, pair: PairRow, activity: Awaited<ReturnType<typeof relayActivity>>) {
+async function pairStatusBody(env: Env, pair: PairRow, readerDeviceKeyId: string, activity: Awaited<ReturnType<typeof relayActivity>>) {
   return {
     type: "pair",
     schemaVersion: 1,
@@ -76,10 +76,20 @@ async function pairStatusBody(env: Env, pair: PairRow, activity: Awaited<ReturnT
     cageEndsAt: pair.cage_ends_at ?? null,
     safewordAt: pair.safeword_at ?? null,
     safewordMood: pair.safeword_mood ?? null,
+    peerCharacters: peerCharacters(pair, readerDeviceKeyId),
     catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
     ...activity,
   };
+}
+
+/** Only ever the other member's record; a member never needs its own back. */
+function peerCharacters(pair: PairRow, readerDeviceKeyId: string): { seq: number; record: EncryptedBlob } | null {
+  const readerIsOwner = pair.owner_device_key_id === readerDeviceKeyId;
+  const stored = readerIsOwner ? pair.sub_characters : pair.owner_characters;
+  const seq = readerIsOwner ? pair.sub_characters_seq : pair.owner_characters_seq;
+  if (stored === null || seq === null) return null;
+  return { seq, record: JSON.parse(stored) as EncryptedBlob };
 }
 
 /** Null until the cron has run once. */
@@ -203,4 +213,46 @@ export async function putSafeword(request: Request, env: Env, pairIdHash: string
     .run();
 
   return Response.json({ type: "safeword-ack", schemaVersion: 1 });
+}
+
+const MAX_RECORD_CIPHERTEXT_CHARS = Math.ceil((PAIR_CHARACTERS_CIPHERTEXT_MAX_BYTES * 4) / 3);
+const RECORD_CIPHERTEXT = new RegExp(`^[A-Za-z0-9_-]{24,${MAX_RECORD_CIPHERTEXT_CHARS}}$`);
+
+function isCharactersRecord(value: unknown): value is EncryptedBlob {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return Object.keys(v).length === 2 && isAeadNonce(v.nonce) && typeof v.ciphertext === "string" && RECORD_CIPHERTEXT.test(v.ciphertext);
+}
+
+/**
+ * collar/alt-characters: a member device stores its own side's encrypted characters record. Either member may write,
+ * always into its own column, only while the epoch isn't revoked; the record only replaces a lower seq, so a delayed
+ * retry or a replay can't roll it back.
+ */
+export async function putPairCharacters(request: Request, env: Env, pairIdHash: string): Promise<Response> {
+  if (!isHex64(pairIdHash)) throw new RelayError("not_found");
+  const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
+  await enforceQuota(env, "deviceCharacters", deviceKeyId);
+
+  const body = asRecord(bodyJson);
+  if (body.type !== "pair-characters" || body.schemaVersion !== 1) throw new RelayError("invalid_request");
+  const pairEpoch = requireField(body, "pairEpoch", isNonNegInt);
+  const seq = requireField(body, "seq", isNonNegInt);
+  const record = requireField(body, "record", isCharactersRecord);
+
+  const pair = await pairAtEpoch(env, pairIdHash, pairEpoch);
+  // One generic answer for wrong pair, a stranger or a revoked epoch, so a caller can't tell which.
+  if (!pair || !isMemberOfPair(pair, deviceKeyId) || pair.revoked_at !== null) throw new RelayError("unauthorized");
+
+  const stored = JSON.stringify({ nonce: record.nonce, ciphertext: record.ciphertext });
+  const statement = pair.owner_device_key_id === deviceKeyId
+    ? `UPDATE pairs SET owner_characters = ?1, owner_characters_seq = ?2
+       WHERE pair_id_hash = ?3 AND pair_epoch = ?4 AND revoked_at IS NULL
+         AND (owner_characters_seq IS NULL OR ?2 > owner_characters_seq)`
+    : `UPDATE pairs SET sub_characters = ?1, sub_characters_seq = ?2
+       WHERE pair_id_hash = ?3 AND pair_epoch = ?4 AND revoked_at IS NULL
+         AND (sub_characters_seq IS NULL OR ?2 > sub_characters_seq)`;
+  const result = await env.RELAY_DB.prepare(statement).bind(stored, seq, pairIdHash, pairEpoch).run();
+
+  return Response.json({ type: "pair-characters-ack", schemaVersion: 1, stored: (result.meta.changes ?? 0) > 0 });
 }

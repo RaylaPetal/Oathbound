@@ -163,6 +163,11 @@ public sealed class CodePairingService
     {
         if (!state.IsInviter || state.Status != "needs-confirm" || state.PeerDeviceKeyId is null || state.PeerPublicKeyX is null || state.PeerPublicKeyY is null)
             return false;
+        if (config.FindActivePairingWithDevice(state.PeerDeviceKeyId, state.Direction) is { } already)
+        {
+            Fail(PluginConfig.AlreadyPairedMessage(already) + " Reject this acceptance.");
+            return false;
+        }
         try
         {
             var pair = await relay.ConsumeInvitationAsync(state.InvitationId, ct).ConfigureAwait(false);
@@ -235,6 +240,12 @@ public sealed class CodePairingService
                 Fail(invitation.Role == "owner"
                     ? "This invites you as a Sub, but your Role is Owner. Change Role in Settings to accept."
                     : "This invites you as an Owner, but your Role is Sub. Change Role in Settings to accept.");
+                return false;
+            }
+
+            if (config.FindActivePairingWithDevice(invitation.InviterDeviceKeyId, ownDirection) is { } already)
+            {
+                Fail(PluginConfig.AlreadyPairedMessage(already));
                 return false;
             }
 
@@ -385,7 +396,9 @@ public sealed class CodePairingService
                 state.PeerPublicKeyX = acceptance.AccepterPublicKey.X;
                 state.PeerPublicKeyY = acceptance.AccepterPublicKey.Y;
                 config.SaveNow();
-                OathboundChat.Print($"{character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
+                OathboundChat.Print(config.FindActivePairingWithDevice(state.PeerDeviceKeyId, state.Direction) is not null
+                    ? $"{character.Name}@{character.World} accepted your pairing code, but you're already paired with that person - reject it in Settings and have them link the character instead."
+                    : $"{character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
                 break;
             case "cancelled" or "rejected" or "consumed":
                 Remove(state);

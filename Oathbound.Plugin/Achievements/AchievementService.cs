@@ -51,7 +51,7 @@ public sealed class AchievementService
         outfit.OwnerDesignApplied += (_, _, _) => Add(StatKey.OutfitsApplied);
         gesture.OwnerAnimationPlayed += () => Add(StatKey.AnimationsApplied);
         teleport.OwnerTeleported += () => Add(StatKey.Teleported);
-        teleport.LeashJourneyEnded += outcome => { if (outcome == LeashJourneyOutcome.Arrived) Add(StatKey.LeashArrivals); };
+        teleport.LeashJourneyEnded += (outcome, _) => { if (outcome == LeashJourneyOutcome.Arrived) Add(StatKey.LeashArrivals); };
         gag.GaggedLineSent += () => Add(StatKey.GaggedLines);
         restraints.RestraintWorn += reference => { Mark(StatKey.RestraintsApplied); See(StatKey.DistinctRestraints, reference); };
         restraints.StruggledFree += (_, _) => Add(StatKey.StruggledFree);

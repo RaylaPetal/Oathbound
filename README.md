@@ -75,6 +75,15 @@ lasts 7 days.
 Pairing with someone on an older version? Open **Older version? Pair by tell** in the same place and use
 the old invitation, where both of you need to be online.
 
+**Playing more than one character?** You pair once, as a person, not once per character. The first time you
+log into another character, Oathbound asks whether to **Link** it to your pairings (or **Not now**, or **Never for
+this character**). A linked character counts as you: commands and notices find you on whichever one you're
+playing, and the Owner's tells follow the Sub to the character they were last on (the Owner can also pick one by
+hand). A Sub's new characters are accepted by the Owner's plugin automatically. An Owner's new character can't
+send the Sub anything until the Sub **Confirms** it. Everything Oathbound applies to a Sub - collar, restraints,
+cage, locks - follows them to every character, linked or not. Manage linked characters in **Settings >
+Characters**. If you're already paired with someone, link the character instead of pairing again.
+
 **Your recovery code.** After your first pairing, Oathbound shows you a recovery code. Keep it somewhere
 safe. If you reinstall the plugin or move to a new PC, enter it in **Settings > Recovery code > Restore** and
 your pairings come back. Your partners don't need to do anything. Without the code, a lost install can't
@@ -149,6 +158,10 @@ Sync tab shows whether it's up to date.
   plugin to the loser's own character - never by the other person - and skips anything held by a restraint, a lock
   or the collar. Quitting, 15 minutes without a move, unpairing, logging out or **your safeword** ends the game and
   puts every piece back.
+- **Only characters you confirmed can command you.** When your Owner links another of their characters, its
+  commands are ignored until you confirm it, and you can remove it again at any time in **Settings > Characters**
+  (even while caged - it releases nothing). Your Owner can't see which of your characters you're on unless you've
+  linked it, and logging into a character you haven't linked tells them nothing.
 - **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
   on themselves without sending anything.
 
@@ -278,7 +291,11 @@ Every command the Owner sends is one deliberate click that sends one tell, with 
 is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
 area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
 side (their safeword, or a leash their plugin couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
-leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. Apart
+leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. When a
+"leash travel" can't bring the Sub over (missing Lifestream or vnavmesh, busy, caged, the journey failed or the Sub
+stopped it), the Sub's plugin sends the Owner one short "collarleash paused" tell carrying only a reason code, at most
+once per reason while the leash stays paused. Likewise, when a Teleport the Owner sent doesn't reach them, it sends
+one "collarleash tpfail" tell with a reason code. Panic, the Owner's own revert all, and unpairing send neither. Apart
 from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The shared
 leash and status tag (see Consent & safety) isn't chat at all: it travels with your character through SimpleHeels
 and your sync plugin, never through chat or Oathbound's relay. The only
@@ -309,6 +326,9 @@ many there are, their sizes and when they change - never the pictures or which r
 encrypted activity report by itself, at most every 10 minutes and only when something changed. The relay also counts how many installs
 used it today or yesterday, as one anonymous number shown in the main window's header. It does keep,
 under an anonymous id per pairing, whether that pairing has ended and whether a locked collar is still on.
+Each side of a pairing also leaves one small record there listing its linked characters and which one it's on,
+end-to-end encrypted so only your partner's plugin can read it. It's sent when you log into a linked character and
+when you change which characters are linked.
 
 **Using third-party plugins is against FINAL FANTASY XIV's Terms of Service. Use Oathbound at your own
 risk.**

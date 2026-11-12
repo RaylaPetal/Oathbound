@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/pair-characters.schema.json",
+  "title": "Pair characters",
+  "description": "collar/alt-characters. Each member device of a pair posts its own side's encrypted characters record to /v1/pairs/{pairIdHash}/characters (request signing); the relay stores it in that member's column only when seq is greater than the stored one, and returns the other member's latest record as peerCharacters in the pair lookups. The relay can't read the record (constants.json crypto.pairCharacters).",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemaVersion", "pairEpoch", "seq", "record"],
+      "properties": {
+        "type": { "const": "pair-characters" },
+        "schemaVersion": { "const": 1 },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+        "seq": { "$ref": "common.schema.json#/$defs/monotonicSequence" },
+        "record": { "$ref": "#/$defs/encryptedRecord" }
+      }
+    },
+    "encryptedRecord": {
+      "description": "AES-256-GCM of the record JSON; ciphertext includes the 16-byte tag and is at most sizeAndExpiryLimits.pairCharactersCiphertextMaxBytes bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nonce", "ciphertext"],
+      "properties": {
+        "nonce": { "$ref": "common.schema.json#/$defs/aeadNonce" },
+        "ciphertext": { "type": "string", "pattern": "^[A-Za-z0-9_-]{24,5462}$" }
+      }
+    },
+    "peerCharacters": {
+      "description": "The other member's latest record as stored, or null if it never posted one.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seq", "record"],
+          "properties": {
+            "seq": { "$ref": "common.schema.json#/$defs/monotonicSequence" },
+            "record": { "$ref": "#/$defs/encryptedRecord" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "character": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "w"],
+      "properties": {
+        "n": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "w": { "type": "string", "minLength": 1, "maxLength": 32 }
+      }
+    },
+    "plaintext": {
+      "description": "The decrypted record. Only the two member devices ever see it. linked: this side's linked characters; unlinked: recent removals; current: index into linked of the character in use when published, or null; accepted: (sub side only) the owner characters this Sub confirmed. seq/at repeat the request's seq and the publish time.",
+      "type": "object",
+      "required": ["v", "seq", "at", "linked", "unlinked", "current"],
+      "properties": {
+        "v": { "const": 1 },
+        "seq": { "$ref": "common.schema.json#/$defs/monotonicSequence" },
+        "at": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+        "linked": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/character" } },
+        "unlinked": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/character" } },
+        "current": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "accepted": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/character" } }
+      }
+    }
+  }
+}

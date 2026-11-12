@@ -139,6 +139,7 @@ public sealed class ChatCommandListener : IDisposable
 
         if (message.LogKind == XivChatType.TellIncoming)
         {
+            NoteTellFromPairedCharacter(message.Sender);
             if (TryHandleRelayAckMessage(text, message.Sender)
                 || TryHandleRelayInviteMessage(text, message.Sender)
                 || TryHandleUnpairNoticeMessage(text, message.Sender)
@@ -166,8 +167,7 @@ public sealed class ChatCommandListener : IDisposable
         // Some chat types lack the sender's world - fall back to a name-only match, but only when unambiguous.
         var matchedPairing = senderWorld is not null
             ? config.FindPairing(senderName, senderWorld, PairingDirection.SubSide)
-            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.SubSide &&
-                string.Equals(p.PeerName, senderName, StringComparison.OrdinalIgnoreCase)));
+            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.SubSide && p.HasConfirmedName(senderName)));
         if (matchedPairing is null)
         {
             Plugin.Log.Information($"Trigger tell ignored: sender \"{senderName}\" does not match any currently-paired Owner.");
@@ -241,7 +241,7 @@ public sealed class ChatCommandListener : IDisposable
                 return;
             sub = world is not null
                 ? config.FindPairing(name, world, PairingDirection.OwnerSide)
-                : SingleOrDefaultIfUnambiguous(subs.Where(p => string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase)));
+                : SingleOrDefaultIfUnambiguous(subs.Where(p => p.HasConfirmedName(name)));
             if (sub is null || !HasTriggerWord(text, trigger = TriggerFor(sub)))
                 return;
         }
@@ -400,7 +400,7 @@ public sealed class ChatCommandListener : IDisposable
         var endedDirection = peerRole == PluginRole.Owner ? PairingDirection.SubSide : PairingDirection.OwnerSide;
         var matchedPairing = world is not null
             ? config.FindPairing(name, world, endedDirection)
-            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == endedDirection && string.Equals(p.PeerName, name, StringComparison.OrdinalIgnoreCase)));
+            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == endedDirection && p.HasConfirmedName(name)));
         if (matchedPairing is null)
             return true;
 
@@ -553,11 +553,28 @@ public sealed class ChatCommandListener : IDisposable
 
         var (word, rest) = SplitFirstToken(text[LeashOffNoticeKeyword.Length..].Trim());
         var on = word.Equals(ChatComposer.LeashOnWord, StringComparison.OrdinalIgnoreCase);
-        if (!on && !word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
+        var paused = word.Equals(ChatComposer.LeashPausedWord, StringComparison.OrdinalIgnoreCase);
+        var teleportFailed = word.Equals(ChatComposer.TeleportFailedWord, StringComparison.OrdinalIgnoreCase);
+        if (!on && !paused && !teleportFailed && !word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
             return true;
         var (name, world) = ExtractNameAndWorld(sender);
         if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
             return true;
+
+        if (paused || teleportFailed)
+        {
+            // Neither changes the estimate: a paused leash is still on.
+            var code = TeleportRefusalExtensions.FromNoticeWord(SplitFirstToken(rest).First);
+            Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+            {
+                Title = paused ? "Leash paused" : "Teleport didn't happen",
+                Content = paused
+                    ? $"{ownerPairing.PeerName}'s leash is paused: {code.ToOwnerText()}"
+                    : $"Couldn't bring {ownerPairing.PeerName} to you: {code.ToOwnerText()}",
+                Type = Dalamud.Interface.ImGuiNotification.NotificationType.Info,
+            });
+            return true;
+        }
 
         if (on)
         {
@@ -640,6 +657,8 @@ public sealed class ChatCommandListener : IDisposable
                     return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
                 if (follow.LeashedPairingId != sourcePairing?.Id)
                     NotifyNotLeashed(sourcePairing);
+                else if (!isLocalTest && sourcePairing is not null)
+                    follow.ReportTravelRefused(sourcePairing.Id, TeleportRefusal.Permission);
                 return LocalTestResult.Fail("Follow permission is not enabled.", "tried to pull you along on the leash - Follow is turned off");
             case "teleport":
                 // No outer gate: TeleportCommand owns every guard, each with its own reportable reason.
@@ -1043,7 +1062,9 @@ public sealed class ChatCommandListener : IDisposable
         if (!TeleportTarget.TryParse(rest, out var destination))
             return NotUnderstood($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" terr:<id> inst:<n> ward:<n> sub:<0|1> pos:<x>,<y>,<z>\" (your Owner may be on an older Oathbound build).");
 
-        var (success, reason) = teleport.Apply(destination, sourcePairing);
+        var (success, reason, code) = teleport.Apply(destination, sourcePairing, isLocalTest ? JourneyOrigin.Local : JourneyOrigin.Owner);
+        if (!success && !isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+            leashOffNotifier.NotifyTeleportRefused(sourcePairing, code);
         return success
             ? LocalTestResult.Ok($"On the way to your Owner on \"{destination.World}\".", $"is bringing you to them on {destination.World}")
             : LocalTestResult.Fail(reason ?? "Teleport failed.", $"tried to bring you to them - {reason ?? "the teleport failed"}");
@@ -1056,7 +1077,7 @@ public sealed class ChatCommandListener : IDisposable
             return NotUnderstood($"Unrecognized \"leash travel\" payload \"{payload}\".");
 
         var wasLeashedToSender = sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id;
-        var (success, reason) = follow.TravelTo(destination, sourcePairing);
+        var (success, reason) = follow.TravelTo(destination, sourcePairing, reportable: !isLocalTest);
         // The sender's client still thinks this Sub is leashed to them. A leash that did belong to them already sent its own notice.
         if (!success && !wasLeashedToSender)
             NotifyNotLeashed(sourcePairing);
@@ -1075,6 +1096,22 @@ public sealed class ChatCommandListener : IDisposable
     {
         if (!isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
             leashOffNotifier.NotifyNotLeashed(sourcePairing);
+    }
+
+    /// Any tell, command or not, shows which of the person's characters they're on, so replies follow them there.
+    private void NoteTellFromPairedCharacter(SeString sender)
+    {
+        var (name, world) = ExtractNameAndWorld(sender);
+        if (name is null || world is null) return;
+        var moved = false;
+        var seen = false;
+        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.IsConfirmedCharacter(name, world)))
+        {
+            seen = true;
+            moved |= pairing.NoteTellFrom(name, world);
+        }
+        if (moved) config.SaveNow();
+        else if (seen) config.SaveDisplayState();
     }
 
     private static PairingState? SingleOrDefaultIfUnambiguous(IEnumerable<PairingState> candidates)
