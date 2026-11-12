@@ -123,9 +123,9 @@ Sync tab shows whether it's up to date.
 - **Your safeword.** `/obpanic` instantly removes everything that's been applied to you:
   outfit, title, moodles, restraints, leash, animations and toys. Your collar is the one thing it leaves
   on: a locked collar (and its moodle) comes off only when the Owner who collared you sends **Collar
-  unlock**, or when that pairing ends. Your plugin also tells each of your Owners you used your safeword, with
-  one short tell and a note on the relay for an Owner who's offline. It says only "I'm okay, just stop" or
-  "Please check on me", whichever you chose under your safeword, and you can turn it off there. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
+  unlock**, or when that pairing ends. Your plugin also lets each of your Owners know you used your safeword, and
+  nothing more: a short tell so an Owner who's online knows at once, and a note on the relay for one who's
+  offline, which their plugin reads at its next check. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
   partner even if they're offline: their pairing ends the next time they log in, however long that takes.
 - **Only the two of you see the icons, the leash line, drawn cuffs and cage bounds.** They're drawn by your own clients - nobody
@@ -304,8 +304,8 @@ you accepted, or the optional "collarrulebook" tell when an Owner publishes a ru
 ticked, which only asks the Sub's plugin to pick it up right away. If you struggle free of a restraint lock, your
 plugin sends the Owner who set it one short "collarstruggle free" tell naming that restraint, and if you unlock one with
 a key your Owner gave you, one "collarstruggle key" tell naming it; failed tries and wrong keys send nothing. When you
-use your safeword, your plugin sends each of your Owners one "collarsafeword" tell carrying only your chosen "just
-stop" or "check on me" (at most once a minute; turn it off under your safeword). During a
+use your safeword, your plugin sends each of your Owners one "collarsafeword panic" tell that only says you used it
+(at most once a minute). During a
 game, the piece and game-ended `collargame` tells described under Games go out on their own. An Owner's
 **Grant leave** button (for an "ask before logging off" oath) sends one tell with the word they chose, only when
 they press it.

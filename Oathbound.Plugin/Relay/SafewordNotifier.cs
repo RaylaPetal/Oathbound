@@ -8,8 +8,8 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// Sub side: tells every Owner that panic was used - a tell for an Owner who's online, and a relay report for one
-/// who isn't. Both carry the same `at`, which is how the Owner's client counts them as one safeword.
+/// Sub side: tells every Owner that panic was used, and nothing else - a tell so an online Owner knows at once, and a
+/// relay report for one who isn't. Both carry the same `at`, which is how the Owner's client counts them as one.
 public sealed class SafewordNotifier
 {
     /// A Sub pressing the hotkey repeatedly sends one notice, not a stream of tells.
@@ -23,8 +23,8 @@ public sealed class SafewordNotifier
     private readonly ChatComposer composer;
     private readonly ChatSender sender;
 
-    /// Written from relay continuations too. In memory only: the tell already went out, the relay copy is the backup.
-    private readonly ConcurrentDictionary<Guid, (long At, SafewordMood Mood)> pending = new();
+    /// Written from relay continuations too. In memory only, so a report still unsent at unload is lost.
+    private readonly ConcurrentDictionary<Guid, long> pending = new();
     private DateTime lastNoticeUtc = DateTime.MinValue;
     private DateTime retryNotBeforeUtc;
     private int busy;
@@ -40,24 +40,21 @@ public sealed class SafewordNotifier
     /// Panic only, never unpair. Only queues work, so it can't hold up panic's reverts.
     public void OnPanic()
     {
-        if (!config.NotifyOwnersOnSafeword)
-            return;
         var now = DateTime.UtcNow;
         if (now - lastNoticeUtc < RepeatWindow)
             return;
         lastNoticeUtc = now;
 
         var at = new DateTimeOffset(now).ToUnixTimeSeconds();
-        var mood = config.SafewordMood;
         foreach (var pairing in config.Pairings.Where(p => p is { IsPaired: true, Direction: PairingDirection.SubSide }))
         {
             if (!string.IsNullOrWhiteSpace(pairing.PeerName) && !string.IsNullOrWhiteSpace(pairing.PeerWorld))
-                sender.Send(composer.ComposeSafewordNotice(pairing.PeerName, pairing.PeerWorld, mood, at));
+                sender.Send(composer.ComposeSafewordPing(pairing.PeerName, pairing.PeerWorld, at));
             if (pairing.PairIdHash is not null)
-                pending[pairing.Id] = (at, mood);
+                pending[pairing.Id] = at;
         }
         retryNotBeforeUtc = DateTime.MinValue;
-        Plugin.Log.Information($"Safeword notice sent ({ChatComposer.SafewordMoodWord(mood)}).");
+        Plugin.Log.Information("Safeword notice sent.");
     }
 
     public void OnFrameworkUpdate(CancellationToken ct)
@@ -66,23 +63,23 @@ public sealed class SafewordNotifier
             return;
         if (Interlocked.Exchange(ref busy, 1) == 1)
             return;
-        var (pairingId, report) = pending.First();
+        var (pairingId, at) = pending.First();
         if (config.FindPairingById(pairingId) is not { IsPaired: true, Direction: PairingDirection.SubSide, PairIdHash: not null } pairing)
         {
             pending.TryRemove(pairingId, out _);
             Interlocked.Exchange(ref busy, 0);
             return;
         }
-        Plugin.FireAndForget(SendAsync(pairing, report.At, report.Mood, ct));
+        Plugin.FireAndForget(SendAsync(pairing, at, ct));
     }
 
-    private async Task SendAsync(PairingState pairing, long at, SafewordMood mood, CancellationToken ct)
+    private async Task SendAsync(PairingState pairing, long at, CancellationToken ct)
     {
         try
         {
-            await relay.PutSafewordAsync(pairing.PairIdHash!, pairing.PairEpoch, at, ChatComposer.SafewordMoodWord(mood), ct).ConfigureAwait(false);
+            await relay.PutSafewordAsync(pairing.PairIdHash!, pairing.PairEpoch, at, ChatComposer.SafewordRelayMood, ct).ConfigureAwait(false);
             // A newer safeword queued meanwhile stays queued.
-            pending.TryRemove(new(pairing.Id, (at, mood)));
+            pending.TryRemove(new(pairing.Id, at));
         }
         catch (RelayException ex)
         {

@@ -388,7 +388,6 @@ public class CollarWindow : Window, IDisposable
                 t => ImGui.TextColored(Theme.StatusMissing, t));
             if (ImGui.Button("Dismiss"))
                 plugin.OwnerSafewordAlerts.Dismiss(pairing);
-            IconGlyph.WrappedColored(Theme.StatusMissing, OwnerSafewordAlerts.MoodText(pairing.LastSafewordMood));
             ImGui.PopID();
         }
     }

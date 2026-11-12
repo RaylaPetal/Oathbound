@@ -21,9 +21,6 @@ public enum PluginRole
 }
 
 /// Which side of a specific pairing this device is on, independent of its Role.
-/// Wire words "stop" and "checkin".
-public enum SafewordMood { Stop, CheckIn }
-
 public enum PairingDirection
 {
     OwnerSide,
@@ -81,7 +78,6 @@ public class PairingState
 
     /// Owner side: the Sub's latest safeword, from a tell or the relay; 0 = none. A notice not newer than this is a duplicate.
     public long LastSafewordAt { get; set; }
-    public SafewordMood LastSafewordMood { get; set; }
     /// The banner shows while LastSafewordAt is newer than this.
     public long SafewordDismissedAt { get; set; }
 
@@ -1147,9 +1143,6 @@ public class PluginConfig : IPluginConfiguration
     /// Case-insensitive. Unset means `/obpanic` always triggers - a missing safeword must never block panic.
     public string? PanicSafeword { get; set; }
 
-    /// Sub side: tell every Owner (by tell and through the relay) when panic is used.
-    public bool NotifyOwnersOnSafeword { get; set; } = true;
-    public SafewordMood SafewordMood { get; set; } = SafewordMood.Stop;
 
     /// Legacy; only seeds the mod picker during migration.
     public List<string> GestureFolderAllowlist { get; set; } = new();
@@ -1252,7 +1245,7 @@ public class PluginConfig : IPluginConfiguration
 
     public static string AlreadyPairedMessage(PairingState existing) =>
         $"You're already paired with {existing.ConfirmedCharacters.FirstOrDefault()?.ToString() ?? "this person"} this way. " +
-        "To use this character with them, link it instead - from the prompt at the top of the Oathbound window, or under Settings > Pairing.";
+        "To use this character with them, link it instead - from the prompt at the top of the Oathbound window, or in Settings > Characters.";
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public IEnumerable<PairingState> ActivePairings => Pairings.Where(p => p.IsPaired);

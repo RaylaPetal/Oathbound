@@ -11,6 +11,25 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.7.1", "2026-11-12", "Alt characters, teleport notices, a simpler safeword",
+        [
+            new("New",
+            [
+                "Alt characters: you pair once, as a person, not once per character. The first time you log into another character, Oathbound asks whether to link it to your pairings - Link, Not now, or Never for this character.",
+                "A linked character counts as you: your Owner's commands and your notices find you on whichever one you're playing, and tells go to the character the other person was last on.",
+                "A Sub's new characters are accepted by the Owner's plugin automatically. An Owner's new character can't send the Sub anything until the Sub confirms it, and the Sub can remove it again at any time.",
+                "Owners with a Sub on more than one character can pick which one commands go to, under Send commands via in the main window. Automatic follows the Sub.",
+                "Settings has a new Characters tab: link or unlink your own characters, and see and confirm each partner's.",
+                "Everything applied to a Sub - collar, restraints, cage, locks - follows them to every character, linked or not.",
+                "Owners: when you send Teleport and your Sub doesn't arrive, you're told why - their setup is missing Lifestream or vnavmesh, Teleport isn't allowed, they're busy or caged, there's no aetheryte or path, or they stopped it.",
+                "Owners: when a leashed Sub can't follow you to a new area, you're told why, and their leash is shown as paused rather than off.",
+            ]),
+            new("Changed",
+            [
+                "Safeword: your Owners are now only told that you used it - the choice between \"I'm okay, just stop\" and \"Please check on me\" is gone, and so is the option to turn the notice off. An Owner who's online still gets a short tell at once, and one who's offline sees it at their next check.",
+                "Pairing again with someone you're already paired with is refused, with a pointer to linking the character instead.",
+            ]),
+        ]),
         new("0.2.6.9", "2026-11-11", "A new icon",
         [
             new("New",

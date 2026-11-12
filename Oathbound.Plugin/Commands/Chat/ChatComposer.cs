@@ -127,24 +127,20 @@ public sealed class ChatComposer
 
     public const string StruggleNoticeKeyword = "collarstruggle";
 
-    /// The Sub used their safeword: only a mood word and when, so the Owner can match it to the relay's copy.
-    public string ComposeSafewordNotice(string name, string world, SafewordMood mood, long at) =>
-        $"/tell {name}@{world} {SafewordNoticeKeyword} {SafewordMoodWord(mood)} {at}";
+    /// The Sub used their safeword: only `panic` and when. Older Owner builds don't know `panic` and swallow it unread,
+    /// then learn of it from the relay.
+    public string ComposeSafewordPing(string name, string world, long at) =>
+        $"/tell {name}@{world} {SafewordNoticeKeyword} {SafewordPingWord} {at}";
 
     public const string SafewordNoticeKeyword = "collarsafeword";
+    public const string SafewordPingWord = "panic";
 
-    public static string SafewordMoodWord(SafewordMood mood) => mood == SafewordMood.CheckIn ? "checkin" : "stop";
+    /// The relay's safeword report still requires a mood; it's always this one, and it's never shown.
+    public const string SafewordRelayMood = "stop";
 
-    public static bool TryParseSafewordMood(string? word, out SafewordMood mood)
-    {
-        mood = SafewordMood.Stop;
-        switch (word?.Trim().ToLowerInvariant())
-        {
-            case "stop": return true;
-            case "checkin": mood = SafewordMood.CheckIn; return true;
-            default: return false;
-        }
-    }
+    /// `panic`, or the `stop` / `checkin` older Sub builds send; all of them only mean the safeword was used.
+    public static bool IsSafewordWord(string? word) =>
+        word?.Trim().ToLowerInvariant() is SafewordPingWord or "stop" or "checkin";
 
     public string ComposeGame(string name, string world, string body) => $"/tell {name}@{world} {Games.GamesService.Keyword} {body}";
     public const string StruggleFreeWord = "free";

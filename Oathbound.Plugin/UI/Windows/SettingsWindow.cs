@@ -14,7 +14,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-public enum SettingsTab { Identity, Permissions, Tos, Test }
+public enum SettingsTab { Identity, Characters, Permissions, Tos, Test }
 
 /// Role, pairing, trigger phrase, permissions and acknowledgements. Visible regardless of Role.
 public class SettingsWindow : Window, IDisposable
@@ -136,6 +136,15 @@ public class SettingsWindow : Window, IDisposable
                 DrawTutorialCard(config);
             using (Section.Begin("achievementsCard"))
                 DrawAchievementsCard(config);
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Characters", TabFlags(requested, SettingsTab.Characters)))
+        {
+            IconGlyph.Text(FontAwesomeIcon.Users, "Characters");
+            ImGui.Separator();
+            using (Section.Begin("characters"))
+                DrawCharactersSection(config, config.Pairings.Where(p => p.IsPaired).ToList());
             ImGui.EndTabItem();
         }
 
@@ -267,9 +276,6 @@ public class SettingsWindow : Window, IDisposable
 
         using (Section.Begin("yourPairings", activePairings.Count > 0 ? $"Your pairings ({activePairings.Count})" : "Your pairings"))
             DrawPairingsList(config, activePairings);
-
-        using (Section.Begin("characters", "Characters"))
-            DrawCharactersSection(config, activePairings);
 
         using (Section.Begin("pairWith", "Pair with someone"))
             DrawPairWithSection(config);

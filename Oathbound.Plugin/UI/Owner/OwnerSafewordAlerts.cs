@@ -7,7 +7,7 @@ using Oathbound.Plugin.Relay;
 namespace Oathbound.Plugin.UI;
 
 /// Owner side: a Sub's safeword, from their tell or the relay. Both carry the Sub's own `at`, so the second copy of
-/// one safeword is dropped. Framework thread.
+/// one safeword is dropped. Only ever says that it was used. Framework thread.
 public sealed class OwnerSafewordAlerts
 {
     /// A tell can carry any number; one far ahead would hide every later safeword.
@@ -23,7 +23,7 @@ public sealed class OwnerSafewordAlerts
     }
 
     /// Callers have already verified the sender or the pair; this only checks the pairing's direction.
-    public void Accept(PairingState pairing, long at, SafewordMood mood)
+    public void Accept(PairingState pairing, long at)
     {
         if (pairing is not { IsPaired: true, Direction: PairingDirection.OwnerSide })
             return;
@@ -34,12 +34,10 @@ public sealed class OwnerSafewordAlerts
             return;
 
         pairing.LastSafewordAt = at;
-        pairing.LastSafewordMood = mood;
         config.Save();
         estimates.Clear(pairing.Id);
 
-        var who = pairing.PeerName ?? "Your Sub";
-        var text = $"{who} used their safeword {Ago(at)}. {MoodText(mood)}";
+        var text = $"{pairing.PeerName ?? "Your Sub"} used their safeword {Ago(at)}.";
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Safeword used",
@@ -52,8 +50,8 @@ public sealed class OwnerSafewordAlerts
 
     public void OnPairStatus(PairingState pairing, PairEnvelope pair)
     {
-        if (pair.SafewordAt is { } at && ChatComposer.TryParseSafewordMood(pair.SafewordMood, out var mood))
-            Accept(pairing, at, mood);
+        if (pair.SafewordAt is { } at)
+            Accept(pairing, at);
     }
 
     public static bool IsShowing(PairingState pairing) => pairing.LastSafewordAt > pairing.SafewordDismissedAt;
@@ -63,10 +61,6 @@ public sealed class OwnerSafewordAlerts
         pairing.SafewordDismissedAt = pairing.LastSafewordAt;
         config.Save();
     }
-
-    public static string MoodText(SafewordMood mood) => mood == SafewordMood.CheckIn
-        ? "They asked you to check on them."
-        : "They're okay and want it to stop.";
 
     public static string Ago(long at)
     {

@@ -220,7 +220,8 @@ Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarl
 a leash ends on its side, and its `collarleash paused <code>` / `collarleash tpfail <code>` notices when a leash trip or an
 Owner's Teleport doesn't reach the Owner (`LeashOffNotifier`; they ride on `collarleash` so older Owner builds hide them), the Sub's `collarleash on` notice and an Owner-written /tell from an
 accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices after struggling free of a lock or unlocking it with its key (`RestraintCommand.StruggledFree` / `KeyUnlocked`), a user-configured Reactions chat reply, the `collargame` piece report (`stripped`) and game-ended (`quit`) tells during a game (`GamesService`), the Sub's
-`collarsafeword <mood> <at>` tell to each Owner on panic (`SafewordNotifier`, opt-out, at most once a minute), and lifecycle tells tied
+generic `collarsafeword panic <at>` tell to each Owner on panic (`SafewordNotifier`, always on, at most once a minute),
+and lifecycle tells tied
 to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
 rulebooks (`Rulebook/`) run consequences on their own, but only through `ChatCommandListener.RunRulebookCommand`
 and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never chat, teleport, leash or collar) - except a presence rule's
@@ -241,8 +242,9 @@ from the pair status check. Plugin state stays per install, so everything applie
 character.
 
 The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner
-sent. Three pieces of real state flow back: the leash-off notice, and the collar and cage status the Sub's
-`CollarStatusReporter` / `CageStatusReporter` post to the relay (read by the Owner into `OwnerCollarStatusStore` /
+sent. Four pieces of real state flow back: the leash-off notice, and the collar status, cage status and safeword the
+Sub's `CollarStatusReporter` / `CageStatusReporter` / `SafewordNotifier` post to the relay (the safeword is always
+reported, and only says that it happened) (read by the Owner into `OwnerCollarStatusStore` /
 `OwnerCageStatusStore` during the pair status check). Separately, with SimpleHeels installed, `SharedStatusPublisher`
 puts the Sub's gagged/restrained/leashed flags, leash length and a hashed Owner name on an `oathbound` SimpleHeels tag
 that sync services carry to synced players; `SharedStatusReader` reads it from nearby players into

@@ -495,18 +495,19 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// `collarsafeword <mood> <at>`: only a paired Sub of an Owner-side pairing counts; anything else is swallowed unread.
+    /// `collarsafeword panic <at>` (or `stop`/`checkin` from older Sub builds): only a paired Sub of an Owner-side pairing
+    /// counts; anything else is swallowed unread.
     private bool TryHandleSafewordNoticeMessage(string text, SeString sender)
     {
         if (!text.StartsWith(ChatComposer.SafewordNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
         var (moodWord, rest) = SplitFirstToken(text[ChatComposer.SafewordNoticeKeyword.Length..].Trim());
-        if (!ChatComposer.TryParseSafewordMood(moodWord, out var mood) || !long.TryParse(SplitFirstToken(rest).First, out var at) || at <= 0)
+        if (!ChatComposer.IsSafewordWord(moodWord) || !long.TryParse(SplitFirstToken(rest).First, out var at) || at <= 0)
             return true;
         var (name, world) = ExtractNameAndWorld(sender);
         if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
             return true;
-        SafewordAlerts?.Accept(ownerPairing, at, mood);
+        SafewordAlerts?.Accept(ownerPairing, at);
         return true;
     }
 
