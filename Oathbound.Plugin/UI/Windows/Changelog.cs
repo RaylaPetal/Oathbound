@@ -11,6 +11,14 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.7.3", "2026-11-12", "Alt characters, teleport notices and more",
+        [
+            new("New",
+            [
+                "Everything from the testing builds below is now in the stable release: alt characters with the new Characters tab in Settings, Owners told why a Teleport or a leash trip didn't reach them, and a simpler safeword notice that only says it was used.",
+                "Playing more than one character? The first time you log into another one, Oathbound asks whether to link it to your pairings. See 0.2.7.1 below for how it works.",
+            ]),
+        ]),
         new("0.2.7.2", "2026-11-12", "Clearer character status",
         [
             new("Changed",
