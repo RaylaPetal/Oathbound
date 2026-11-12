@@ -335,11 +335,16 @@ public sealed class CharacterRecordService
         if (sendAccepted) dirty = true;
     }
 
-    /// Owner side: whether the Sub accepts commands from one of my characters. Before the Sub ever publishes, only
-    /// the character this pairing was made from is known to them.
-    public static bool IsAcceptedBySub(PairingState pairing, CharacterRef mine) =>
-        pairing.PeerAcceptedMine.Any(c => c.Is(mine.Name, mine.World)) ||
-        (!pairing.PeerPublishesCharacters && mine.Is(pairing.PairedFromName, pairing.PairedFromWorld));
+    public enum SubAcceptance { Confirmed, Waiting, NotReported }
+
+    /// Owner side: how the Sub sees one of my characters. Until the Sub's record arrives, only the character this
+    /// pairing was made from is known to be accepted (and for pairings made before linking existed, not even that).
+    public static SubAcceptance AcceptanceBySub(PairingState pairing, CharacterRef mine)
+    {
+        if (pairing.PeerAcceptedMine.Any(c => c.Is(mine.Name, mine.World))) return SubAcceptance.Confirmed;
+        if (pairing.PeerPublishesCharacters) return SubAcceptance.Waiting;
+        return mine.Is(pairing.PairedFromName, pairing.PairedFromWorld) ? SubAcceptance.Confirmed : SubAcceptance.NotReported;
+    }
 
     private static bool Valid(CharacterRecordEntry c) =>
         c.Name.Length is > 0 and <= 32 && c.World.Length is > 0 and <= 32;

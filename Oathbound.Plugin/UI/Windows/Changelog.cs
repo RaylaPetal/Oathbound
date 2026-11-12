@@ -11,6 +11,14 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.2.7.2", "2026-11-12", "Clearer character status",
+        [
+            new("Changed",
+            [
+                "Settings > Characters: before your partner's plugin has sent its list, your characters show as not reported yet instead of waiting for them to confirm. The character you paired from keeps working either way.",
+                "Opening the Characters tab now checks for your partners' latest characters right away.",
+            ]),
+        ]),
         new("0.2.7.1", "2026-11-12", "Alt characters, teleport notices, a simpler safeword",
         [
             new("New",

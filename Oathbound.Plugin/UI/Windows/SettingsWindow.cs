@@ -30,6 +30,7 @@ public class SettingsWindow : Window, IDisposable
     private bool inviteAsOwnerSide = true;
     private bool confirmingIdentityReset;
     private Guid? confirmingUnpairId;
+    private bool charactersTabWasOpen;
     private bool confirmingInviteReplace;
     private string triggerPhraseInput = "";
     private string testCommandInput = "";
@@ -139,7 +140,12 @@ public class SettingsWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Characters", TabFlags(requested, SettingsTab.Characters)))
+        var charactersOpen = ImGui.BeginTabItem("Characters", TabFlags(requested, SettingsTab.Characters));
+        // Opening the tab reads the partners' latest records from the relay instead of waiting for the next check.
+        if (charactersOpen && !charactersTabWasOpen)
+            plugin.OwnerCageStatus.RequestRefresh();
+        charactersTabWasOpen = charactersOpen;
+        if (charactersOpen)
         {
             IconGlyph.Text(FontAwesomeIcon.Users, "Characters");
             ImGui.Separator();
@@ -454,9 +460,17 @@ public class SettingsWindow : Window, IDisposable
             {
                 ImGui.TextDisabled("Your characters, as they see them:");
                 foreach (var mine in config.LinkedCharacters)
-                    ImGui.BulletText($"{mine} ({(CharacterRecordService.IsAcceptedBySub(pairing, mine) ? "confirmed" : "waiting for them to confirm")})");
+                {
+                    var state = CharacterRecordService.AcceptanceBySub(pairing, mine) switch
+                    {
+                        CharacterRecordService.SubAcceptance.Confirmed => "confirmed",
+                        CharacterRecordService.SubAcceptance.Waiting => "waiting for them to confirm",
+                        _ => "not reported yet",
+                    };
+                    ImGui.BulletText($"{mine} ({state})");
+                }
                 if (!pairing.PeerPublishesCharacters)
-                    IconGlyph.WrappedDisabled("Their plugin hasn't reported their characters yet. If it stays this way, it may be out of date, and only the character you paired from reaches them.");
+                    IconGlyph.WrappedDisabled("Their plugin hasn't sent its list yet. The character you paired from keeps working either way. If this doesn't change after they've logged in on 0.2.7 or later, their plugin may be out of date.");
             }
             ImGui.PopID();
         }
