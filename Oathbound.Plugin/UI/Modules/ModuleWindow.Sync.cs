@@ -564,7 +564,7 @@ public sealed partial class ModuleWindow
             if (ImGui.Button(relayService.RequestInFlight ? "Requesting..." : "Request refresh"))
                 Plugin.FireAndForget(relayService.RequestRefreshAsync(pairing, System.Threading.CancellationToken.None));
         }
-        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog by tell. They need to be online.");
+        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog now. They need to be online.");
 
         if (pairing.SubLastPublishedUnixSeconds is { } published)
             IconGlyph.WrappedDisabled($"Your Sub last shared changes: {DateTimeOffset.FromUnixTimeSeconds(published).LocalDateTime:g}.");

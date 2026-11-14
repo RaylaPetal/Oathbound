@@ -11,7 +11,8 @@ public static class CommandSelector
 {
     public enum ResolutionStatus { Success, Missing, Ambiguous, Malformed }
     public readonly record struct GestureResolution(ResolutionStatus Status, GestureCatalogEntry? Entry);
-    public const int MaxCommandLength = 400;
+    /// Longest command an editor accepts; Fits is the real limit, in bytes.
+    public const int MaxCommandLength = 4000;
     public static string Quote(string value) => $"\"{value.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
 
     public static bool TryRead(string text, out string value, out string remainder)
@@ -41,7 +42,8 @@ public static class CommandSelector
         return matches.Count == 1 ? matches[0] : null;
     }
 
-    public static bool Fits(string command) => command.Length <= MaxCommandLength;
+    /// Fits in one relay frame.
+    public static bool Fits(string command) => Encoding.UTF8.GetByteCount(command) <= Relay.PeerMessageCrypto.MaxTextBytes;
 
     public static string GestureLabel(string mod, string group, string animation, GestureTrigger? trigger) =>
         $"{mod} — {group} — {animation}" + (trigger is null ? "" : $" — {trigger.DisplayName}");

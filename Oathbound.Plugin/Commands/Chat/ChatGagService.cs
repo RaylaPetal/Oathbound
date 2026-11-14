@@ -168,7 +168,7 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
         if (command.Equals("/tell", StringComparison.OrdinalIgnoreCase)
             || command.Equals("/t", StringComparison.OrdinalIgnoreCase))
         {
-            // Names contain a space; ChatComposer uses Name@World, so the first whitespace after the world starts the body.
+            // Names contain a space; CommandComposer uses Name@World, so the first whitespace after the world starts the body.
             var worldSeparator = text.IndexOf('@', commandEnd + 1);
             if (worldSeparator < 0)
                 return text;

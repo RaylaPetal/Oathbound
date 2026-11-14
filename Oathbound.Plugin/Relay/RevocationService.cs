@@ -243,6 +243,25 @@ public sealed class RevocationService
         }
     }
 
+    /// One pairing, now: the relay's hint that something on it changed.
+    public async Task CheckPairingStatusAsync(PairingState pairing, CancellationToken ct)
+    {
+        if (!pairing.IsPaired || pairing.PairIdHash is null)
+            return;
+        try
+        {
+            var pair = await relay.FetchPairAtEpochAsync(pairing.PairIdHash, pairing.PairEpoch, ct).ConfigureAwait(false);
+            await ApplyPairStatusAsync(pairing, pair).ConfigureAwait(false);
+        }
+        catch (RelayException ex)
+        {
+            Plugin.Log.Information($"Pair status check skipped: {ex.Code}.");
+        }
+    }
+
+    /// The relay reported that the other person ended this pairing. Main thread.
+    public event Action<PairingState>? PairingEndedByPeer;
+
     private const int PairStatusBatchMax = 32;
     private bool batchSupported = true;
 
@@ -258,9 +277,15 @@ public sealed class RevocationService
         }
 
         Plugin.Log.Information($"Pairing with {pairing.PeerName}@{pairing.PeerWorld} ended locally: the relay reports it was unpaired.");
+        var peerName = pairing.PeerName;
+        var peerWorld = pairing.PeerWorld;
         if (EndPairingLocally is { } end)
         {
-            await Plugin.Framework.RunOnFrameworkThread(() => end(pairing)).ConfigureAwait(false);
+            await Plugin.Framework.RunOnFrameworkThread(() =>
+            {
+                end(pairing);
+                PairingEndedByPeer?.Invoke(pairing);
+            }).ConfigureAwait(false);
         }
         else
         {
@@ -270,7 +295,7 @@ public sealed class RevocationService
             config.SaveNow();
             PairingRevoked?.Invoke();
         }
-        Commands.OathboundChat.Print($"Your pairing with {pairing.PeerName}@{pairing.PeerWorld} has ended - it was unpaired.");
+        Commands.OathboundChat.Print($"Your pairing with {peerName}@{peerWorld} has ended - it was unpaired.");
     }
 
     /// Returns true if the pairing is still active afterwards.

@@ -102,14 +102,6 @@ public sealed class CharacterRecordService
         Reject(pairing, character);
     }
 
-    public void Pin(PairingState pairing, CharacterRef? character)
-    {
-        pairing.PinnedTargetName = character?.Name;
-        pairing.PinnedTargetWorld = character?.World;
-        pairing.ResolveTarget();
-        config.SaveNow();
-    }
-
     public static IEnumerable<(PairingState Pairing, PeerCharacter Character)> PendingOwnerCharacters(PluginConfig config) =>
         config.ActivePairings.Where(p => p.Direction == PairingDirection.SubSide)
             .SelectMany(p => p.PeerCharacters.Where(c => c.State == PeerCharacterState.Pending).Select(c => (p, c)));

@@ -47,11 +47,13 @@ export const QUOTA_LIMITS = {
   devicePictureOps: { windowSeconds: 3600, maxCount: 120 },
   // The per-channel upload interval already allows at most 60 rulebooks or 6 reports per hour per pair.
   rulebookUploadBytes: { windowSeconds: 3600, maxCount: 60, maxBytes: 2 * 1024 * 1024 },
-  // Counted in estimated D1 rows written (ROUTE_WEIGHTS), not requests: D1 Free fails every query after 100k
-  // rows written in a UTC day, long before Workers Free's 100k requests. 70k + 15k leaves ~15k for the cron's own
-  // writes and estimation error. Revocations have a separate reserve so ordinary abuse cannot starve safety traffic.
-  globalDailyWork: { windowSeconds: 86400, maxCount: 70000 },
-  globalDailySafety: { windowSeconds: 86400, maxCount: 15000 },
+  // Counted in estimated D1 rows written (ROUTE_WEIGHTS), not requests. Sized to Workers Paid: 31 full days of
+  // work + safety stays under D1's 50M included monthly row writes, leaving room for the cron and estimation error
+  // (scripts/capacity-model.mjs). Revocations have a separate reserve so ordinary abuse cannot starve safety traffic.
+  globalDailyWork: { windowSeconds: 86400, maxCount: 1200000 },
+  globalDailySafety: { windowSeconds: 86400, maxCount: 200000 },
+  // Live connection units (socket opens, forwarded frames, hints); sized by scripts/capacity-model.mjs.
+  globalDailyLive: { windowSeconds: 86400, maxCount: 250000 },
 } as const satisfies Record<string, QuotaLimit>;
 
 export type QuotaName = keyof typeof QUOTA_LIMITS;
@@ -138,5 +140,24 @@ export async function assertCircuitBreakerClosed(env: Env): Promise<void> {
     .first<{ count: number }>();
   if (row && row.count >= limit.maxCount * CIRCUIT_BREAKER_OPEN_RATIO) {
     throw new RelayError("service_unavailable", bucket + limit.windowSeconds - now);
+  }
+}
+
+/** One in this many live units writes the counter (charged that many times), so most frames write nothing to D1. */
+const DEFAULT_LIVE_CHARGE_SAMPLING = 16;
+
+/**
+ * Charges `units` live units by sampling; false once the day's live budget is spent. Never throws for a spent pool,
+ * so callers decide what an exhausted budget means for them.
+ */
+export async function chargeLive(env: Env, units = 1, random = Math.random()): Promise<boolean> {
+  const sampled = sampledUnits(units, Number(env.LIVE_CHARGE_SAMPLING ?? DEFAULT_LIVE_CHARGE_SAMPLING), random);
+  try {
+    if (sampled > 0) await enforceQuota(env, "globalDailyLive", "all", 0, sampled);
+    else await assertQuotaRemaining(env, "globalDailyLive", "all", units);
+    return true;
+  } catch (error) {
+    if (error instanceof RelayError && error.code === "rate_limited") return false;
+    throw error;
   }
 }

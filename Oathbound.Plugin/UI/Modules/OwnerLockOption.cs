@@ -24,7 +24,7 @@ public static class OwnerLockOption
     {
         var trimmed = command.Trim();
         return trimmed.StartsWith(GesturePrefix, StringComparison.OrdinalIgnoreCase)
-            && !trimmed[GesturePrefix.Length..].Trim().Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase);
+            && !trimmed[GesturePrefix.Length..].Trim().Equals(CommandComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase);
     }
 
     /// A title, outfit or moodle the Owner puts on, which a timer locks for a while and then takes off.

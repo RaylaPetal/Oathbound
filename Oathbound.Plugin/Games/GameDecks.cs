@@ -9,7 +9,7 @@ namespace Oathbound.Plugin.Games;
 /// Built-in cards plus the player's own. Starter ids are stable so turning one off survives updates.
 public static class GameDecks
 {
-    /// Leaves room in a tell for the name, world, keyword and session id.
+    /// Keeps a prompt to one readable line.
     public const int MaxTextLength = 200;
 
     private static GameCard Card(string id, GameCardKind kind, GameCardFor who, PromptRating rating, string text) =>
@@ -82,7 +82,7 @@ public static class GameDecks
         return pool.Count == 0 ? null : pool[Random.Shared.Next(pool.Count)];
     }
 
-    /// One line, no quotes (they delimit the text in a tell), at most MaxTextLength.
+    /// One line, no quotes (they delimit the text in a game notice), at most MaxTextLength.
     public static string Clean(string text)
     {
         var flat = string.Join(' ', text.Replace('"', '\'').Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)).Trim();

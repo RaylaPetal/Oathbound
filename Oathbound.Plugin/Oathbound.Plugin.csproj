@@ -8,7 +8,7 @@
          `dotnet build` on this csproj, an IDE's default build task, or the .slnx - instead of depending
          on everyone remembering to build through the solution file. -->
     <Platform>x64</Platform>
-    <Version>0.2.7.3</Version>
+    <Version>0.3.0.0</Version>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>Rayla Petal</Author>
     <Name>Oathbound</Name>
@@ -17,6 +17,16 @@
     <RepoUrl>https://github.com/RaylaPetal/Oathbound</RepoUrl>
     <Tags>roleplay;collar;glamourer;penumbra;honorific</Tags>
     <IconUrl>https://raw.githubusercontent.com/RaylaPetal/Oathbound/master/Oathbound.Plugin/images/icon.png</IconUrl>
+  </PropertyGroup>
+
+  <!-- `dotnet build -p:RelayTesting=true` points the plugin at the isolated testing relay (wrangler env.testing)
+       instead of staging. The release workflow sets it through GITHUB_REF_NAME: a `-testing` tag builds against the
+       testing relay, a stable tag never does. -->
+  <PropertyGroup Condition="'$(RelayTesting)' == '' and $([System.String]::Copy('$(GITHUB_REF_NAME)').EndsWith('-testing'))">
+    <RelayTesting>true</RelayTesting>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RelayTesting)' == 'true'">
+    <DefineConstants>$(DefineConstants);RELAY_TESTING</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

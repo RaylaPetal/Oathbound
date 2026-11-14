@@ -60,10 +60,10 @@ public static class RuleSentence
     {
         var arrive = Outcome(rule.Arrive);
         if (rule.LeashOnArrive) arrive = Join(arrive, $"leash you to {owner}");
-        if (!string.IsNullOrWhiteSpace(rule.ArriveTell)) arrive = Join(arrive, $"you /tell {owner} \"{rule.ArriveTell.Trim()}\"");
+        if (!string.IsNullOrWhiteSpace(rule.ArriveTell)) arrive = Join(arrive, $"you send {owner} \"{rule.ArriveTell.Trim()}\"");
         var depart = Outcome(rule.Depart);
         if (rule.UnleashOnDepart) depart = Join(depart, "take the leash off");
-        if (!string.IsNullOrWhiteSpace(rule.DepartTell)) depart = Join(depart, $"you /tell {owner} \"{rule.DepartTell.Trim()}\"");
+        if (!string.IsNullOrWhiteSpace(rule.DepartTell)) depart = Join(depart, $"you send {owner} \"{rule.DepartTell.Trim()}\"");
         var parts = new List<string>();
         Add(parts, $"When {owner} comes within {rule.RangeYalms:0} yalms", arrive);
         Add(parts, "When they leave", depart);

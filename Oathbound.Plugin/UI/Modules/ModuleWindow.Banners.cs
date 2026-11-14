@@ -47,7 +47,7 @@ public sealed partial class ModuleWindow
     {
         ImGui.SameLine();
         if (ImGui.Button($"End now##bannerEnd_{id}"))
-            plugin.ChatSender.Send(plugin.ChatComposer.Compose(command));
+            plugin.SendCommand(command);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(tooltip);
     }
@@ -201,7 +201,7 @@ public sealed partial class ModuleWindow
                         restraint.ExpiresAtUtc is { } until ? $"{RestraintLock.Format(until - DateTime.UtcNow)} left" : "locked",
                         restraint.HasKey ? "key" : null);
                     if (ImGui.Button($"Unlock##bannerUnlock_{restraint.Reference}"))
-                        plugin.ChatSender.Send(plugin.ChatComposer.Compose($"restraint unlock {restraint.Reference}"));
+                        plugin.SendCommand($"restraint unlock {restraint.Reference}");
                 }
                 return estimate.Restraints.Count > 0;
             case "toycontrol":

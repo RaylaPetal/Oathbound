@@ -221,12 +221,12 @@ public sealed partial class ModuleWindow
         var aliasList = ReferenceEquals(list, plugin.Configuration.QuickCommands.Aliases) ||
             ReferenceEquals(list, plugin.Configuration.QuickCommands.Follow);
         var reserved = aliasList && IsReserved(draftCommand);
-        var safe = ChatComposer.AllFit(plugin.ChatComposer.ComposeAll(draftCommand));
+        var safe = CommandSelector.Fits(draftCommand);
         var validTarget = draftCommand.Length > 0 && (editingQuickCategory != QuickEditCategory.Gesture || draftTarget is not null);
         if (stale) IconGlyph.WrappedColored(Theme.Warning, "This entry was removed while it was being edited.");
         else if (duplicate) IconGlyph.WrappedColored(Theme.Warning, "Another saved entry already uses this label or command.");
         else if (reserved) IconGlyph.WrappedColored(Theme.Warning, "This alias is reserved for a direct Owner command.");
-        else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This command is too long for a safe chat payload.");
+        else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This command is too long to send.");
 
         using (ImRaii.Disabled(stale || duplicate || reserved || !safe || !validTarget || editingQuickLabel.Trim().Length == 0))
         {

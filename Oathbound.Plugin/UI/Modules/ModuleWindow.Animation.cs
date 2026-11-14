@@ -197,7 +197,7 @@ public sealed partial class ModuleWindow
         ImGui.Separator();
 
         // Drawn even with nothing imported - the Sub may be held by an alias or a Custom Trigger.
-        DrawCommandRow("gestureQuickFixed", canSend, new RowCommand("Stop animation", $"gesture {ChatComposer.StopGestureWord}", FixedActionIds.StopAnimation,
+        DrawCommandRow("gestureQuickFixed", canSend, new RowCommand("Stop animation", $"gesture {CommandComposer.StopGestureWord}", FixedActionIds.StopAnimation,
             "An animation you send holds your Sub in place. This stops it and gives them their movement back."));
 
         if (quick.Count == 0)

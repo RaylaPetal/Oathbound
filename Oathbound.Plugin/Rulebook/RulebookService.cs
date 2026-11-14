@@ -29,8 +29,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     private readonly PluginConfig config;
     private readonly RulebookMailboxService mailbox;
     private readonly ChatCommandListener listener;
-    private readonly ChatComposer composer;
-    private readonly ChatSender sender;
+    private readonly CommandComposer composer;
+    private readonly PeerMessenger messenger;
     private readonly RulebookGameEvents events;
     private readonly Safety.EmoteWatcher emotes;
     private readonly Commands.GestureCommand gesture;
@@ -60,7 +60,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         public DateTime? OutOfRangeSince;
     }
 
-    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, ChatComposer composer, ChatSender sender, Safety.EmoteWatcher emotes,
+    public RulebookService(PluginConfig config, RulebookMailboxService mailbox, ChatCommandListener listener, CommandComposer composer, PeerMessenger messenger, Safety.EmoteWatcher emotes,
         Commands.GestureCommand gesture, Commands.FollowCommand follow, Commands.OutfitCommand outfit, Ipc.GlamourerIpc glamourer, Safety.SlotLockManager slotLocks,
         Func<CancellationToken> backgroundToken)
     {
@@ -73,7 +73,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         this.mailbox = mailbox;
         this.listener = listener;
         this.composer = composer;
-        this.sender = sender;
+        this.messenger = messenger;
         this.backgroundToken = backgroundToken;
         this.emotes = emotes;
         events = new RulebookGameEvents();
@@ -84,7 +84,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             pairing.Rulebook.DisabledRuleIds.Clear();
 
         listener.RulebookSink = this;
-        listener.RulebookNudgeReceived += OnNudge;
+        listener.GrantLeaveReceived += OnGrantLeave;
         mailbox.RulebookReceived += OnRulebookReceived;
         mailbox.RulebookRejected += OnRulebookRejected;
         mailbox.ReportReceived += OnReportReceived;
@@ -105,7 +105,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     public void Dispose()
     {
         listener.RulebookSink = null;
-        listener.RulebookNudgeReceived -= OnNudge;
+        listener.GrantLeaveReceived -= OnGrantLeave;
         mailbox.RulebookReceived -= OnRulebookReceived;
         mailbox.RulebookRejected -= OnRulebookRejected;
         mailbox.ReportReceived -= OnReportReceived;
@@ -127,7 +127,21 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
 
     public void CheckNow(PairingState pairing) => Plugin.FireAndForget(mailbox.CheckNowAsync(pairing, backgroundToken()));
 
-    private void OnNudge(PairingState pairing) => CheckNow(pairing);
+    /// The Owner pressed Grant leave: every open "Ask before logging off" oath of that pairing lets the Sub go.
+    private void OnGrantLeave(PairingState pairing)
+    {
+        if (!IsRunning(pairing))
+            return;
+        foreach (var (_, s, terms) in OpenOaths(pairing))
+        {
+            if (terms.Condition != OathCondition.AskBeforeLogoff)
+                continue;
+            s.LeaveGrantedUntilUnixSeconds = Now() + terms.LeaveWindowMinutes * 60L;
+            var until = DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime();
+            Notify("Leave granted", $"{pairing.PeerName} lets you log off until {until:HH:mm}.", NotificationType.Success);
+            config.Save();
+        }
+    }
 
     public void OnFrameworkUpdate()
     {
@@ -822,7 +836,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         var (name, world) = SenderOf(message.Sender);
         if (!outgoingTell && !string.Equals(name, me.Name.TextValue, StringComparison.OrdinalIgnoreCase))
             return;
-        // Lines this plugin sent by itself (automatic tells, a reaction's reply, an Owner's Custom Trigger chat)
+        // Lines this plugin sent by itself (the update reminder, a reaction's reply, an Owner's Custom Trigger chat)
         // are neither the Sub keeping nor the Sub breaking an oath.
         if (PluginOutput.ConsumeEcho(text))
             return;
@@ -863,29 +877,17 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         }
     }
 
-    /// Only the Owner's own tell, by name and home world, grants leave.
+    /// The Owner's tell keeps a conversation going for the manners oaths; it never grants leave.
     private void OnIncomingTell(Dalamud.Game.Chat.IChatMessage message)
     {
         var (name, world) = SenderOf(message.Sender);
         if (name is null)
             return;
-        var text = message.Message.TextValue;
         foreach (var pairing in SubPairings().Where(IsRunning))
         {
-            if (!string.Equals(name, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
-                || (world is not null && !string.Equals(world, pairing.PeerWorld, StringComparison.OrdinalIgnoreCase)))
-                continue;
-            lastOwnerTell[pairing.Id] = DateTime.UtcNow;
-            foreach (var (_, s, terms) in OpenOaths(pairing))
-            {
-                var phrase = terms.Phrase.Trim();
-                if (terms.Condition != OathCondition.AskBeforeLogoff || phrase.Length == 0 || !text.Contains(phrase, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                s.LeaveGrantedUntilUnixSeconds = Now() + terms.LeaveWindowMinutes * 60L;
-                var until = DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime();
-                Notify("Leave granted", $"{pairing.PeerName} lets you log off until {until:HH:mm}.", NotificationType.Success);
-                config.Save();
-            }
+            if (string.Equals(name, pairing.PeerName, StringComparison.OrdinalIgnoreCase)
+                && (world is null || string.Equals(world, pairing.PeerWorld, StringComparison.OrdinalIgnoreCase)))
+                lastOwnerTell[pairing.Id] = DateTime.UtcNow;
         }
     }
 
@@ -1318,7 +1320,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             else if (follow.Engage(pairing, Math.Clamp(rule.LeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms), pauseInDuties: rule.LeashPauseInDuties))
             {
                 Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: leashed to {pairing.PeerName} ({rule.LeashLengthYalms} yalms).");
-                sender.Send(composer.ComposeLeashOnNotice(pairing.PeerName!, pairing.PeerWorld!));
+                messenger.SendNotice(pairing, composer.ComposeLeashOnNotice());
             }
             else
                 Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: the leash couldn't start.");
@@ -1336,10 +1338,9 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         var text = (arrived ? rule.ArriveTell : rule.DepartTell).Trim();
         if (text.Length > 0)
         {
-            if (!(config.Permissions.CustomChatMessages && config.CustomChatAcknowledged))
-                Log(pairing, RulebookEventKind.ConsequenceSkipped, rule.Id, $"{label}: skipped the message - custom chat messages are off.");
-            else if (sender.Send(composer.ComposePresenceTell(pairing.PeerName!, pairing.PeerWorld!, text)))
-                Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: told {pairing.PeerName} \"{text}\".");
+            // Shown only on the Owner's client, never as game chat.
+            messenger.SendNotice(pairing, composer.ComposePresenceMessage(text));
+            Log(pairing, RulebookEventKind.ConsequenceRan, rule.Id, $"{label}: told {pairing.PeerName} \"{text}\".");
         }
     }
 
@@ -1508,25 +1509,18 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
     public event Action? Published;
     public event Action? Bought;
 
-    /// The `collarrulebook` nudge, only after a successful publish the Owner clicked.
-    public void SendNudge(PairingState pairing)
+    /// Owner's Grant leave button: one grant notice to the Sub, only on that click.
+    public void SendGrantLeave(PairingState pairing)
     {
-        if (pairing is { Direction: PairingDirection.OwnerSide, IsPaired: true, PeerName: { } name, PeerWorld: { } world })
-            sender.Send(composer.ComposeRulebookNudge(name, world));
-    }
-
-    /// Owner's Grant leave button: a plain tell with the oath's grant word, only on that click.
-    public void SendGrantLeave(PairingState pairing, string word)
-    {
-        if (pairing is { Direction: PairingDirection.OwnerSide, IsPaired: true, PeerName: { } name, PeerWorld: { } world } && word.Trim().Length > 0)
-            sender.Send(composer.ComposePresenceTell(name, world, word.Trim()));
+        if (pairing is { Direction: PairingDirection.OwnerSide, IsPaired: true })
+            messenger.SendNotice(pairing, composer.ComposeGrantLeave());
     }
 
     /// Owner: send `deck draw <pile>` or `ledger ±n reason` to the active Sub like any other command.
     public void SendOwnerCommand(string command)
     {
-        foreach (var message in composer.ComposeAll(command))
-            sender.Send(message);
+        if (config.GetActivePairing() is { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing)
+            messenger.SendCommand(pairing, composer.Compose(command));
     }
 
     private void OnReportReceived(PairingState pairing, RulebookReport report)

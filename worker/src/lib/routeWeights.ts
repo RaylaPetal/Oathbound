@@ -20,21 +20,21 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
 
   "GET /v1/pairs/:id": 2,
   "POST /v1/pairs/status": 2,
-  "POST /v1/pairs/:id/collar-status": 10,
-  "POST /v1/pairs/:id/cage-status": 10,
-  "POST /v1/pairs/:id/characters": 10,
+  "POST /v1/pairs/:id/collar-status": 12,
+  "POST /v1/pairs/:id/cage-status": 12,
+  "POST /v1/pairs/:id/characters": 12,
 
   "POST /v1/revocations": 12,
   "GET /v1/revocations/:id": 2,
 
-  "POST /v1/catalog/requests": 18,
+  "POST /v1/catalog/requests": 20,
   "GET /v1/catalog/requests/:id": 2,
   "POST /v1/catalog/requests/:id/upload": 15,
   "POST /v1/catalog/requests/:id/consume": 9,
 
-  "POST /v1/catalog/mailbox/key": 10,
+  "POST /v1/catalog/mailbox/key": 12,
   "POST /v1/catalog/mailbox/key/fetch": 6,
-  "POST /v1/catalog/mailbox/upload": 14,
+  "POST /v1/catalog/mailbox/upload": 16,
   "POST /v1/catalog/mailbox/status": 4,
   "POST /v1/catalog/mailbox/consume": 9,
 
@@ -42,9 +42,9 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "POST /v1/pictures/upload": 8,
   "POST /v1/pictures/fetch": 4,
 
-  "POST /v1/rulebook/key": 10,
+  "POST /v1/rulebook/key": 12,
   "POST /v1/rulebook/key/fetch": 4,
-  "POST /v1/rulebook/upload": 11,
+  "POST /v1/rulebook/upload": 13,
   "POST /v1/rulebook/consume": 9,
 };
 

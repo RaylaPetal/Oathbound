@@ -111,6 +111,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public DeviceIdentityService DeviceIdentityService { get; }
     public RelayClient RelayClient { get; }
+    public RelaySocket RelaySocket { get; }
+    public PeerMessenger PeerMessenger { get; }
     public PairingService PairingService { get; }
     public CodePairingService CodePairingService { get; }
     public BackupService BackupService { get; }
@@ -137,7 +139,7 @@ public sealed class Plugin : IDalamudPlugin
     public Achievements.AchievementService Achievements { get; }
     public SimpleHeelsIpc SimpleHeelsIpc { get; }
     public AchievementToastWindow AchievementToastWindow { get; }
-    public ChatComposer ChatComposer { get; }
+    public CommandComposer CommandComposer { get; }
     public ChatSender ChatSender { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
@@ -158,6 +160,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CageExitGuard cageExitGuard;
     private readonly CageStatusReporter cageStatusReporter;
     private readonly SafewordNotifier safewordNotifier;
+    private readonly OwnerSendFeedback ownerSendFeedback;
+    private readonly LegacyTellDetector legacyTellDetector;
+    /// Pairings the relay hinted about, and when to check them; a burst of hints becomes one check.
+    private readonly Dictionary<Guid, DateTime> hintedPairings = new();
     private readonly SharedStatusPublisher sharedStatusPublisher;
     private readonly SharedStatusReader sharedStatusReader;
     private readonly StatusIconRenderer statusIconRenderer;
@@ -214,6 +220,9 @@ public sealed class Plugin : IDalamudPlugin
         DeviceIdentityService.EnsureIdentity();
         RelayClient = new RelayClient(Configuration, DeviceIdentityService);
         RevocationService = new RevocationService(Configuration, RelayClient, DeviceIdentityService);
+        RelaySocket = new RelaySocket(RelayClient.RelayOrigin, () => DeviceIdentityService.DeviceKeyId, DeviceIdentityService.GetSigningKey,
+            action => Framework.RunOnFrameworkThread(action), message => Log.Information(message));
+        PeerMessenger = new PeerMessenger(Configuration, DeviceIdentityService, RelaySocket);
 
         TitleCommand = new TitleCommand(Configuration, HonorificIpc, RuntimeState);
         // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.
@@ -237,10 +246,11 @@ public sealed class Plugin : IDalamudPlugin
         CustomTriggerCommand = new CustomTriggerCommand(Configuration, TitleCommand, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand);
         RestraintThumbnailWorker = new UI.RestraintThumbnailWorker(Configuration, RestraintCommand);
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
-        ChatComposer = new ChatComposer(Configuration);
+        CommandComposer = new CommandComposer();
         ChatSender = new ChatSender();
-        OwnerToyStatus = new OwnerToyStatusTracker(Configuration, ChatSender);
-        OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, ChatSender);
+        OwnerToyStatus = new OwnerToyStatusTracker(Configuration, PeerMessenger);
+        OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, PeerMessenger);
+        ownerSendFeedback = new OwnerSendFeedback(Configuration, PeerMessenger);
         OwnerCollarStatus = new OwnerCollarStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
         OwnerCageStatus = new OwnerCageStatusStore(Configuration);
@@ -252,11 +262,11 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched += CharacterRecords.OnPairStatus;
         collarStatusReporter = new CollarStatusReporter(Configuration, RelayClient, SlotLockManager, GlamourerIpc, RuntimeState);
         cageStatusReporter = new CageStatusReporter(Configuration, RelayClient, CageService);
-        leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, ChatComposer, ChatSender);
-        leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, TeleportCommand, ChatComposer, ChatSender);
-        // One tell to the Owner who set the lock; failed tries and wrong keys send nothing.
-        RestraintCommand.StruggledFree += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleFreeWord, restraint);
-        RestraintCommand.KeyUnlocked += (pairingId, restraint) => SendRestraintNotice(pairingId, ChatComposer.StruggleKeyWord, restraint);
+        leashTravelWatcher = new LeashTravelWatcher(Configuration, OwnerStatusEstimates, CommandComposer, PeerMessenger);
+        leashOffNotifier = new LeashOffNotifier(Configuration, FollowCommand, TeleportCommand, CommandComposer, PeerMessenger);
+        // One notice to the Owner who set the lock; failed tries and wrong keys send nothing.
+        RestraintCommand.StruggledFree += (pairingId, restraint) => SendRestraintNotice(pairingId, CommandComposer.StruggleFreeWord, restraint);
+        RestraintCommand.KeyUnlocked += (pairingId, restraint) => SendRestraintNotice(pairingId, CommandComposer.StruggleKeyWord, restraint);
         StatusIndicators = new StatusIndicatorState(Configuration, RuntimeState, RestraintCommand, RestrictionRuleManager, FollowCommand, OwnerStatusEstimates);
         sharedStatusPublisher = new SharedStatusPublisher(Configuration, SimpleHeelsIpc, StatusIndicators, FollowCommand);
         sharedStatusReader = new SharedStatusReader(SimpleHeelsIpc);
@@ -267,7 +277,7 @@ public sealed class Plugin : IDalamudPlugin
         cageRenderer = new CageRenderer(this, worldStrokes);
         statusIconRenderer = new StatusIconRenderer(StatusIndicators, BlindfoldService);
         BlindfoldService.OverlayAvailable = () => statusIconRenderer.IsAvailable;
-        PairingService = new PairingService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CollarCommand, RevocationService);
+        PairingService = new PairingService(Configuration, DeviceIdentityService, CollarCommand, RevocationService);
         PairingService.PairingEnded += QueueRestraintCleanup;
         PairingService.PairingEnded += TeleportCommand.StopIfSourcePairingEnded;
         PairingService.PairingEnded += GestureCommand.StopIfSourcePairingEnded;
@@ -280,15 +290,18 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked += GestureCommand.StopIfSourcePairingEnded;
         var catalogPictures = new CatalogPictureService(Configuration, RelayClient, RestraintCommand);
-        CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, ChatComposer, ChatSender, CatalogSyncService, catalogPictures);
+        CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, CommandComposer, PeerMessenger, CatalogSyncService, catalogPictures);
         CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService, catalogPictures);
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
-        ChatCommandListener = new ChatCommandListener(Configuration, PairingService, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
+        ChatCommandListener = new ChatCommandListener(Configuration, PeerMessenger, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
         ChatCommandListener.Cage = CageService;
+        legacyTellDetector = new LegacyTellDetector(Configuration, PeerMessenger);
+        PeerMessenger.HintReceived += pairing => hintedPairings.TryAdd(pairing.Id, DateTime.UtcNow.AddSeconds(2));
+        RevocationService.PairingEndedByPeer += ChatCommandListener.NotePeerUnpaired;
         ChatCommandListener.SafewordAlerts = OwnerSafewordAlerts;
-        Games = new Games.GamesService(Configuration, ChatComposer, ChatSender, new Games.StripService(Configuration, GlamourerIpc, SlotLockManager));
+        Games = new Games.GamesService(Configuration, CommandComposer, ChatSender, PeerMessenger, new Games.StripService(Configuration, GlamourerIpc, SlotLockManager));
         ChatCommandListener.Games = Games;
         RestraintCommand.IsCaged = () => CageService.IsCaged;
         TeleportCommand.IsCaged = () => CageService.IsCaged;
@@ -302,13 +315,13 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.Games = Games;
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
-        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, ChatComposer, ChatSender, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
+        RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, CommandComposer, PeerMessenger, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
         Achievements = new Achievements.AchievementService(Configuration, FollowCommand, CageService, RestraintCommand, RestrictionRuleManager,
             RuntimeState, OwnerStatusEstimates, ChatCommandListener, OutfitCommand, GestureCommand, TeleportCommand, ChatGagService,
             RulebookService, ReactionService, CustomTriggerCommand);
         RevocationService.PairStatusFetched += RulebookService.OnPairStatus;
         PanicHandler.OnPanic = RulebookService.OnPanic;
-        safewordNotifier = new SafewordNotifier(Configuration, RelayClient, ChatComposer, ChatSender);
+        safewordNotifier = new SafewordNotifier(Configuration, RelayClient, CommandComposer, PeerMessenger);
         PanicHandler.NotifyOwners = safewordNotifier.OnPanic;
         // Runs on panic and on unpairing alike.
         PanicHandler.AfterLocalRevert += sharedStatusPublisher.Clear;
@@ -402,11 +415,21 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information("Oathbound loaded.");
     }
 
+    /// One Owner command to one Sub over the relay; OwnerSendFeedback reports what happened to it. Null when it went
+    /// out, otherwise why it couldn't.
+    public PeerDelivery? SendCommand(PairingState pairing, string command) => PeerMessenger.SendCommand(pairing, CommandComposer.Compose(command));
+
+    /// To the active pairing, when this install is its Owner.
+    public PeerDelivery? SendCommand(string command) =>
+        Configuration.GetActivePairing() is { IsPaired: true, Direction: PairingDirection.OwnerSide } pairing
+            ? SendCommand(pairing, command)
+            : PeerDelivery.NotReady;
+
     /// A real login, not just a plugin reload mid-session.
     private void SendRestraintNotice(Guid? pairingId, string word, string restraint)
     {
-        if (pairingId is { } id && Configuration.FindPairingById(id) is { IsPaired: true, Direction: PairingDirection.SubSide, PeerName: { } name, PeerWorld: { } world })
-            ChatSender.Send(ChatComposer.ComposeStruggleNotice(name, world, word, restraint));
+        if (pairingId is { } id && Configuration.FindPairingById(id) is { IsPaired: true, Direction: PairingDirection.SubSide } pairing)
+            PeerMessenger.SendNotice(pairing, CommandComposer.ComposeStruggleNotice(word, restraint));
     }
 
     private void OnLogin()
@@ -458,6 +481,9 @@ public sealed class Plugin : IDalamudPlugin
         relayBackgroundWorkCts.Cancel();
         relayBackgroundWorkCts.Dispose();
 
+        legacyTellDetector.Dispose();
+        ownerSendFeedback.Dispose();
+        RelaySocket.Dispose();
         RelayClient.Dispose();
 
         PluginInterface.UiBuilder.Draw -= DrawWindows;
@@ -590,6 +616,17 @@ public sealed class Plugin : IDalamudPlugin
             panicHotkeyWasPressed = isPressed;
         }
 
+        RelaySocket.Wanted = ClientState.IsLoggedIn && Configuration.ActivePairings.Any(p => p.PairIdHash is not null);
+        PeerMessenger.Tick();
+        if (hintedPairings.Count > 0)
+        {
+            foreach (var (id, due) in hintedPairings.Where(h => DateTime.UtcNow >= h.Value).ToList())
+            {
+                hintedPairings.Remove(id);
+                if (Configuration.FindPairingById(id) is { IsPaired: true } hinted)
+                    FireAndForget(RevocationService.CheckPairingStatusAsync(hinted, relayBackgroundWorkCts.Token));
+            }
+        }
         UpdateQuickAccessText();
         collarStatusReporter.OnFrameworkUpdate(relayBackgroundWorkCts.Token);
         CharacterRecords.OnFrameworkUpdate(relayBackgroundWorkCts.Token);

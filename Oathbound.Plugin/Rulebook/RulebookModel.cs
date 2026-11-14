@@ -246,7 +246,7 @@ public sealed class PresenceRule
     /// Like the Owner's own leash option: the leash pauses while the Sub is in a duty. An older Sub ignores it.
     public bool LeashPauseInDuties { get; set; }
     public bool UnleashOnDepart { get; set; }
-    /// Sent as a /tell to the Owner, never anywhere else.
+    /// Sent to the Owner through Oathbound, never as game chat.
     public string ArriveTell { get; set; } = "";
     public string DepartTell { get; set; } = "";
     /// Does nothing inside duties and other instanced content.

@@ -104,7 +104,7 @@ public sealed partial class ModuleWindow
         ImGui.TextDisabled(d.Seconds == 0 ? "Until removed" : $"Lasts {RestraintLock.Format(TimeSpan.FromSeconds(d.Seconds))}");
         ImGui.EndGroup();
 
-        var problem = d.Problem() ?? (CommandSelector.Fits(d.ApplyCommand()) ? null : "Too long to send in one tell - shorten the title, description or color tags.");
+        var problem = d.Problem() ?? (CommandSelector.Fits(d.ApplyCommand()) ? null : "Too long to send - shorten the title, description or color tags.");
         if (problem is not null)
             IconGlyph.WrappedColored(Theme.Warning, problem);
         ImGui.Spacing();

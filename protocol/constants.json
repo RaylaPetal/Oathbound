@@ -18,6 +18,30 @@
       "scope": "Unique per (deviceKeyId, nonce) pair; the relay rejects a reused nonce within the replay window regardless of timestamp."
     }
   },
+  "socketAuth": {
+    "description": "collar/relay-messaging: the live connection to GET /v1/socket?device={deviceKeyId}. On accept the relay sends {type:\"challenge\", nonce, serverTime}; the client must answer with {type:\"auth\", deviceKeyId, signature} within authTimeoutSeconds, signing the base string with its device key (same signature format as requestSigning). The challenge is single-use, so no nonce row is written.",
+    "baseString": "oathbound-socket-v1\\n{DEVICE_KEY_ID}\\n{CHALLENGE_NONCE}",
+    "challengeNonce": "128 random bits, base64url without padding (22 characters)",
+    "authTimeoutSeconds": 10,
+    "keepAliveSeconds": 30,
+    "keepAliveNote": "WebSocket protocol keep-alive frames; the relay never wakes for them. The text message \"ping\" is answered \"pong\" without waking the relay either."
+  },
+  "peerMessage": {
+    "description": "collar/relay-messaging: a frame between the two devices of a pairing. Static ECDH between the two device keys (as pairCharactersInfo) with its own HKDF info; the relay forwards it unread.",
+    "kdfInfo": "\"oathbound-relay-message-v1\" || pairIdHash || pairEpoch (decimal), UTF-8 concatenation; salt is SHA-256(UTF-8 of pairIdHash + \"|\" + pairEpoch)",
+    "aead": "AES-256-GCM, 12-byte random nonce, 16-byte tag",
+    "aad": "JCS({pairIdHash, pairEpoch, from: \"owner\" | \"sub\", seq, sentAt}); these five travel in the clear in the frame",
+    "plaintext": "Plain JSON {v: 1, kind: \"command\" | \"notice\", text, character: {n, w} | null}",
+    "seq": "Strictly increasing per pairing and direction; a sender uses max(last + 1, unix milliseconds) so a restored config can't reuse one",
+    "sentAt": "Unix seconds when sealed",
+    "maxTextBytes": 4096,
+    "maxFrameBytes": 8192,
+    "maxAgeSeconds": 120,
+    "heldFramesMax": 32,
+    "deviceBurstFrames": 20,
+    "deviceBurstWindowSeconds": 10,
+    "deviceHourlyFrames": 600
+  },
   "capabilitySecrets": {
     "sizeBits": 256,
     "encoding": "base64url without padding (43 characters) when transmitted; server stores only SHA-256(secretBytes) as capabilityId's paired hash.",
@@ -103,17 +127,24 @@
     "pictureFetchBatchMax": 16,
     "pairCharactersCiphertextMaxBytes": 4096,
     "myCharactersMax": 20,
-    "peerCharactersMax": 32
+    "peerCharactersMax": 32,
+    "peerMessageMaxTextBytes": 4096,
+    "peerMessageMaxFrameBytes": 8192,
+    "peerMessageMaxAgeSeconds": 120
   },
   "pairingCode": {
     "description": "collar/pairing code invitations. The code is shown and typed as Crockford base32 in groups of four; it is normalized (uppercase, dashes/spaces removed, I/L -> 1, O -> 0) and its UTF-8 bytes are the HKDF input keying material. The relay only ever sees SHA-256(lookupId).",
     "randomBits": 80,
     "characters": 16,
-    "hkdf": { "hash": "SHA-256", "salt": "", "outputLengthBytes": 32 },
+    "hkdf": {
+      "hash": "SHA-256",
+      "salt": "",
+      "outputLengthBytes": 32
+    },
     "lookupIdInfo": "oathbound-pair-code-lookup-v1",
     "encryptionKeyInfo": "oathbound-pair-code-enc-v1",
     "lookupIdEncoding": "base64url without padding (43 characters) of the HKDF output; used as the invitationId capability of a code invitation.",
-    "characterBlob": "AES-256-GCM, 12-byte random nonce, plaintext = JCS of {name, world, triggerPhrase?}, AAD = UTF-8 of \"oathbound-pair-code-v1|\" + invitationId + \"|\" + (\"inviter\" | \"accepter\")."
+    "characterBlob": "AES-256-GCM, 12-byte random nonce, plaintext = JCS of {name, world, triggerPhrase?, transport?}; transport is \"relay-live-v1\" from versions with live messaging, which refuse to pair with a side that omits it, AAD = UTF-8 of \"oathbound-pair-code-v1|\" + invitationId + \"|\" + (\"inviter\" | \"accepter\")."
   },
   "recoveryCode": {
     "description": "collar/pairing-recovery. Same normalization and HKDF parameters as pairingCode; the relay only ever sees SHA-256(backupId).",

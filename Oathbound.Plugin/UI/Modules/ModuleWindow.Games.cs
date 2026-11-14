@@ -172,8 +172,8 @@ public sealed partial class ModuleWindow
 
         if (ImGui.Button($"Invite {pairing.PeerName}"))
             gameInviteError = games.SendInvite(newGameKind, config.LastChannel, config.LastLossRule, config.LastRating, config.LastDeathrollStart, end, penalty);
-        if (gameInviteError is not null)
-            IconGlyph.WrappedColored(Theme.Warning, gameInviteError);
+        if ((gameInviteError ?? games.InviteFailure) is { } inviteProblem)
+            IconGlyph.WrappedColored(Theme.Warning, inviteProblem);
     }
 
     private void DrawGameSession(GamesService games, GameSession s)
@@ -285,7 +285,7 @@ public sealed partial class ModuleWindow
             {
                 if (ImGui.Button("Send##gamePromptSend"))
                 {
-                    games.SendPrompt(gamePromptText, command?.Messages, gamePromptCommand?.Label);
+                    games.SendPrompt(gamePromptText, command?.Command, gamePromptCommand?.Label);
                     gamePromptText = "";
                     gamePromptCommand = null;
                 }
@@ -326,7 +326,7 @@ public sealed partial class ModuleWindow
         {
             if (ImGui.Button("Send##gameForfeitSend"))
             {
-                games.SendForfeit(gameForfeitText, command?.Messages, gameForfeitCommand?.Label);
+                games.SendForfeit(gameForfeitText, command?.Command, gameForfeitCommand?.Label);
                 gameForfeitText = "";
                 gameForfeitCommand = null;
             }
@@ -338,9 +338,9 @@ public sealed partial class ModuleWindow
     private static GameCommand? CardCommand(GameCard card) =>
         card.Command is { Length: > 0 } command ? new GameCommand(card.CommandLabel ?? command, command) : null;
 
-    /// The Owner's command picker beside Send, and the composed messages to send. Null for a Sub, or with no command
-    /// picked; not fitting when this pairing isn't the active one, since commands go to the active pairing.
-    private (IReadOnlyList<string> Messages, bool Fits)? DrawSendWithCommand(GamesService games, GameSession s, string id, GameCommand? attached, Action<GameCommand?> set)
+    /// The Owner's command picker beside Send, and the command to send with it. Null for a Sub, or with no command
+    /// picked. It goes to the session's pairing.
+    private (string Command, bool Fits)? DrawSendWithCommand(GamesService games, GameSession s, string id, GameCommand? attached, Action<GameCommand?> set)
     {
         if (!games.IsOwnerOfPeer(s))
         {
@@ -352,10 +352,7 @@ public sealed partial class ModuleWindow
         ImGui.SameLine();
         if (attached is not { } picked)
             return null;
-        if (plugin.Configuration.ActivePairing?.Id != s.PairingId)
-            return (Array.Empty<string>(), false);
-        var messages = plugin.ChatComposer.ComposeAll(picked.Command);
-        return (messages, Commands.ChatComposer.AllFit(messages));
+        return (picked.Command, Commands.CommandSelector.Fits(picked.Command));
     }
 
     /// A button naming the attached command that opens the command picker, and a clear button once one is attached.
@@ -392,19 +389,17 @@ public sealed partial class ModuleWindow
         var favorites = QuickAccessMenu.CategorizedFavorites(plugin.Configuration.QuickCommands);
         if (favorites.Count == 0 || !ImGui.CollapsingHeader("Follow up with a command##gameFollowUp"))
             return;
-        var canSend = plugin.Configuration.ActivePairing?.Id == s.PairingId;
-        if (!canSend)
-            IconGlyph.WrappedDisabled("Switch the header to this pairing to send.");
+        var pairing = plugin.Configuration.FindPairingById(s.PairingId);
         foreach (var (label, commands) in favorites)
         {
             ImGui.TextDisabled(label);
             foreach (var cmd in commands)
             {
-                var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
-                using (ImRaii.Disabled(!canSend || !Commands.ChatComposer.AllFit(messages)))
+                var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
+                using (ImRaii.Disabled(pairing is null || !Commands.CommandSelector.Fits(command)))
                 {
-                    if (ImGui.Button($"{cmd.Label}##gameFollow{label}{cmd.Command}"))
-                        plugin.ChatSender.SendAll(messages);
+                    if (ImGui.Button($"{cmd.Label}##gameFollow{label}{cmd.Command}") && pairing is not null)
+                        plugin.SendCommand(pairing, command);
                 }
                 ImGui.SameLine();
             }

@@ -264,7 +264,7 @@ async function sweepOrphanPictureObjects(env: Env): Promise<void> {
 }
 
 async function checkQuotaAlarm(env: Env): Promise<void> {
-  for (const name of ["globalDailyWork", "globalDailySafety"] as const) {
+  for (const name of ["globalDailyWork", "globalDailySafety", "globalDailyLive"] as const) {
     const limit = QUOTA_LIMITS[name];
     const bucket = Math.floor(nowSeconds() / limit.windowSeconds) * limit.windowSeconds;
     const row = await env.RELAY_DB.prepare(`SELECT count FROM quota_counters WHERE scope = ?1 AND window_start = ?2`)

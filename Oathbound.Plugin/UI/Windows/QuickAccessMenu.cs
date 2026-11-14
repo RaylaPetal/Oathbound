@@ -112,7 +112,7 @@ public static class QuickAccessMenu
         (FixedActionIds.LeashDefault, "Leash", "Follow", ControlWords.Leash),
         (FixedActionIds.UnleashDefault, "Unleash", "Follow", ControlWords.Unleash),
         (FixedActionIds.CustomTriggerRevert, "Revert custom triggers", "Custom Triggers", "customtrigger revert"),
-        (FixedActionIds.StopAnimation, "Stop animation", "Animation", $"gesture {ChatComposer.StopGestureWord}"),
+        (FixedActionIds.StopAnimation, "Stop animation", "Animation", $"gesture {CommandComposer.StopGestureWord}"),
     ];
 
     internal static List<(string Label, List<QuickCommand> Favorites)> CategorizedFavorites(OwnerQuickCommands quick)
@@ -172,15 +172,15 @@ public static class QuickAccessMenu
 
     private static void DrawFavoriteMenuItem(Plugin plugin, QuickCommand cmd, bool canSend)
     {
-        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
-        var fits = ChatComposer.AllFit(messages);
+        var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
+        var fits = CommandSelector.Fits(command);
         using (ImRaii.Disabled(!canSend || !fits))
         {
             if (ImGui.MenuItem(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label))
-                plugin.ChatSender.SendAll(messages);
+                plugin.SendCommand(command);
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
+            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
     }
 
     /// The popup closes on click, so a resolution failure is reported as a notification.
@@ -202,6 +202,6 @@ public static class QuickAccessMenu
             }
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "No /tell target yet - pairing hasn't captured your Sub's name.");
+            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.");
     }
 }

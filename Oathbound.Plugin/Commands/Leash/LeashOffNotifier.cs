@@ -61,16 +61,16 @@ public sealed class LeashOffNotifier : IDisposable
     private readonly PluginConfig config;
     private readonly FollowCommand follow;
     private readonly TeleportCommand teleport;
-    private readonly ChatComposer composer;
-    private readonly ChatSender sender;
+    private readonly CommandComposer composer;
+    private readonly Relay.PeerMessenger messenger;
 
-    public LeashOffNotifier(PluginConfig config, FollowCommand follow, TeleportCommand teleport, ChatComposer composer, ChatSender sender)
+    public LeashOffNotifier(PluginConfig config, FollowCommand follow, TeleportCommand teleport, CommandComposer composer, Relay.PeerMessenger messenger)
     {
         this.config = config;
         this.follow = follow;
         this.teleport = teleport;
         this.composer = composer;
-        this.sender = sender;
+        this.messenger = messenger;
         follow.LeashEnded += OnLeashEnded;
         follow.LeashPaused += OnLeashPaused;
         teleport.OwnerTeleportFailed += OnOwnerTeleportFailed;
@@ -90,7 +90,7 @@ public sealed class LeashOffNotifier : IDisposable
 
     /// An Owner's Teleport refused before it started.
     public void NotifyTeleportRefused(PairingState pairing, TeleportRefusal code) =>
-        SendRefusal(pairing, ChatComposer.TeleportFailedWord, code);
+        SendRefusal(pairing, CommandComposer.TeleportFailedWord, code);
 
     private void OnLeashEnded(Guid pairingId, LeashEnd reason)
     {
@@ -103,36 +103,28 @@ public sealed class LeashOffNotifier : IDisposable
     private void OnLeashPaused(Guid pairingId, TeleportRefusal code)
     {
         if (config.FindPairingById(pairingId) is { } pairing)
-            SendRefusal(pairing, ChatComposer.LeashPausedWord, code);
+            SendRefusal(pairing, CommandComposer.LeashPausedWord, code);
     }
 
     private void OnOwnerTeleportFailed(Guid pairingId, TeleportRefusal code)
     {
         if (config.FindPairingById(pairingId) is { } pairing)
-            SendRefusal(pairing, ChatComposer.TeleportFailedWord, code);
-    }
-
-    private static bool TryGetOwner(PairingState pairing, out string name, out string world)
-    {
-        name = pairing.PeerName ?? "";
-        world = pairing.PeerWorld ?? "";
-        return pairing is { IsPaired: true, Direction: PairingDirection.SubSide }
-            && !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(world);
+            SendRefusal(pairing, CommandComposer.TeleportFailedWord, code);
     }
 
     private void Send(PairingState pairing, LeashEnd reason)
     {
-        if (!TryGetOwner(pairing, out var name, out var world))
+        if (pairing is not { IsPaired: true, Direction: PairingDirection.SubSide })
             return;
         Plugin.Log.Info($"Leash-off notice ({reason.ToNoticeWord()}) sent to the Owner.");
-        sender.Send(composer.ComposeLeashOffNotice(name, world, reason));
+        messenger.SendNotice(pairing, composer.ComposeLeashOffNotice(reason));
     }
 
     private void SendRefusal(PairingState pairing, string word, TeleportRefusal code)
     {
-        if (!TryGetOwner(pairing, out var name, out var world))
+        if (pairing is not { IsPaired: true, Direction: PairingDirection.SubSide })
             return;
         Plugin.Log.Info($"Leash notice ({word} {code.ToNoticeWord()}) sent to the Owner.");
-        sender.Send(composer.ComposeTeleportRefusalNotice(name, world, word, code));
+        messenger.SendNotice(pairing, composer.ComposeTeleportRefusalNotice(word, code));
     }
 }

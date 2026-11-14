@@ -10,7 +10,6 @@ public static class TutorialAnchors
     public const string QuickAccess = "dtr:quickAccess";
     public const string MainCharacter = "main:character";
     public const string MainPairing = "main:pairing";
-    public const string MainChannel = "main:channel";
     public const string MainSafeword = "main:safeword";
     public const string MainRevertAll = "main:revertAll";
     public const string MainSubControl = "main:subControl";
@@ -68,8 +67,8 @@ public static class TutorialCatalog
         TutorialAnchors.QuickStar, MissingText: "No saved command is listed yet, so there's no star to point at.");
 
     private static TourStep SendRow(string what) => new(
-        "Send and Copy",
-        $"Send tells your Sub to {what} right away. Copy puts the same command on your clipboard instead, for a macro or to send it yourself.",
+        "Send",
+        $"Send tells your Sub to {what} right away, through Oathbound.",
         TutorialAnchors.QuickSend, MissingText: "No saved command is listed yet.");
 
     private static readonly Dictionary<string, IReadOnlyList<TourStep>> OwnerTours = new()
@@ -80,7 +79,6 @@ public static class TutorialCatalog
             new("Opening Oathbound", "Type /ob to open this window, and /obsettings to open Settings."),
             new("You", "Your character. Everything here acts as and for this character.", TutorialAnchors.MainCharacter, n => n.Main()),
             new("Your pairing", "Who you're paired with. With more than one pairing, pick the active one here: commands go to it, and each module shows its Owner or Sub view.", TutorialAnchors.MainPairing, n => n.Main()),
-            new("Sending channel", "Which chat channel your commands travel on. Your Sub listens on all of them, so nothing changes on their side.", TutorialAnchors.MainChannel, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Revert all", "Takes everything off your active Sub at once: restraints, outfit, title, leash, animation, toys and moodles. It needs two clicks. The collar and the pairing are never touched.", TutorialAnchors.MainRevertAll, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Sub Control", "Opens every command you have, from every module, in one console docked beside this window.", TutorialAnchors.MainSubControl, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Safeword", "Your own safeword. Typing /obpanic always takes everything off you, whatever role you're in.", TutorialAnchors.MainSafeword, n => n.Main()),
@@ -88,12 +86,12 @@ public static class TutorialCatalog
             new("Favorites", "The Favorites tile, near the bottom of the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Achievements", "Achievements mark your milestones. They're private: nothing about them is ever sent to anyone.", TutorialAnchors.NavAchievements, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
-            new("Role & trigger phrase", "Your role (Owner, Sub or Switch) and the trigger phrase that starts every command tell.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
+            new("Role & trigger phrase", "Your role (Owner, Sub or Switch), and the trigger phrase your chat Reactions start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Characters", "Play more than one character? Link each one in the Characters tab so your pairings can reach you on it. A Sub confirms each new character of their Owner's before it can send commands.", S("characters"), n => n.Settings(SettingsTab.Characters)),
             new("Pairing", "Pair with someone by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
             new("Recovery code", "Keeps your pairings safe if you reinstall or move PCs. Write it down somewhere private.", S("recoveryCard"), n => n.Settings(SettingsTab.Identity)),
             new("Acknowledgements", "Some features automate your character more than others. Each one has to be acknowledged here before it can be used.", S("tosCard"), n => n.Settings(SettingsTab.Tos)),
-            new("Test Commands", "Run a command on yourself, exactly as if it arrived in a tell, without anyone sending it.", S("testCommandCard"), n => n.Settings(SettingsTab.Test)),
+            new("Test Commands", "Run a command on yourself, exactly as if your Owner sent it, without anyone sending it.", S("testCommandCard"), n => n.Settings(SettingsTab.Test)),
             new("Every module has a tour", "Open any module and click the ? in its title bar for a tour of that module. Rerun this overview from Settings any time.", TutorialAnchors.MainNav, n => n.Main()),
             new("The safeword", "/obpanic takes everything off the person who types it, except a locked collar - only its Owner or unpairing removes that. It never needs the other person."),
         ],
@@ -229,7 +227,7 @@ public static class TutorialCatalog
             new("Modules", "Each tile is something your Owner can do to you. In each one you choose what's allowed - which outfits, animations, moodles, restraints. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
             new("Favorites", "Starred commands are an Owner feature; as a Switch, the Favorites tile opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
-            new("Role & trigger phrase", "Your role and the trigger phrase every command tell must start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
+            new("Role & trigger phrase", "Your role, and the trigger phrase your chat Reactions start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Characters", "Play more than one character? Link each one in the Characters tab so your Owner can reach you on it. Your restrictions follow you to every character, and you confirm each new character of your Owner's before it can send commands.", S("characters"), n => n.Settings(SettingsTab.Characters)),
             new("Pairing", "Pair with your Owner by code: one of you creates an invitation, the other enters the code, and you each confirm the other's character.", S("pairWith"), n => n.Settings(SettingsTab.Identity)),
             new("Recovery code", "Keeps your pairings safe if you reinstall or move PCs. Write it down somewhere private.", S("recoveryCard"), n => n.Settings(SettingsTab.Identity)),

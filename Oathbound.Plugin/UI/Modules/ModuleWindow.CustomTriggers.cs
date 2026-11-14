@@ -660,7 +660,7 @@ public sealed partial class ModuleWindow
             var duplicate = aliases.Any(q => !ReferenceEquals(q, editingOwnerBundle) &&
                 (string.Equals(q.Label, ctqLabel.Trim(), StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(q.Command, command, StringComparison.OrdinalIgnoreCase)));
-            var safe = ChatComposer.AllFit(plugin.ChatComposer.ComposeAll(command));
+            var safe = CommandSelector.Fits(command);
             using (ImRaii.Disabled(stale || duplicate || !safe))
             {
                 if (ImGui.Button($"{(editingOwnerBundle is null ? "Save bundle" : "Save changes")}##ctqSave"))
@@ -682,7 +682,7 @@ public sealed partial class ModuleWindow
             }
             if (stale) IconGlyph.WrappedColored(Theme.Warning, "This saved bundle was removed while it was being edited.");
             else if (duplicate) IconGlyph.WrappedColored(Theme.Warning, "Another saved bundle already uses this label or command.");
-            else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This bundle is too long for a safe chat payload.");
+            else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This bundle is too long to send.");
             ContinueRowOrWrap(ButtonWidth("Cancel"));
             if (ImGui.Button($"{(editingOwnerBundle is null ? "Clear bundle" : "Cancel")}##ctq"))
                 ClearOwnerBundleDraft();
@@ -730,21 +730,13 @@ public sealed partial class ModuleWindow
         ImGui.InputText("Command", ref commandInput, 96);
         IconGlyph.HelpMarker("Either a short alias name your Sub defined, or a direct override: \"title create <text>\" / \"title clear\", \"outfit lock <name>\" / \"outfit unlock\", \"gesture <name>\".");
 
-        var composed = plugin.ChatComposer.Compose(commandInput.Trim());
-        ImGui.TextUnformatted("Preview:");
-        ImGui.TextWrapped(composed);
+        var composed = plugin.CommandComposer.Compose(commandInput);
 
-        var hasCommand = commandInput.Trim().Length > 0;
+        var hasCommand = composed.Length > 0;
         using (ImRaii.Disabled(!canSend || !hasCommand))
         {
             if (ImGui.Button("Send"))
-                plugin.ChatSender.Send(composed);
-        }
-        ImGui.SameLine();
-        using (ImRaii.Disabled(!hasCommand))
-        {
-            if (ImGui.Button("Copy to clipboard"))
-                ImGui.SetClipboardText(composed);
+                plugin.SendCommand(composed);
         }
         ImGui.SameLine();
         var aliasQuick = plugin.Configuration.QuickCommands.Aliases;
@@ -758,7 +750,7 @@ public sealed partial class ModuleWindow
                 commandInput = "";
             }
         }
-        IconGlyph.HelpMarker("Send sends it as one /tell now. Copy only copies it. Add Command saves it as a button.");
+        IconGlyph.HelpMarker("Send sends it now. Add Command saves it as a button.");
     }
 
     private readonly ListDetail ownerBundleList = new();

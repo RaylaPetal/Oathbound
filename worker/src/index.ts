@@ -14,6 +14,9 @@ import { runScheduledCleanup } from "./scheduled";
 import { assertQuotaRemaining, enforceQuota, sampledUnits } from "./lib/quotas";
 import { originScope } from "./lib/origin";
 import { routeWeight } from "./lib/routeWeights";
+import { openSocket } from "./routes/socket";
+
+export { DeviceHub } from "./hub/DeviceHub";
 
 /** Matches `simple.period` of the ORIGIN_RATE_LIMITER binding in wrangler.toml. */
 const ORIGIN_RATE_LIMIT_PERIOD_SECONDS = 60;
@@ -41,6 +44,8 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (units > 0) await enforceQuota(env, "globalDailyWork", "all", 0, units);
     else await assertQuotaRemaining(env, "globalDailyWork", "all", weight);
   }
+
+  if (method === "GET" && segments.length === 2 && segments[1] === "socket") return openSocket(request, env);
 
   if (method === "GET" && segments.length === 2 && segments[1] === "health") {
     return health(env);

@@ -49,7 +49,11 @@ public static class CharacterRecordCrypto
     public static string SideOf(PairingDirection ownDirection, bool own) =>
         (ownDirection == PairingDirection.OwnerSide) == own ? OwnerSide : SubSide;
 
-    public static byte[] DeriveKey(RelayEcKeyPair ownKey, EcPublicKeyJwk peerPublic, string pairIdHash, int pairEpoch)
+    public static byte[] DeriveKey(RelayEcKeyPair ownKey, EcPublicKeyJwk peerPublic, string pairIdHash, int pairEpoch) =>
+        DerivePairKey(ownKey, peerPublic, pairIdHash, pairEpoch, InfoLabel);
+
+    /// Static ECDH between the two device keys, so both members derive the same key; `label` keeps each use's key apart.
+    internal static byte[] DerivePairKey(RelayEcKeyPair ownKey, EcPublicKeyJwk peerPublic, string pairIdHash, int pairEpoch, string label)
     {
         using var peer = RelayCrypto.ImportEphemeralPublicKey(peerPublic);
         var shared = RelayCrypto.DeriveSharedSecret(ownKey, peer);
@@ -57,7 +61,7 @@ public static class CharacterRecordCrypto
         {
             var epoch = pairEpoch.ToString(CultureInfo.InvariantCulture);
             var salt = SHA256.HashData(Encoding.UTF8.GetBytes(pairIdHash + "|" + epoch));
-            return RelayCrypto.DeriveAesKey(shared, salt, Encoding.UTF8.GetBytes(InfoLabel + pairIdHash + epoch));
+            return RelayCrypto.DeriveAesKey(shared, salt, Encoding.UTF8.GetBytes(label + pairIdHash + epoch));
         }
         finally
         {

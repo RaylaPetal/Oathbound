@@ -59,7 +59,7 @@ public sealed class FavoritesWindow : Window, IDisposable
         }
 
         if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - Send is disabled until an Owner-side pairing is active.");
+            IconGlyph.WrappedColored(Theme.Warning, "Not paired with a Sub yet - Send is disabled until an Owner-side pairing is active.");
 
         foreach (var (label, favorites) in favoritesByCategory)
         {
@@ -78,20 +78,20 @@ public sealed class FavoritesWindow : Window, IDisposable
 
     private void DrawFavoriteRow(QuickCommand cmd, bool canSend)
     {
-        var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd));
-        var fits = ChatComposer.AllFit(messages);
+        var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
+        var fits = CommandSelector.Fits(command);
         ImGui.BeginGroup();
         using (ImRaii.Disabled(!canSend || !fits))
         {
             if (ImGui.Button($"Send##fav_{cmd.Label}_{cmd.Command}"))
-                plugin.ChatSender.SendAll(messages);
+                plugin.SendCommand(command);
         }
         ImGui.SameLine();
         ImGui.TextUnformatted(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label);
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.FavoritesRow);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
+            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
     }
 
     /// Teleport has no static command text; resolved live via TeleportSendAction.
@@ -115,6 +115,6 @@ public sealed class FavoritesWindow : Window, IDisposable
         ImGui.SameLine();
         ImGui.TextUnformatted("Teleport");
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "No /tell target yet - pairing hasn't captured your Sub's name.");
+            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.");
     }
 }

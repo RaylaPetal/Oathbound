@@ -14,8 +14,6 @@ namespace Oathbound.Plugin.Commands;
 /// The peer's role in the pairing that just ended, so the header can say "your Sub" or "your Owner".
 public readonly record struct PeerUnpairedNotice(PluginRole PeerRole);
 
-/// Watches incoming chat for pairing lifecycle tells (`collarinvite`, `collarpairack`, `collarunpair`), the leash-off notice
-/// (`collarleash`), and Sub-side trigger commands from a paired peer's verified sender.
 /// The rulebook's reserved Owner command words, gated by the rulebook itself.
 public interface IRulebookCommandSink
 {
@@ -23,26 +21,12 @@ public interface IRulebookCommandSink
     LocalTestResult Ledger(string rest, PairingState? sourcePairing);
 }
 
+/// Runs what a paired peer sends over the live relay channel (collar/relay-messaging): commands from an Owner go
+/// through the Sub's normal dispatch, and notices to their handlers. The only game chat it reads is dice roll lines.
 public sealed class ChatCommandListener : IDisposable
 {
-    private const string PairingAckKeyword = "collarpairack";
-    private const string InviteKeyword = "collarinvite";
-    private const string UnpairNoticeKeyword = "collarunpair";
-    private const string CatalogRequestKeyword = "collarcatalogreq";
     private const string CatalogPermissionDeniedKeyword = "collarcatalogdenied";
-    private const string LeashOffNoticeKeyword = ChatComposer.LeashOffNoticeKeyword;
-    private const string RulebookNudgeKeyword = ChatComposer.RulebookNudgeKeyword;
-
-    /// Channels a trigger command may arrive on. Pairing lifecycle messages stay tell-only.
-    private static readonly XivChatType[] AllowedTriggerChatTypes =
-    [
-        XivChatType.TellIncoming, XivChatType.Party, XivChatType.Alliance,
-        XivChatType.Ls1, XivChatType.Ls2, XivChatType.Ls3, XivChatType.Ls4,
-        XivChatType.Ls5, XivChatType.Ls6, XivChatType.Ls7, XivChatType.Ls8,
-        XivChatType.CrossLinkShell1, XivChatType.CrossLinkShell2, XivChatType.CrossLinkShell3,
-        XivChatType.CrossLinkShell4, XivChatType.CrossLinkShell5, XivChatType.CrossLinkShell6,
-        XivChatType.CrossLinkShell7, XivChatType.CrossLinkShell8,
-    ];
+    private const string LeashOffNoticeKeyword = CommandComposer.LeashOffNoticeKeyword;
 
     /// First tokens that route to the Owner's override grammar; Sub aliases can't use them.
     public static readonly string[] ReservedCategoryWords = ["title", "outfit", "gesture", "collar", "moodle", "restraint", "toy", "customtrigger", "teleport", "cage",
@@ -63,11 +47,11 @@ public sealed class ChatCommandListener : IDisposable
     /// Set once by Plugin.
     public Games.GamesService? Games { get; set; }
 
-    /// A verified `collarrulebook` from the Owner of this Sub-side pairing.
-    public event Action<PairingState>? RulebookNudgeReceived;
+    /// A verified grant-leave notice from the Owner of this Sub-side pairing.
+    public event Action<PairingState>? GrantLeaveReceived;
 
     private readonly PluginConfig config;
-    private readonly PairingService pairing;
+    private readonly PeerMessenger messenger;
     private readonly CatalogSyncRelayService catalogSyncRelay;
     private readonly TitleCommand title;
     private readonly OutfitCommand outfit;
@@ -95,10 +79,18 @@ public sealed class ChatCommandListener : IDisposable
             PeerUnpairedNoticeChanged?.Invoke();
     }
 
-    public ChatCommandListener(PluginConfig config, PairingService pairing, CatalogSyncRelayService catalogSyncRelay, TitleCommand title, OutfitCommand outfit, GestureCommand gesture, FollowCommand follow, CollarCommand collar, MoodlesCommand moodles, RestraintCommand restraints, ToyControlCommand toyControl, CustomTriggerCommand customTriggers, TeleportCommand teleport, LeashOffNotifier leashOffNotifier, OwnerStatusEstimateTracker estimates)
+    /// The peer ended this pairing (seen from the relay); the header says so until dismissed.
+    public void NotePeerUnpaired(PairingState pairing)
+    {
+        var peerRole = pairing.Direction == PairingDirection.OwnerSide ? PluginRole.Sub : PluginRole.Owner;
+        peerUnpairedNotices[pairing.Id] = new PeerUnpairedNotice(peerRole);
+        PeerUnpairedNoticeChanged?.Invoke();
+    }
+
+    public ChatCommandListener(PluginConfig config, PeerMessenger messenger, CatalogSyncRelayService catalogSyncRelay, TitleCommand title, OutfitCommand outfit, GestureCommand gesture, FollowCommand follow, CollarCommand collar, MoodlesCommand moodles, RestraintCommand restraints, ToyControlCommand toyControl, CustomTriggerCommand customTriggers, TeleportCommand teleport, LeashOffNotifier leashOffNotifier, OwnerStatusEstimateTracker estimates)
     {
         this.config = config;
-        this.pairing = pairing;
+        this.messenger = messenger;
         this.catalogSyncRelay = catalogSyncRelay;
         this.title = title;
         this.outfit = outfit;
@@ -113,200 +105,72 @@ public sealed class ChatCommandListener : IDisposable
         this.leashOffNotifier = leashOffNotifier;
         this.estimates = estimates;
 
+        messenger.FrameAccepted += OnFrame;
         Plugin.ChatGui.ChatMessage += OnChatMessage;
     }
 
-    public void Dispose() => Plugin.ChatGui.ChatMessage -= OnChatMessage;
+    public void Dispose()
+    {
+        messenger.FrameAccepted -= OnFrame;
+        Plugin.ChatGui.ChatMessage -= OnChatMessage;
+    }
 
     private void OnChatMessage(Dalamud.Game.Chat.IHandleableChatMessage message)
     {
         if (Games is { } games && global::Oathbound.Plugin.Games.RollReader.TryRead(message, out var roll))
             games.OnRollLine(roll);
-        if (message.LogKind == XivChatType.TellOutgoing)
+    }
+
+    private void OnFrame(PairingState pairing, PeerMessagePlaintext message)
+    {
+        var text = message.Text.Trim();
+        if (message.Kind == PeerMessagePlaintext.NoticeKind)
         {
-            OnOwnCommandLine(message);
-            return;
-        }
-        if (Array.IndexOf(AllowedTriggerChatTypes, message.LogKind) < 0)
-            return;
-        if (IsFromLocalPlayer(message.Sender))
-        {
-            OnOwnCommandLine(message);
-            return;
-        }
-
-        var text = message.Message.TextValue.Trim();
-
-        if (message.LogKind == XivChatType.TellIncoming)
-        {
-            NoteTellFromPairedCharacter(message.Sender);
-            if (TryHandleRelayAckMessage(text, message.Sender)
-                || TryHandleRelayInviteMessage(text, message.Sender)
-                || TryHandleUnpairNoticeMessage(text, message.Sender)
-                || TryHandleCatalogRequestMessage(text, message.Sender)
-                || TryHandleCatalogPermissionDeniedMessage(text, message.Sender)
-                || TryHandleLeashOffNoticeMessage(text, message.Sender)
-                || TryHandleRulebookNudgeMessage(text, message.Sender)
-                || TryHandleStruggleNoticeMessage(text, message.Sender)
-                || TryHandleSafewordNoticeMessage(text, message.Sender)
-                || TryHandleGameMessage(text, message.Sender))
-            {
-                Swallow(message);
-                return;
-            }
-        }
-
-        // Only Sub-side pairings apply anything from chat, matched against every paired peer.
-        if (config.Role == PluginRole.Owner)
-            return;
-
-        var (senderName, senderWorld) = ExtractNameAndWorld(message.Sender);
-        if (senderName is null)
-            return;
-
-        // Some chat types lack the sender's world - fall back to a name-only match, but only when unambiguous.
-        var matchedPairing = senderWorld is not null
-            ? config.FindPairing(senderName, senderWorld, PairingDirection.SubSide)
-            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.SubSide && p.HasConfirmedName(senderName)));
-        if (matchedPairing is null)
-        {
-            Plugin.Log.Information($"Trigger tell ignored: sender \"{senderName}\" does not match any currently-paired Owner.");
+            if (!(TryHandleCatalogRequestMessage(text, pairing)
+                || TryHandleCatalogPermissionDeniedMessage(text, pairing)
+                || TryHandleLeashOffNoticeMessage(text, pairing)
+                || TryHandleStruggleNoticeMessage(text, pairing)
+                || TryHandleSafewordNoticeMessage(text, pairing)
+                || TryHandleGrantLeaveMessage(text, pairing)
+                || TryHandlePresenceMessage(text, pairing)
+                || TryHandleGameMessage(text, pairing)))
+                Plugin.Log.Information("A notice from a paired peer wasn't recognized; their version may be newer.");
             return;
         }
 
-        var trigger = config.TriggerPhrase.Trim();
-        if (trigger.Length == 0)
+        // Only a Sub-side pairing takes commands.
+        if (pairing.Direction != PairingDirection.SubSide || text.Length == 0)
             return;
 
-        if (!text.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
+        var who = pairing.PeerName ?? "Your Owner";
+        if (message.Character is not { } sender || !pairing.IsConfirmedCharacter(sender.Name, sender.World))
         {
-            Plugin.Log.Information($"Trigger tell ignored: message did not start with the configured trigger phrase \"{trigger}\".");
+            var from = message.Character is { } c ? $"{c.Name}@{c.World}" : "a character";
+            Plugin.Log.Information($"Command ignored: sent from {from}, which isn't a confirmed character of that Owner.");
+            OathboundChat.Print(Sentence($"{who}'s command didn't apply: it was sent from {from}, which you haven't confirmed as theirs"));
             return;
         }
-
-        var alias = text[trigger.Length..].Trim();
-        if (alias.Length == 0)
-            return;
+        who = sender.Name;
 
         LocalTestResult outcome;
         try
         {
-            outcome = ResolveFromPairing(alias, matchedPairing);
-            Plugin.Log.Information($"Trigger tell dispatch: {outcome.Message}");
+            outcome = ResolveFromPairing(text, pairing);
+            Plugin.Log.Information($"Command dispatch: {outcome.Message}");
         }
         catch (Exception ex)
         {
-            Plugin.Log.Error(ex, $"Failed to apply alias \"{alias}\" from a trigger tell.");
-            outcome = LocalTestResult.Fail(ex.Message, $"sent \"{alias}\", but it failed on your side");
+            Plugin.Log.Error(ex, $"Failed to apply \"{text}\" from a paired Owner.");
+            outcome = LocalTestResult.Fail(ex.Message, $"sent \"{text}\", but it failed on your side");
         }
 
         if (outcome.Success)
             CommandApplied?.Invoke();
 
-        // A trigger word glued to the next word ("commandx") still dispatches, but only a whole word counts as a command line.
-        if (!HasTriggerWord(text, trigger))
-            return;
-        // A Reactions phrase looks exactly like a command; it stays a visible chat line.
-        if (outcome.Unmatched && IsReactionPhrase(alias))
-            return;
-        Swallow(message);
         OathboundChat.Print(Sentence(outcome.Feedback is { } feedback
-            ? $"{matchedPairing.PeerName} {feedback}"
-            : outcome.Success ? $"{matchedPairing.PeerName}: {outcome.Message}" : $"{matchedPairing.PeerName}'s command didn't apply: {outcome.Message}"));
+            ? $"{who} {feedback}"
+            : outcome.Success ? $"{who}: {outcome.Message}" : $"{who}'s command didn't apply: {outcome.Message}"));
     }
-
-    /// This client's own line: a tell it sent, or a line the local player said on a command channel. Hides the
-    /// plugin's notices and any command to a paired Sub, however it was sent, and says what went out.
-    private void OnOwnCommandLine(Dalamud.Game.Chat.IHandleableChatMessage message)
-    {
-        var text = message.Message.TextValue.Trim();
-        var isTell = message.LogKind == XivChatType.TellOutgoing;
-        if (isTell && IsNoticeLine(text))
-        {
-            Swallow(message);
-            return;
-        }
-
-        var subs = config.Pairings.Where(p => p is { IsPaired: true, Direction: PairingDirection.OwnerSide }).ToList();
-        if (subs.Count == 0)
-            return;
-
-        PairingState? sub;
-        string trigger;
-        if (isTell)
-        {
-            // An outgoing tell's sender field names the recipient.
-            var (name, world) = ExtractNameAndWorld(message.Sender);
-            if (name is null)
-                return;
-            sub = world is not null
-                ? config.FindPairing(name, world, PairingDirection.OwnerSide)
-                : SingleOrDefaultIfUnambiguous(subs.Where(p => p.HasConfirmedName(name)));
-            if (sub is null || !HasTriggerWord(text, trigger = TriggerFor(sub)))
-                return;
-        }
-        else
-        {
-            // A channel can't address one Sub; the active pairing is who the composer sent it for.
-            var matching = subs.Where(p => HasTriggerWord(text, TriggerFor(p))).ToList();
-            if (matching.Count == 0)
-                return;
-            var activeId = config.GetActivePairing()?.Id;
-            sub = matching.FirstOrDefault(p => p.Id == activeId) ?? (matching.Count == 1 ? matching[0] : null);
-            trigger = TriggerFor(sub ?? matching[0]);
-        }
-
-        var body = text[trigger.Length..].Trim();
-        Swallow(message);
-        var channel = isTell ? "" : $"({ChannelName(message.LogKind)}) ";
-        OathboundChat.Print(Sentence($"{channel}Sent {sub?.PeerName ?? "your Subs"}: {CommandDescriber.Describe(body)}"));
-    }
-
-    private void Swallow(Dalamud.Game.Chat.IHandleableChatMessage message)
-    {
-        if (!config.ShowRawCommandText)
-            message.PreventOriginal();
-    }
-
-    private string TriggerFor(PairingState pairing) =>
-        (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
-
-    /// The trigger phrase as a whole word, followed by something.
-    private static bool HasTriggerWord(string text, string trigger) =>
-        trigger.Length > 0 && text.Length > trigger.Length && text.StartsWith(trigger, StringComparison.OrdinalIgnoreCase)
-        && char.IsWhiteSpace(text[trigger.Length]) && text[trigger.Length..].Trim().Length > 0;
-
-    private static readonly string[] NoticeKeywords =
-    [
-        PairingAckKeyword, InviteKeyword, UnpairNoticeKeyword, CatalogRequestKeyword, CatalogPermissionDeniedKeyword,
-        LeashOffNoticeKeyword, RulebookNudgeKeyword, ChatComposer.StruggleNoticeKeyword, ChatComposer.SafewordNoticeKeyword,
-        global::Oathbound.Plugin.Games.GamesService.Keyword,
-    ];
-
-    private static bool IsNoticeLine(string text) =>
-        NoticeKeywords.Any(k => text.StartsWith(k, StringComparison.OrdinalIgnoreCase) && (text.Length == k.Length || char.IsWhiteSpace(text[k.Length])));
-
-    private bool IsReactionPhrase(string said) =>
-        config.Reactions.Any(r => r is { Enabled: true, TriggerKind: ReactionTriggerKind.ChatPhrase } && r.HasAnyAction && ReactionService.PhraseMatches(said, r.ChatPhrase));
-
-    private static bool IsFromLocalPlayer(SeString sender)
-    {
-        if (Plugin.ObjectTable.LocalPlayer is not { } me)
-            return false;
-        // Our own party lines carry no PlayerPayload and may lead with the party slot glyph.
-        var (name, _) = ExtractNameAndWorld(sender);
-        return name is not null && name.EndsWith(me.Name.TextValue, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ChannelName(XivChatType kind) => kind switch
-    {
-        XivChatType.Party => "Party",
-        XivChatType.Alliance => "Alliance",
-        >= XivChatType.Ls1 and <= XivChatType.Ls8 => $"Linkshell {kind - XivChatType.Ls1 + 1}",
-        XivChatType.CrossLinkShell1 => "Cross-world Linkshell 1",
-        >= XivChatType.CrossLinkShell2 and <= XivChatType.CrossLinkShell8 => $"Cross-world Linkshell {kind - XivChatType.CrossLinkShell2 + 2}",
-        _ => kind.ToString(),
-    };
 
     /// Ends with exactly one sentence mark.
     private static string Sentence(string text)
@@ -315,177 +179,104 @@ public sealed class ChatCommandListener : IDisposable
         return trimmed.EndsWith('.') || trimmed.EndsWith('!') || trimmed.EndsWith('?') ? trimmed : trimmed + ".";
     }
 
-    /// Runs the same dispatch as a real tell. Never sends chat and never requires pairing.
+    /// Runs the same dispatch as a received command. Never sends anything and never requires pairing. A leading trigger
+    /// phrase, as commands used to have, is ignored.
     public LocalTestResult TestIncomingCommand(string rawText)
     {
         // Running a command on yourself is the Sub changing themselves, which a cage closes.
         if (Cage?.IsCaged == true)
             return LocalTestResult.Fail(CageService.CagedNote);
+        var command = rawText.Trim();
         var trigger = config.TriggerPhrase.Trim();
-        var trimmed = rawText.Trim();
-        if (trigger.Length == 0 || !trimmed.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
-            return LocalTestResult.Fail($"Doesn't start with your configured trigger phrase \"{trigger}\".");
-
-        var alias = trimmed[trigger.Length..].Trim();
-        if (alias.Length == 0)
-            return LocalTestResult.Fail("No command text after the trigger phrase.");
+        if (trigger.Length > 0 && command.Length > trigger.Length && command.StartsWith(trigger + " ", StringComparison.OrdinalIgnoreCase))
+            command = command[trigger.Length..].Trim();
+        if (command.Length == 0)
+            return LocalTestResult.Fail("No command text.");
 
         try
         {
             isLocalTest = true;
-            return Resolve(alias, config.GetActivePairing());
+            messenger.Suppressed = true;
+            return Resolve(command, config.GetActivePairing());
         }
         catch (Exception ex)
         {
-            Plugin.Log.Error(ex, $"Local command test for \"{alias}\" threw an exception.");
+            Plugin.Log.Error(ex, $"Local command test for \"{command}\" threw an exception.");
             return LocalTestResult.Fail($"Threw an exception: {ex.Message}");
         }
         finally
         {
             isLocalTest = false;
+            messenger.Suppressed = false;
         }
     }
 
-    /// Verification happens in PairingService; this only recognizes the tell and captures its verified sender.
-    private bool TryHandleRelayAckMessage(string text, SeString sender)
+    /// CatalogSyncRelayService re-verifies the request's signature against the Owner's device key.
+    private bool TryHandleCatalogRequestMessage(string text, PairingState from)
     {
-        if (!text.StartsWith(PairingAckKeyword, StringComparison.OrdinalIgnoreCase))
+        if (!text.StartsWith(CommandComposer.CatalogRequestKeyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
-
-        var (invitationId, rest) = SplitFirstToken(text[PairingAckKeyword.Length..].Trim());
-        var (proofDigest, _) = SplitFirstToken(rest);
-        if (invitationId.Length == 0 || proofDigest.Length == 0)
-            return true;
-
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null)
-            return true;
-
-        Plugin.FireAndForget(pairing.HandleAcknowledgementTellAsync(invitationId, proofDigest, name, world, CancellationToken.None));
+        var (requestId, _) = SplitFirstToken(text[CommandComposer.CatalogRequestKeyword.Length..].Trim());
+        if (requestId.Length > 0 && from.Direction == PairingDirection.SubSide)
+            Plugin.FireAndForget(catalogSyncRelay.HandleCatalogRequestAsync(requestId, from, CancellationToken.None));
         return true;
     }
 
-    /// The verified sender is the identity PairingService binds the invitation to. Always consumed, even when invalid.
-    private bool TryHandleRelayInviteMessage(string text, SeString sender)
-    {
-        if (!text.StartsWith(InviteKeyword, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var (invitationId, _) = SplitFirstToken(text[InviteKeyword.Length..].Trim());
-        if (invitationId.Length == 0)
-            return true;
-
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null)
-            return true;
-
-        Plugin.FireAndForget(pairing.HandleInvitationTellAsync(invitationId, name, world, CancellationToken.None));
-        return true;
-    }
-
-    /// Verified by matching the sender against our paired peers; anyone else is ignored.
-    private bool TryHandleUnpairNoticeMessage(string text, SeString sender)
-    {
-        if (!text.StartsWith(UnpairNoticeKeyword, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var (roleToken, _) = SplitFirstToken(text[UnpairNoticeKeyword.Length..].Trim());
-        if (!TryParseRole(roleToken, out var peerRole))
-            return true;
-
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null)
-            return true;
-        // The role token picks which pairing of a mutual pair ended.
-        var endedDirection = peerRole == PluginRole.Owner ? PairingDirection.SubSide : PairingDirection.OwnerSide;
-        var matchedPairing = world is not null
-            ? config.FindPairing(name, world, endedDirection)
-            : SingleOrDefaultIfUnambiguous(config.Pairings.Where(p => p.IsPaired && p.Direction == endedDirection && p.HasConfirmedName(name)));
-        if (matchedPairing is null)
-            return true;
-
-        peerUnpairedNotices[matchedPairing.Id] = new PeerUnpairedNotice(peerRole);
-        // Only our own restraints, and only when the Sub-side pairing ended.
-        if (matchedPairing.Direction == PairingDirection.SubSide)
-            restraints.ForceUnlock();
-        pairing.EndFromVerifiedPeerNotice(matchedPairing);
-        PeerUnpairedNoticeChanged?.Invoke();
-        OathboundChat.Print($"{matchedPairing.PeerName}@{matchedPairing.PeerWorld} unpaired from you.");
-        return true;
-    }
-
-    /// CatalogSyncRelayService re-verifies the sender and the request signature.
-    private bool TryHandleCatalogRequestMessage(string text, SeString sender)
-    {
-        if (!text.StartsWith(CatalogRequestKeyword, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var (requestId, _) = SplitFirstToken(text[CatalogRequestKeyword.Length..].Trim());
-        if (requestId.Length == 0)
-            return true;
-
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null)
-            return true;
-
-        Plugin.FireAndForget(catalogSyncRelay.HandleCatalogRequestTellAsync(requestId, name, world, CancellationToken.None));
-        return true;
-    }
-
-    private bool TryHandleCatalogPermissionDeniedMessage(string text, SeString sender)
+    private bool TryHandleCatalogPermissionDeniedMessage(string text, PairingState from)
     {
         if (!text.StartsWith(CatalogPermissionDeniedKeyword, StringComparison.OrdinalIgnoreCase))
             return false;
 
         var (requestId, _) = SplitFirstToken(text[CatalogPermissionDeniedKeyword.Length..].Trim());
-        if (requestId.Length == 0)
-            return true;
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is null)
+        if (requestId.Length == 0 || from.Direction != PairingDirection.OwnerSide)
             return true;
 
-        catalogSyncRelay.HandlePermissionDeniedTell(requestId);
+        catalogSyncRelay.HandlePermissionDenied(requestId);
         return true;
     }
 
-    /// Only the Owner of an active Sub-side pairing counts; the nudge carries nothing and only triggers a mailbox check.
-    private bool TryHandleRulebookNudgeMessage(string text, SeString sender)
-    {
-        if (!text.Trim().Equals(RulebookNudgeKeyword, StringComparison.OrdinalIgnoreCase))
-            return false;
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.SubSide) is not { IsPaired: true } subPairing)
-            return true;
-        RulebookNudgeReceived?.Invoke(subPairing);
-        return true;
-    }
-
-    /// Either side of a pairing; GamesService checks the sender against the pairing and the session.
-    private bool TryHandleGameMessage(string text, SeString sender)
+    /// Either side of a pairing; GamesService checks it against the invite or session.
+    private bool TryHandleGameMessage(string text, PairingState from)
     {
         if (Games is not { } games || !text.StartsWith(global::Oathbound.Plugin.Games.GamesService.Keyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
-        var (name, world) = ExtractNameAndWorld(sender);
-        return games.HandleTell(name, world, text);
+        return games.HandleFrame(from, text);
     }
 
-    /// Only a paired Sub of an Owner-side pairing counts; anyone else is ignored.
-    private bool TryHandleStruggleNoticeMessage(string text, SeString sender)
+    /// The Owner's "Grant leave" press, from the Owner of this Sub-side pairing.
+    private bool TryHandleGrantLeaveMessage(string text, PairingState from)
     {
-        if (!text.StartsWith(ChatComposer.StruggleNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+        if (!text.Equals(CommandComposer.GrantLeaveKeyword, StringComparison.OrdinalIgnoreCase))
             return false;
-        var (word, restraint) = SplitFirstToken(text[ChatComposer.StruggleNoticeKeyword.Length..].Trim());
-        var usedKey = word.Equals(ChatComposer.StruggleKeyWord, StringComparison.OrdinalIgnoreCase);
-        if (!usedKey && !word.Equals(ChatComposer.StruggleFreeWord, StringComparison.OrdinalIgnoreCase))
+        if (from.Direction == PairingDirection.SubSide)
+            GrantLeaveReceived?.Invoke(from);
+        return true;
+    }
+
+    /// A presence rule's Owner-written message, from this Owner's Sub; shown as an Oathbound line.
+    private bool TryHandlePresenceMessage(string text, PairingState from)
+    {
+        if (!text.StartsWith(CommandComposer.PresenceMessageKeyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var said = text[CommandComposer.PresenceMessageKeyword.Length..].Trim();
+        if (said.Length > 0 && from.Direction == PairingDirection.OwnerSide)
+            OathboundChat.Print($"{from.PeerName}: {said}");
+        return true;
+    }
+
+    /// Only from the Sub of an Owner-side pairing.
+    private bool TryHandleStruggleNoticeMessage(string text, PairingState from)
+    {
+        if (!text.StartsWith(CommandComposer.StruggleNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var (word, restraint) = SplitFirstToken(text[CommandComposer.StruggleNoticeKeyword.Length..].Trim());
+        var usedKey = word.Equals(CommandComposer.StruggleKeyWord, StringComparison.OrdinalIgnoreCase);
+        if (!usedKey && !word.Equals(CommandComposer.StruggleFreeWord, StringComparison.OrdinalIgnoreCase))
             return true;
-        // An older Sub's escape names no restraint and frees everything.
-        if (usedKey && restraint.Length == 0)
+        if (restraint.Length == 0 || from is not { IsPaired: true, Direction: PairingDirection.OwnerSide } ownerPairing)
             return true;
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
-            return true;
-        estimates.MarkUnrestrained(ownerPairing.Id, restraint.Length > 0 ? restraint : null);
-        var what = restraint.Length > 0 ? restraint : "your restraints";
+        estimates.MarkUnrestrained(ownerPairing.Id, restraint);
+        var what = restraint;
         Plugin.NotificationManager.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
         {
             Title = usedKey ? "Key used" : "Struggled free",
@@ -495,23 +286,21 @@ public sealed class ChatCommandListener : IDisposable
         return true;
     }
 
-    /// `collarsafeword panic <at>` (or `stop`/`checkin` from older Sub builds): only a paired Sub of an Owner-side pairing
-    /// counts; anything else is swallowed unread.
-    private bool TryHandleSafewordNoticeMessage(string text, SeString sender)
+    /// `collarsafeword panic <at>`, only from the Sub of an Owner-side pairing.
+    private bool TryHandleSafewordNoticeMessage(string text, PairingState from)
     {
-        if (!text.StartsWith(ChatComposer.SafewordNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
+        if (!text.StartsWith(CommandComposer.SafewordNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
-        var (moodWord, rest) = SplitFirstToken(text[ChatComposer.SafewordNoticeKeyword.Length..].Trim());
-        if (!ChatComposer.IsSafewordWord(moodWord) || !long.TryParse(SplitFirstToken(rest).First, out var at) || at <= 0)
+        var (moodWord, rest) = SplitFirstToken(text[CommandComposer.SafewordNoticeKeyword.Length..].Trim());
+        if (!CommandComposer.IsSafewordWord(moodWord) || !long.TryParse(SplitFirstToken(rest).First, out var at) || at <= 0)
             return true;
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
+        if (from is not { IsPaired: true, Direction: PairingDirection.OwnerSide } ownerPairing)
             return true;
         SafewordAlerts?.Accept(ownerPairing, at);
         return true;
     }
 
-    /// Runs a rulebook consequence through the same dispatch as a tell from `pairing`, so every permission check
+    /// Runs a rulebook consequence through the same dispatch as a command from `pairing`, so every permission check
     /// applies. Re-checks the allowlist here too, so nothing outside it can run even from a tampered config.
     public LocalTestResult RunRulebookCommand(string commandText, PairingState pairing)
     {
@@ -546,20 +335,19 @@ public sealed class ChatCommandListener : IDisposable
         }
     }
 
-    /// Only a paired Sub counts. The Owner is told only if their estimate still showed the Sub leashed.
-    private bool TryHandleLeashOffNoticeMessage(string text, SeString sender)
+    /// Only from the Sub of an Owner-side pairing. The Owner is told only if their estimate still showed the Sub leashed.
+    private bool TryHandleLeashOffNoticeMessage(string text, PairingState from)
     {
         if (!text.StartsWith(LeashOffNoticeKeyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
 
         var (word, rest) = SplitFirstToken(text[LeashOffNoticeKeyword.Length..].Trim());
-        var on = word.Equals(ChatComposer.LeashOnWord, StringComparison.OrdinalIgnoreCase);
-        var paused = word.Equals(ChatComposer.LeashPausedWord, StringComparison.OrdinalIgnoreCase);
-        var teleportFailed = word.Equals(ChatComposer.TeleportFailedWord, StringComparison.OrdinalIgnoreCase);
-        if (!on && !paused && !teleportFailed && !word.Equals(ChatComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
+        var on = word.Equals(CommandComposer.LeashOnWord, StringComparison.OrdinalIgnoreCase);
+        var paused = word.Equals(CommandComposer.LeashPausedWord, StringComparison.OrdinalIgnoreCase);
+        var teleportFailed = word.Equals(CommandComposer.TeleportFailedWord, StringComparison.OrdinalIgnoreCase);
+        if (!on && !paused && !teleportFailed && !word.Equals(CommandComposer.LeashOffWord, StringComparison.OrdinalIgnoreCase))
             return true;
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null || config.FindPairing(name, world, PairingDirection.OwnerSide) is not { IsPaired: true } ownerPairing)
+        if (from is not { IsPaired: true, Direction: PairingDirection.OwnerSide } ownerPairing)
             return true;
 
         if (paused || teleportFailed)
@@ -652,7 +440,7 @@ public sealed class ChatCommandListener : IDisposable
             case "customtrigger":
                 // No outer gate: each bundled action checks its own permission.
                 return HandleForceCustomTrigger(LockTimerOption.Strip(rest, out var customTriggerLock), customTriggerLock, sourcePairing);
-            case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
+            case ControlWords.Leash when SplitFirstToken(rest) is { First: var leashWord } && leashWord.Equals(CommandComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase):
                 // Bare `leash [options]` falls through to ResolveAlias.
                 if (permissions.Follow)
                     return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
@@ -814,7 +602,7 @@ public sealed class ChatCommandListener : IDisposable
         if (name.Length == 0)
             return NotUnderstood("\"gesture\" was given no name.");
         // Reserved, so no animation called "stop" can be sent by name.
-        if (name.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
+        if (name.Equals(CommandComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
             return gesture.Stop() ? LocalTestResult.Ok("Animation stopped.", "stopped your animation") : LocalTestResult.Ok("No animation was playing.", "tried to stop your animation, but none was playing");
 
         var result = gesture.ForceApplyDetailed(name, sourcePairing?.Id, holdSeconds);
@@ -1099,30 +887,6 @@ public sealed class ChatCommandListener : IDisposable
             leashOffNotifier.NotifyNotLeashed(sourcePairing);
     }
 
-    /// Any tell, command or not, shows which of the person's characters they're on, so replies follow them there.
-    private void NoteTellFromPairedCharacter(SeString sender)
-    {
-        var (name, world) = ExtractNameAndWorld(sender);
-        if (name is null || world is null) return;
-        var moved = false;
-        var seen = false;
-        foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.IsConfirmedCharacter(name, world)))
-        {
-            seen = true;
-            moved |= pairing.NoteTellFrom(name, world);
-        }
-        if (moved) config.SaveNow();
-        else if (seen) config.SaveDisplayState();
-    }
-
-    private static PairingState? SingleOrDefaultIfUnambiguous(IEnumerable<PairingState> candidates)
-    {
-        using var e = candidates.GetEnumerator();
-        if (!e.MoveNext()) return null;
-        var only = e.Current;
-        return e.MoveNext() ? null : only;
-    }
-
     private static (string First, string Remainder) SplitFirstToken(string text)
     {
         var trimmed = text.Trim();
@@ -1254,16 +1018,4 @@ public sealed class ChatCommandListener : IDisposable
 
     private static bool Matches(string received, string configured) =>
         !string.IsNullOrWhiteSpace(configured) && string.Equals(received, configured.Trim(), StringComparison.OrdinalIgnoreCase);
-
-    /// Not every chat type embeds a PlayerPayload, so fall back to parsing "Name Surname@World".
-    private static (string? Name, string? World) ExtractNameAndWorld(SeString sender)
-    {
-        var playerPayload = sender.Payloads.OfType<PlayerPayload>().FirstOrDefault();
-        if (playerPayload is not null)
-            return (playerPayload.PlayerName, playerPayload.World.Value.Name.ExtractText());
-
-        var text = sender.TextValue.Trim();
-        var atIndex = text.IndexOf('@');
-        return atIndex >= 0 ? (text[..atIndex].Trim(), text[(atIndex + 1)..].Trim()) : (text.Length > 0 ? text : null, null);
-    }
 }

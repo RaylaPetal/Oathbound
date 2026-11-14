@@ -195,7 +195,7 @@ public static class RulebookValidation
         return ConsequenceValidator.CheckAll(o.Kept.Concat(o.Broken));
     }
 
-    /// The text lands in the Owner's tells, where a leading "collar..." word is a peer notice their client acts on.
+    /// Refuses a leading "collar..." word, so the message can never read as one of the plugin's own notice keywords.
     private static string? CheckPresenceTell(string text)
     {
         var t = text.Trim();

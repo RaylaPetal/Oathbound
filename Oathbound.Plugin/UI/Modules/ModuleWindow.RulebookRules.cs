@@ -96,7 +96,7 @@ public sealed partial class ModuleWindow
                 if (condition is OathCondition.AddressOwner or OathCondition.ForbiddenWord or OathCondition.MessageOwner or OathCondition.SayGoodnight)
                     IconGlyph.HelpMarker("Not case-sensitive, and it can be anywhere in the message.");
                 else if (condition == OathCondition.AskBeforeLogoff)
-                    IconGlyph.HelpMarker("Any /tell from you that contains it grants leave - the Grant leave button in the Overview tab sends just the word. Not case-sensitive.");
+                    IconGlyph.HelpMarker("A name for the leave. Grant it with the Grant leave button in the Overview tab; tells don't grant leave.");
             }
             switch (condition)
             {
@@ -538,10 +538,10 @@ public sealed partial class ModuleWindow
     private static bool DrawPresenceTell(string id, string value, Action<string> set)
     {
         ItemWidth(260);
-        var changed = ImGui.InputTextWithHint($"they /tell you##{id}", "optional, e.g. I'm here", ref value, RulebookLimits.MaxPresenceTellLength);
+        var changed = ImGui.InputTextWithHint($"they send you##{id}", "optional, e.g. I'm here", ref value, RulebookLimits.MaxPresenceTellLength);
         if (changed)
             set(value);
-        IconGlyph.HelpMarker("Their client sends this to you as a /tell, nowhere else. Needs their Custom chat messages permission and its acknowledgement.");
+        IconGlyph.HelpMarker("Their client sends this to you through Oathbound, and it shows in your chat as an Oathbound line. It never goes out as game chat.");
         return changed;
     }
 

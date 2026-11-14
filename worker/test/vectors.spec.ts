@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import vectors from "../../protocol/vectors/crypto-vectors.json";
 import { toCanonicalJson, sha256Hex } from "../src/lib/json";
 import { verifyEcdsaSignature } from "../src/lib/crypto";
+import { socketAuthBaseString } from "../src/hub/socketAuth";
 
 /**
  * Closes out task 1.2's verification criterion for the Worker side: the
@@ -216,6 +217,35 @@ describe("cross-runtime crypto vectors", () => {
     const aad = toCanonicalJson({ pairIdHash: v.pairIdHash, pairEpoch: v.pairEpoch, side: v.side, seq: v.seq });
     expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
     const key = await crypto.subtle.importKey("raw", Buffer.from(v.derivedAesKeyHex, "hex"), "AES-GCM", false, ["decrypt"]);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 },
+      key,
+      Buffer.from(v.ciphertextWithTagBase64Url, "base64url"),
+    );
+    expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
+  });
+
+  it("verifies the live connection challenge signature and its device key id", async () => {
+    const v = vectors.socketAuth;
+    expect(await sha256Hex(toCanonicalJson(v.publicKeyJwk))).toBe(v.deviceKeyId);
+    expect(v.baseString).toBe(socketAuthBaseString(v.deviceKeyId, v.challengeNonce));
+    expect(await verifyEcdsaSignature(v.publicKeyJwk as never, v.signatureBase64Url, v.baseString)).toBe(true);
+    expect(await verifyEcdsaSignature(v.publicKeyJwk as never, v.signatureBase64Url, socketAuthBaseString(v.deviceKeyId, "x".repeat(22)))).toBe(false);
+  });
+
+  it("derives the peer message key from the pair secret and decrypts the sample frame", async () => {
+    const v = vectors.peerMessage;
+    const enc = new TextEncoder();
+    expect(v.infoUtf8).toBe("oathbound-relay-message-v1" + v.pairIdHash + v.pairEpoch);
+    const salt = await crypto.subtle.digest("SHA-256", enc.encode(v.pairIdHash + "|" + v.pairEpoch));
+    expect(Buffer.from(salt).toString("hex")).toBe(v.saltSha256Hex);
+    const hk = await crypto.subtle.importKey("raw", Buffer.from(v.sharedSecretHex, "hex"), "HKDF", false, ["deriveBits"]);
+    const keyBits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: enc.encode(v.infoUtf8) }, hk, 256);
+    expect(Buffer.from(keyBits).toString("hex")).toBe(v.derivedAesKeyHex);
+
+    const aad = toCanonicalJson({ pairIdHash: v.pairIdHash, pairEpoch: v.pairEpoch, from: v.from, seq: v.seq, sentAt: v.sentAt });
+    expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
+    const key = await crypto.subtle.importKey("raw", keyBits, "AES-GCM", false, ["decrypt"]);
     const plaintext = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 },
       key,

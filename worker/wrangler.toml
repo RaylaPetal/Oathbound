@@ -10,7 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 # ids below.
 
 [env.local]
-vars = { RELAY_ENVIRONMENT = "local", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "1" }
+vars = { RELAY_ENVIRONMENT = "local", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "1", LIVE_CHARGE_SAMPLING = "1" }
 
 [[env.local.d1_databases]]
 binding = "RELAY_DB"
@@ -21,6 +21,14 @@ migrations_dir = "migrations"
 [[env.local.r2_buckets]]
 binding = "RELAY_CATALOG_BUCKET"
 bucket_name = "oathbound-relay-catalog-local"
+
+[[env.local.durable_objects.bindings]]
+name = "DEVICE_HUB"
+class_name = "DeviceHub"
+
+[[env.local.migrations]]
+tag = "v1-device-hub"
+new_sqlite_classes = ["DeviceHub"]
 
 # The general per-origin flood guard. Kept out of D1 so it costs no row writes; the capability-guessing
 # limits stay in D1 because they need one global count.
@@ -52,6 +60,14 @@ migrations_dir = "migrations"
 [[env.staging.r2_buckets]]
 binding = "RELAY_CATALOG_BUCKET"
 bucket_name = "oathbound-relay-catalog-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "DEVICE_HUB"
+class_name = "DeviceHub"
+
+[[env.staging.migrations]]
+tag = "v1-device-hub"
+new_sqlite_classes = ["DeviceHub"]
 
 [env.staging.triggers]
 crons = ["*/15 * * * *"]
@@ -85,6 +101,14 @@ migrations_dir = "migrations"
 binding = "RELAY_CATALOG_BUCKET"
 bucket_name = "oathbound-relay-catalog-production"
 
+[[env.production.durable_objects.bindings]]
+name = "DEVICE_HUB"
+class_name = "DeviceHub"
+
+[[env.production.migrations]]
+tag = "v1-device-hub"
+new_sqlite_classes = ["DeviceHub"]
+
 [env.production.triggers]
 crons = ["*/15 * * * *"]
 
@@ -101,6 +125,49 @@ head_sampling_rate = 0.1
 invocation_logs = false
 persist = true
 [env.production.observability.traces]
+enabled = false
+head_sampling_rate = 1
+persist = true
+
+# Isolated test relay for changes that must not touch staging (the relay the shipped plugin uses). Nothing here is
+# shared with staging or production: own worker name, D1 database, R2 bucket and rate-limit namespace. Plugin builds
+# reach it only with `dotnet build -p:RelayTesting=true`. Create the D1 database and R2 bucket before the first deploy.
+[env.testing]
+vars = { RELAY_ENVIRONMENT = "testing", CIRCUIT_BREAKER_FORCE_OPEN = "false", GLOBAL_CHARGE_SAMPLING = "4" }
+
+[[env.testing.d1_databases]]
+binding = "RELAY_DB"
+database_name = "oathbound-relay-testing"
+database_id = "1b5173dd-57ff-4cb2-9256-86043b2c993f"
+migrations_dir = "migrations"
+
+[[env.testing.r2_buckets]]
+binding = "RELAY_CATALOG_BUCKET"
+bucket_name = "oathbound-relay-catalog-testing"
+
+[[env.testing.durable_objects.bindings]]
+name = "DEVICE_HUB"
+class_name = "DeviceHub"
+
+[[env.testing.migrations]]
+tag = "v1-device-hub"
+new_sqlite_classes = ["DeviceHub"]
+
+[env.testing.triggers]
+crons = ["*/15 * * * *"]
+
+[[env.testing.ratelimits]]
+name = "ORIGIN_RATE_LIMITER"
+namespace_id = "1004"
+simple = { limit = 120, period = 60 }
+
+[env.testing.observability]
+[env.testing.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+[env.testing.observability.traces]
 enabled = false
 head_sampling_rate = 1
 persist = true
