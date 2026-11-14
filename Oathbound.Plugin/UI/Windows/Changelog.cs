@@ -11,6 +11,18 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.3.0.1", "2026-11-14", "Commands no longer use tells",
+        [
+            new("Important",
+            [
+                "You and your partner both need this version. Commands now travel through Oathbound directly instead of as /tells - see 0.3.0.0 below for everything that changed.",
+                "Your pairings carry over: nothing to redo. A partner who hasn't updated yet shows as \"Needs to update Oathbound\", and \"Ask them to update\" sends them a single reminder tell.",
+            ]),
+            new("Changed",
+            [
+                "Were you on the 0.3.0.0 testing build? This update moves you back to the regular Oathbound server and your regular pairings.",
+            ]),
+        ]),
         new("0.3.0.0", "2026-11-14", "Commands no longer use tells",
         [
             new("Important",
