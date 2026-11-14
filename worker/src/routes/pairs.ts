@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { notifyPeer } from "../lib/hints";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { nowSeconds, PAIR_CHARACTERS_CIPHERTEXT_MAX_BYTES, PAIR_STATUS_BATCH_MAX, TIMESTAMP_TOLERANCE_SECONDS } from "../lib/constants";
 import { RelayError } from "../lib/errors";
@@ -135,6 +136,7 @@ export async function putCollarStatus(request: Request, env: Env, pairIdHash: st
     .bind(stateAt, state, now, pairIdHash, pairEpoch)
     .run();
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json({ type: "collar-status-ack", schemaVersion: 1 });
 }
 
@@ -177,6 +179,7 @@ export async function putCageStatus(request: Request, env: Env, pairIdHash: stri
     .bind(stateAt, state, endsAt, pairIdHash, pairEpoch)
     .run();
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json({ type: "cage-status-ack", schemaVersion: 1 });
 }
 
@@ -212,6 +215,7 @@ export async function putSafeword(request: Request, env: Env, pairIdHash: string
     .bind(at, mood, pairIdHash, pairEpoch)
     .run();
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json({ type: "safeword-ack", schemaVersion: 1 });
 }
 
@@ -254,5 +258,7 @@ export async function putPairCharacters(request: Request, env: Env, pairIdHash: 
          AND (sub_characters_seq IS NULL OR ?2 > sub_characters_seq)`;
   const result = await env.RELAY_DB.prepare(statement).bind(stored, seq, pairIdHash, pairEpoch).run();
 
-  return Response.json({ type: "pair-characters-ack", schemaVersion: 1, stored: (result.meta.changes ?? 0) > 0 });
+  const changed = (result.meta.changes ?? 0) > 0;
+  if (changed) await notifyPeer(env, pair, deviceKeyId);
+  return Response.json({ type: "pair-characters-ack", schemaVersion: 1, stored: changed });
 }

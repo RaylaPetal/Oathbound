@@ -63,7 +63,7 @@ public static class CommandDescriber
         var name = LockTimerOption.StripSeconds(rest, out var seconds).Trim();
         if (name.Length == 0)
             return null;
-        if (name.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
+        if (name.Equals(CommandComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase))
             return "stop animation";
         return $"play {Name(name)}" + (seconds is { } s ? $" for {RestraintLock.Format(TimeSpan.FromSeconds(s))}" : "");
     }
@@ -142,7 +142,7 @@ public static class CommandDescriber
     {
         var (_, rest) = Split(text);
         var (word, payload) = Split(rest);
-        if (word.Equals(ChatComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase))
+        if (word.Equals(CommandComposer.LeashTravelWord, StringComparison.OrdinalIgnoreCase))
             return TeleportTarget.TryParse(payload, out var to) ? $"leash travel to {to.World}" : null;
         var bare = DutyPauseOption.Strip(LengthOption.Strip(MoodleOption.Strip(text, out _), out var yalms), out _);
         return bare.Trim().Equals(ControlWords.Leash, StringComparison.OrdinalIgnoreCase)

@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { notifyPeer } from "../lib/hints";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import {
@@ -187,6 +188,7 @@ export async function publishMailboxKey(request: Request, env: Env): Promise<Res
     .run();
   if (existing?.snapshot_r2_key) await deleteCiphertext(env, existing.snapshot_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }
 
@@ -310,6 +312,7 @@ export async function uploadMailboxSnapshot(request: Request, env: Env): Promise
   }
   if (mailbox.snapshot_r2_key && mailbox.snapshot_r2_key !== r2Key) await deleteCiphertext(env, mailbox.snapshot_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }
 

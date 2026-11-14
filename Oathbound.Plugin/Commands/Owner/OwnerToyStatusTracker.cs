@@ -13,24 +13,25 @@ public sealed class OwnerToyStatusTracker : IDisposable
     private static readonly Regex ToyCommand = new(@"(?:^|\s)toy\s+(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly PluginConfig config;
-    private readonly ChatSender sender;
+    private readonly Relay.PeerMessenger messenger;
     private readonly Dictionary<Guid, OwnerToyEstimate> estimates = new();
 
-    public OwnerToyStatusTracker(PluginConfig config, ChatSender sender)
+    public OwnerToyStatusTracker(PluginConfig config, Relay.PeerMessenger messenger)
     {
         this.config = config;
-        this.sender = sender;
-        sender.Sent += OnSent;
+        this.messenger = messenger;
+        messenger.SendResult += OnSendResult;
     }
 
     /// Null if none was sent this session.
     public OwnerToyEstimate? ForActivePairing =>
         config.GetActivePairing() is { Direction: PairingDirection.OwnerSide } pairing && estimates.TryGetValue(pairing.Id, out var estimate) ? estimate : null;
 
-    private void OnSent(string text)
+    private void OnSendResult(Relay.PeerSendResult result)
     {
-        if (config.GetActivePairing() is not { Direction: PairingDirection.OwnerSide } pairing) return;
-        var match = ToyCommand.Match(text.Trim());
+        if (result.Delivery != Relay.PeerDelivery.Delivered || result.Kind != Relay.PeerMessagePlaintext.CommandKind) return;
+        if (config.FindPairingById(result.PairingId) is not { Direction: PairingDirection.OwnerSide } pairing) return;
+        var match = ToyCommand.Match(result.Text.Trim());
         if (!match.Success) return;
 
         if (Parse(match.Groups[1].Value.Trim()) is { } estimate)
@@ -76,7 +77,7 @@ public sealed class OwnerToyStatusTracker : IDisposable
         return null;
     }
 
-    public void Dispose() => sender.Sent -= OnSent;
+    public void Dispose() => messenger.SendResult -= OnSendResult;
 }
 
 /// EndTicks null = permanent. EndIsExact false = an upper bound (the Sub's default may be shorter).

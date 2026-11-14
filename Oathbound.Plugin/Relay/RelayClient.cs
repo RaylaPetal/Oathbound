@@ -291,7 +291,11 @@ public sealed class CatalogMailboxStatus
 /// capability-only. Never retries here - callers own retry/backoff.
 public sealed class RelayClient : IDisposable
 {
+#if RELAY_TESTING
+    public const string RelayOrigin = "https://oathbound-relay-testing.oathbound.workers.dev";
+#else
     public const string RelayOrigin = "https://oathbound-relay-staging.oathbound.workers.dev";
+#endif
     private static readonly Uri RelayBaseUri = new(RelayOrigin, UriKind.Absolute);
     private const int MaxJsonResponseBytes = RelayProtocolConstants.CatalogCiphertextMaxBytes * 2;
     /// Omitting nulls is load-bearing: the server would canonicalize `"x":null` as a present key and every signature would fail.

@@ -178,8 +178,6 @@ public sealed partial class ModuleWindow
         if (rbPublishTask is { IsCompleted: true } done)
         {
             rbPublishResult = done.Result ?? $"Sent version {state.PublishedVersion}.";
-            if (done.Result is null && rbNudgeOnPublish)
-                plugin.RulebookService.SendNudge(pairing);
             rbPublishTask = null;
         }
         var busy = rbPublishTask is { IsCompleted: false };
@@ -191,9 +189,6 @@ public sealed partial class ModuleWindow
                 rbPublishTask = plugin.RulebookService.PublishAsync(pairing);
             }
         }
-        ContinueRowOrWrap(ImGui.GetFrameHeight() + ImGui.CalcTextSize("Tell them now").X + Scaled(24));
-        ImGui.Checkbox("Tell them now", ref rbNudgeOnPublish);
-        IconGlyph.HelpMarker($"Sends one /tell with only the word \"{Commands.ChatComposer.RulebookNudgeKeyword}\", so {pairing.PeerName}'s plugin picks it up right away instead of within half an hour.");
         if (rbPublishResult is not null)
             IconGlyph.WrappedDisabled(rbPublishResult);
     }

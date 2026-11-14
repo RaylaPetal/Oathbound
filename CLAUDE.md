@@ -5,18 +5,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 Oathbound (internal name `Oathbound.Plugin`) is a consent-based Owner/Sub control plugin for FINAL FANTASY
-XIV, built on Dalamud. Ongoing commands (title/outfit/gesture/follow/moodles/restraints) travel as ordinary
-`/tell` messages between the Owner's and Sub's own clients - no server involved, nothing crosses the wire but
-short alias words, and everything is applied locally by the Sub's own Glamourer/Penumbra/Honorific/Moodles
-IPC calls. See `README.md` for the full feature/consent-model writeup and `ffxiv-collar-system-design.md` for
-the original feasibility research.
+XIV, built on Dalamud. Ongoing commands (title/outfit/gesture/follow/moodles/restraints) and every peer notice
+travel between the Owner's and Sub's own clients over a live, end-to-end encrypted connection to the Cloudflare
+Worker relay (`worker/`), never as game chat - nothing crosses the wire but short alias words sealed for the
+pairing, and everything is applied locally by the Sub's own Glamourer/Penumbra/Honorific/Moodles IPC calls. See
+`README.md` for the full feature/consent-model writeup and `ffxiv-collar-system-design.md` for the original
+feasibility research.
 
-**Pairing, recovery backups, encrypted catalog sync and encrypted rulebooks are the one exception** and go through a Cloudflare
-Worker relay (`worker/`) - see Architecture below. The default pairing flow is pairing by code
-(`Oathbound.Plugin/Relay/CodePairingService.cs`, no tells, asynchronous, both people confirm each other's
-character); the older tell-referenced handshake in `Relay/PairingService.cs` stays as the fallback for peers on
-an older version. README is user-facing and light on pairing internals - read the code (and the local openspec
-specs `collar/pairing`, `collar/pairing-recovery`, if present) for the current behavior.
+The relay also handles pairing, recovery backups, encrypted catalog sync and encrypted rulebooks - see
+Architecture below. Pairing is by code only (`Oathbound.Plugin/Relay/CodePairingService.cs`, no tells,
+asynchronous, both people confirm each other's character); a client refuses to pair with a version from before live
+messaging. README is user-facing and light on pairing internals - read the code (and the local openspec specs
+`collar/pairing`, `collar/pairing-recovery`, `collar/relay-messaging`, if present) for the current behavior.
 
 This is two independently built and independently deployed things sharing one repo:
 - `Oathbound.Plugin/` - the Dalamud plugin (C#/.NET), shipped as a GitHub Release + `repo.json` third-party
@@ -64,7 +64,9 @@ npm run deploy:production                  # wrangler deploy --env production
 
 Tests run against `wrangler.toml`'s `env.local` (in-memory D1/R2 via miniflare), not staging/production.
 `worker/wrangler.toml`'s base block has no bindings and is never deployed directly - always target an
-explicit `--env`. `staging` is the environment the shipped plugin actually talks to
+explicit `--env`. `testing` is an isolated relay for trying changes without touching staging (own worker, D1, R2;
+plugin builds reach it only with `dotnet build -p:RelayTesting=true`; its D1 id is a placeholder until created).
+`staging` is the environment the shipped plugin actually talks to
 (`RelayClient.RelayOrigin` in the plugin is hardcoded to `oathbound-relay-staging...workers.dev`);
 `production`'s D1 database ID is still the literal placeholder `REPLACE_WITH_PRODUCTION_D1_ID` and isn't
 deployable as-is.
@@ -134,27 +136,31 @@ Subfolders are for finding things only: every file in `Commands/` is in namespac
 file in `UI/` in `Oathbound.Plugin.UI`, whatever subfolder it sits in. New files follow the same rule.
 
 Owner and Sub share one codebase, one window, and one build - there is no separate Owner/Sub project, and
-Role only changes what a client does with incoming tells and what it declares during pairing.
+Role only changes what a client does with incoming commands and what it declares during pairing.
 
-### The relay (pairing + catalog sync only)
+### The relay
 
-`Oathbound.Plugin/Relay/` <-> `worker/` is the one part of this system with real client/server infrastructure.
-Everything else in the plugin is peer-to-peer over FFXIV tells.
+`Oathbound.Plugin/Relay/` <-> `worker/` carries everything between two paired clients.
+
+- **Live messaging** (`collar/relay-messaging`): each install keeps one WebSocket (`RelaySocket.cs`) to its own
+  `DeviceHub` Durable Object (`worker/src/hub/`, one per device key id, hibernation API so idle connections cost
+  nothing). The hub sends a challenge the client signs with its device key (`socketAuth` in `protocol/`), then
+  forwards `send` frames to the other member's hub after checking pair membership and side, holds a frame up to
+  120s for a peer that just dropped, and acks `delivered|held|offline|needs_update|over_limit|over_budget|refused`.
+  Frames are sealed by `PeerMessageCrypto` with a key from static ECDH between the two device keys; the AAD binds
+  pair, epoch, sender side, seq and send time. `PeerMessenger` is the only send/receive API: it rejects frames
+  claiming our own side (reflection), seq at or below `LastAcceptedFrameSeq` (replay) and frames older than 120s.
+  Worker routes that change pair state call `notifyPeer` (`lib/hints.ts`), so the other member's client runs its
+  pair status check at once; the 30-minute check stays as the offline backstop.
 
 - **`CodePairingService.cs`** is the default pairing flow: a pairing code (`PairingCodes.cs`, 80-bit Crockford
   base32) derives both the invitation's lookup id and the AES key for each side's character name/world, so the
-  relay never sees who pairs. The inviter confirms the accepting character before consume; commands stay
-  tell-verified regardless. **`BackupService.cs`** keeps an encrypted backup of the device key + pairings on the
+  relay never sees who pairs. The inviter confirms the accepting character before consume; the character blob's
+  `transport` marks a live-messaging client, and either side refuses one without it. **`BackupService.cs`** keeps an encrypted backup of the device key + pairings on the
   relay under a recovery code, and **`RevocationService.CheckPairStatusAsync`** ends any pairing whose relay pair
   row (a permanent tombstone) is revoked - that's how unpair reaches an offline peer.
-- **`PairingService.cs`** owns the original tell-referenced relay-assisted pairing state machine for both roles. The inviter
-  creates a signed `InvitationEnvelope` via the relay, sends only its id in a `collarinvite <id>` tell; the
-  receiver fetches and independently verifies that envelope's signature before ever showing a Pending
-  request, and Accept publishes a signed `AcceptanceEnvelope` plus a `collarpairack <id> <proofDigest>` tell
-  back. The inviter only activates the pairing after re-verifying that proof digest against what the relay
-  actually recorded and consuming the invitation - relay state alone is never trusted as sufficient, the
-  tell's FFXIV-verified sender is what binds a relay claim to a real character (see the comment on
-  `HandleAcknowledgementTellAsync`).
+- **`PairingService.cs`** activates (`ActivateLocally`, only after the relay's pair row matches both verified device
+  keys) and tears down pairings; unpair publishes a revocation, which reaches an online peer through its hint.
 - **`RelayClient.cs`** is the one HTTP boundary to the Worker (`RelayOrigin` is release-pinned to
   `oathbound-relay-staging...workers.dev`, not user-configurable). Every mutating call is signed with the
   device's own ECDSA key (`x-relay-device-key-id`/`-timestamp`/`-nonce`/`-signature` headers); reads are
@@ -188,14 +194,20 @@ on the Worker side, but the plugin side has no automated check and needs manual 
 worker/src/
   index.ts        routing
   routes/         invitations.ts (create/fetch/accept/consume), pairs.ts, revocations.ts, catalog.ts,
-                  mailbox.ts (automatic catalog push/pickup), backups.ts (recovery backups), health.ts
+                  mailbox.ts (automatic catalog push/pickup), backups.ts (recovery backups), health.ts,
+                  socket.ts (hands the WebSocket upgrade to the device's hub)
+  hub/            DeviceHub Durable Object (live connection, challenge auth, frame forwarding, held frames, hints)
   lib/auth.ts     verifySignedRequest - the one place every signed request's headers+signature are checked
-  lib/quotas.ts   per-device/per-pair/global rate limits and the free-tier circuit breaker (assertCircuitBreakerClosed)
+  lib/quotas.ts   per-device/per-pair/global rate limits, the daily work/safety/live budgets (chargeLive) and the
+                  circuit breaker (assertCircuitBreakerClosed)
+  lib/hints.ts    notifyPeer - pushes a pair hint to the other member's hub after a state change
   lib/pairs.ts, crypto.ts, capability.ts, deviceKeys.ts, log.ts, ...
 ```
 
 Storage is Cloudflare D1 (`RELAY_DB`, migrations in `worker/migrations/`) for invitations/pairs/revocations/
-nonces/quota counters, and R2 (`RELAY_CATALOG_BUCKET`) for encrypted catalog-sync ciphertext. The relay never
+nonces/quota counters, R2 (`RELAY_CATALOG_BUCKET`) for encrypted catalog-sync ciphertext, and each `DeviceHub`'s own
+SQLite for a short pair cache and held frames (needs Workers Paid; budgets in `lib/quotas.ts` are sized to its
+included usage by `scripts/capacity-model.mjs`). The relay never
 sees plaintext catalog contents or character identity - see `lib/log.ts`'s `FORBIDDEN_FIELD_NAME_PATTERN`,
 which throws if a log call site ever tries to emit a field name that looks like it could carry secrets,
 signatures, ciphertext, or character/world identity.
@@ -210,39 +222,47 @@ match, ECDSA signature verification, and nonce-replay rejection - every failure 
 ### Consent/safety model
 
 Everything gameplay-facing is designed so nothing can ever apply to a Sub's character without that Sub's own
-plugin, pairing, and per-category permission all being true at the moment a tell arrives - see README.md's
+plugin, pairing, and per-category permission all being true at the moment a command frame arrives - see README.md's
 "Consent model" and "Automation risk / ToS disclosure" sections for the full model (panic-as-safeword, scoped
 revocable permissions, Gagged/Chat-action being called out as materially riskier automation surfaces). That
 model is a constraint on any new feature here, not just documentation.
 
-Everything the plugin sends on its own must be listed in README's automation section. Today that is: the
-Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>` notice when
-a leash ends on its side, and its `collarleash paused <code>` / `collarleash tpfail <code>` notices when a leash trip or an
-Owner's Teleport doesn't reach the Owner (`LeashOffNotifier`; they ride on `collarleash` so older Owner builds hide them), the Sub's `collarleash on` notice and an Owner-written /tell from an
-accepted presence rule (`RulebookService.PresenceExtras`), the Sub's `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices after struggling free of a lock or unlocking it with its key (`RestraintCommand.StruggledFree` / `KeyUnlocked`), a user-configured Reactions chat reply, the `collargame` piece report (`stripped`) and game-ended (`quit`) tells during a game (`GamesService`), the Sub's
-generic `collarsafeword panic <at>` tell to each Owner on panic (`SafewordNotifier`, always on, at most once a minute),
-and lifecycle tells tied
-to a user action (pairing ack, unpair, catalog request/denied, the optional rulebook publish nudge). Accepted
-rulebooks (`Rulebook/`) run consequences on their own, but only through `ChatCommandListener.RunRulebookCommand`
-and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never chat, teleport, leash or collar) - except a presence rule's
-leash/unleash and /tell to the Owner, which run outside the queue's commands but behind its cooldown and the
-Sub's Follow / Custom chat permissions. Only `ChatSender` transmits chat. Peer-notice
-tells are trigger-less keywords (`collarinvite`, `collarpairack`, `collarunpair`, `collarcatalogreq`,
-`collarcatalogdenied`, `collarleash`, `collarrulebook`, `collarstruggle`, `collargame`, `collarsafeword`) composed in `ChatComposer` and matched in `ChatCommandListener`, always
-verified against the tell's sender and a paired `PairingState` of the right direction - fail closed otherwise.
+Everything the plugin sends on its own must be listed in README's automation section. Today that is, all as relay
+notices: the Owner's `leash travel` on area change (`LeashTravelWatcher`), the Sub's `collarleash off <reason>`
+notice when a leash ends on its side, its `collarleash paused <code>` / `collarleash tpfail <code>` notices when a
+leash trip or an Owner's Teleport doesn't reach the Owner (`LeashOffNotifier`), the Sub's `collarleash on` notice and
+an Owner-written `collarsay` message from an accepted presence rule (`RulebookService.PresenceExtras`), the Sub's
+`collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices (`RestraintCommand.StruggledFree` /
+`KeyUnlocked`), the `collargame` piece report (`stripped`) and game-ended (`quit`) notices during a game
+(`GamesService`), and the Sub's generic `collarsafeword panic <at>` safety notice to each Owner on panic
+(`SafewordNotifier`, always on, at most once a minute), plus notices tied to a user action (catalog request/denied,
+Grant leave). Accepted rulebooks (`Rulebook/`) run consequences on their own, but only through
+`ChatCommandListener.RunRulebookCommand` and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never
+chat, teleport, leash or collar) - except a presence rule's leash/unleash and message to the Owner, which run outside
+the queue's commands but behind its cooldown and the Sub's Follow permission.
+
+Game chat the plugin sends: `ChatSender` (the Games Roll button's `/random <n>`, `/dice <n>` and a bare `/p`, and the
+click-only "Ask them to update" tell to a partner on a version without live messaging), a user-configured Reactions
+chat reply, a Custom Trigger chat action, and Gagged's rewrite of the Sub's own lines. Nothing between paired players
+goes through chat. Commands and notices are composed in `CommandComposer` and dispatched by `ChatCommandListener`
+from frames `PeerMessenger` accepted; notice handlers check the pairing's direction and fail closed.
+`LegacyTellDetector` only recognizes tells in the old format from a paired partner's confirmed character, hides
+them, marks the pairing `NeedsUpdate` and explains once - it never applies them.
 
 A pairing is between two people, each with one or more characters. `PairingState.PeerCharacters` holds the
 peer's characters, and identity checks go through `PairingState.IsConfirmedCharacter` / `PluginConfig.FindPairing`,
-never `PeerName`. `PeerName`/`PeerWorld` is only the resolved send target (`PairingState.ResolveTarget`: pin, then the
-fresher of the peer's published presence and its last tell, then the first confirmed character). An Owner's new
-character stays `Pending` (its tells ignored) until the Sub confirms it; a Sub's are confirmed automatically.
+never `PeerName`. `PeerName`/`PeerWorld` is only the peer's current character (`PairingState.ResolveTarget`: the
+fresher of the peer's published presence and the confirmed character its last accepted frame named, then the first
+confirmed character), used for labels and finding them in the world. Every command frame names the Owner's
+character; an Owner's new character stays `Pending` (commands sent from it are refused) until the Sub confirms it; a
+Sub's are confirmed automatically.
 `CharacterRecordService` publishes this install's `MyCharacters` (plus the current one, and the Sub's confirmations)
 as an end-to-end-encrypted record on each pair row (`POST /v1/pairs/:id/characters`) and applies the peer's record
 from the pair status check. Plugin state stays per install, so everything applied to a Sub follows them to every
 character.
 
-The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from what the Owner
-sent. Four pieces of real state flow back: the leash-off notice, and the collar status, cage status and safeword the
+The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from the commands the
+relay reported delivered. Four pieces of real state flow back: the leash-off notice, and the collar status, cage status and safeword the
 Sub's `CollarStatusReporter` / `CageStatusReporter` / `SafewordNotifier` post to the relay (the safeword is always
 reported, and only says that it happened) (read by the Owner into `OwnerCollarStatusStore` /
 `OwnerCageStatusStore` during the pair status check). Separately, with SimpleHeels installed, `SharedStatusPublisher`
@@ -256,9 +276,8 @@ struggle, keys, Take off, local test commands, stopping a toy/animation, ruleboo
 `CageService.IsCaged`. Panic and unpairing must always open it - never add a cage check to either.
 
 Games (`Games/`) are the one two-way feature: both clients run the same rules from roll lines they read themselves
-plus `collargame` tells for moves a roll can't show, and a loss only ever acts on the local player (`StripService`'s
-`game:` holder in `SlotLockManager`, which skips locked slots but strips over an unlocked outfit). Panic ends a game first. `ChatSender` allows exactly `/random <n>`, `/dice <n>` and a bare `/p` (a party roll switches
-the active channel first, since `/dice` rolls where chat is) besides its channel prefixes, for the Roll button only.
+plus `collargame` notices for moves a roll can't show, and a loss only ever acts on the local player (`StripService`'s
+`game:` holder in `SlotLockManager`, which skips locked slots but strips over an unlocked outfit). Panic ends a game first. A party roll sends a bare `/p` first, since `/dice` rolls where chat is.
 
 Guided tours live in `UI/TutorialCatalog.cs` and point at sections by their `Section.Begin` id. Renaming,
 removing or adding a module section needs the matching tour step updated there.

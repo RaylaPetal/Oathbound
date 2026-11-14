@@ -27,9 +27,6 @@ public class CollarWindow : Window, IDisposable
     private DateTime revertAllConfirmUntil = DateTime.MinValue;
     private bool revealSafeword;
 
-    /// Order matches the ChatChannel enum; the combo indexes into it.
-    private static readonly string[] ChatChannelNames = ["Tell", "Party", "Alliance", "Linkshell", "Cross-world Linkshell"];
-
     private static readonly (string Id, FontAwesomeIcon Icon, string Tooltip)[] NavItems =
     [
         ("title", FontAwesomeIcon.Heading, "Title"),
@@ -177,10 +174,8 @@ public class CollarWindow : Window, IDisposable
 
     private void DrawCharacterHeader()
     {
-        var pending = plugin.PairingService.Pending;
         var config = plugin.Configuration;
         var character = CharacterHeaderModel.Current();
-        var sameRoleWarning = pending is { } p && p.SenderRole == config.Role;
 
         ImGui.PushID("characterHeader");
         if (!ImGui.BeginTable("banner", 1, ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp))
@@ -214,26 +209,6 @@ public class CollarWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
 
-        if (pending is { } request)
-        {
-            var roleLabel = request.SenderRole == PluginRole.Owner ? "your Owner" : "your Sub";
-            var expiresIn = TimeSpan.FromSeconds(Math.Max(0, request.ExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-            var invitationExpired = request.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            IconGlyph.WrappedColored(Theme.Warning, $"Pending request: {request.Name}@{request.World} wants to pair as {roleLabel} (expires in {expiresIn.Minutes}m {expiresIn.Seconds}s).");
-            if (sameRoleWarning)
-                IconGlyph.WrappedColored(Theme.Danger, $"You're both set to {config.Role} in Settings - one of you should switch, or nothing will ever trigger.");
-
-            using (ImRaii.Disabled(invitationExpired))
-                if (ImGui.Button("Accept"))
-                    Plugin.FireAndForget(plugin.PairingService.AcceptPendingAsync(System.Threading.CancellationToken.None));
-            IconGlyph.HelpMarker("Pairs you with this person. You can unpair any time from Settings.");
-            ImGui.SameLine();
-            if (ImGui.Button("Reject"))
-                plugin.PairingService.DismissPending();
-            ImGui.Spacing();
-            ImGui.Separator();
-        }
-
         ImGui.BeginGroup();
         DrawPairingsList(config);
         ImGui.EndGroup();
@@ -260,15 +235,6 @@ public class CollarWindow : Window, IDisposable
         {
             ImGui.Spacing();
             ImGui.Separator();
-            var channelIndex = (int)config.OutgoingChannel;
-            Layout.ItemWidth(200);
-            if (ImGui.Combo("Send commands via##outgoingChannel", ref channelIndex, ChatChannelNames, ChatChannelNames.Length))
-            {
-                config.OutgoingChannel = (ChatChannel)channelIndex;
-                config.Save();
-            }
-            TutorialService.Anchor(TutorialAnchors.MainChannel);
-            IconGlyph.HelpMarker("The chat channel your commands go out on. Your Sub listens on all of them.");
             DrawSendTarget(config);
             DrawTeleportHeaderAction();
         }
@@ -350,20 +316,17 @@ public class CollarWindow : Window, IDisposable
         }
     }
 
-    /// Owner side: which of the Sub's characters tells go to, with a pin to override it.
+    /// Owner side: the Sub's current character and whether their Oathbound can be reached.
     private void DrawSendTarget(PluginConfig config)
     {
-        if (config.ActivePairing is not { Direction: PairingDirection.OwnerSide } pairing) return;
-        var confirmed = pairing.ConfirmedCharacters.ToList();
-        if (confirmed.Count < 2) return;
-
-        var pinned = confirmed.FirstOrDefault(c => c.Is(pairing.PinnedTargetName, pairing.PinnedTargetWorld));
-        var labels = new[] { $"Automatic ({pairing.PeerName}@{pairing.PeerWorld})" }.Concat(confirmed.Select(c => c.ToString())).ToArray();
-        var index = pinned is null ? 0 : confirmed.IndexOf(pinned) + 1;
-        Layout.ItemWidth(260);
-        if (ImGui.Combo("Send to##sendTarget", ref index, labels, labels.Length))
-            plugin.CharacterRecords.Pin(pairing, index == 0 ? null : confirmed[index - 1]);
-        IconGlyph.HelpMarker("Automatic follows whichever of your Sub's characters they were last on: the one their plugin last reported, or the one they last sent you a tell from.");
+        if (config.ActivePairing is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
+        if (pairing.PeerRelayState == PeerRelayState.NeedsUpdate)
+        {
+            IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName} needs to update Oathbound - nothing you send reaches them until they do.");
+            PeerRelayStatus.DrawAskToUpdate(plugin, pairing);
+            return;
+        }
+        if (pairing.ConfirmedCharacters.Count() < 2) return;
         IconGlyph.WrappedDisabled(SeenText(pairing));
     }
 
@@ -372,10 +335,10 @@ public class CollarWindow : Window, IDisposable
         var target = pairing.FindPeerCharacter(pairing.PeerName, pairing.PeerWorld);
         var presence = target is not null && target.Is(pairing.PresenceName, pairing.PresenceWorld) ? pairing.PresenceAt : 0;
         var seen = Math.Max(presence, target?.LastSeenAt ?? 0);
-        if (seen == 0) return $"Sending to {pairing.PeerName}@{pairing.PeerWorld}.";
+        if (seen == 0) return $"{pairing.PeerName}@{pairing.PeerWorld}.";
         var ago = TimeSpan.FromSeconds(Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - seen));
         var text = ago.TotalMinutes < 1 ? "just now" : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago" : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago" : $"{(int)ago.TotalDays}d ago";
-        return $"Sending to {pairing.PeerName}@{pairing.PeerWorld}, last seen {text}.";
+        return $"On {pairing.PeerName}@{pairing.PeerWorld}, last seen {text}.";
     }
 
     /// Owner side: a Sub's safeword, shown until dismissed, for every Sub rather than only the active one.
@@ -445,7 +408,7 @@ public class CollarWindow : Window, IDisposable
             {
                 if (confirming)
                 {
-                    plugin.ChatSender.Send(plugin.ChatComposer.Compose("revert all"));
+                    plugin.SendCommand("revert all");
                     revertAllConfirmUntil = DateTime.MinValue;
                 }
                 else

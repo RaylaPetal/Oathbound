@@ -11,6 +11,31 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.3.0.0", "2026-11-14", "Commands no longer use tells",
+        [
+            new("Important",
+            [
+                "You and your partner both need this version. Commands and notices now travel through Oathbound directly instead of as /tells, so a partner on an older version can't receive anything until they update.",
+                "A partner who hasn't updated shows as \"Needs to update Oathbound\". Anything their old plugin sends you is ignored, with one note saying so, and \"Ask them to update\" sends them a single tell asking them to.",
+            ]),
+            new("New",
+            [
+                "Commands arrive within a second, end-to-end encrypted for your pairing. Nothing shows up in anyone's chat, and nobody else - in game or on Oathbound's server - can read them.",
+                "Owners see whether each command reached their Sub, or why not: they're offline, need to update, or the server couldn't be reached.",
+                "A new rulebook, a collar or cage change, a safeword and an unpair reach your partner within seconds if they're online, instead of at their next check.",
+                "Long Custom Trigger bundles go out as one command instead of being split up.",
+            ]),
+            new("Changed",
+            [
+                "The \"Send commands via\" channel picker is gone: commands only go to the Sub you picked, never through party or linkshell chat. Oathbound no longer reads commands from chat.",
+                "Your trigger phrase now only starts your chat Reactions.",
+                "Grant leave is the only way to grant leave for an \"ask before logging off\" oath; a tell with the word no longer does.",
+                "A presence rule's message reaches your Owner through Oathbound and shows in their chat as an [Oathbound] line, never as game chat, so it no longer needs Custom chat messages.",
+                "Publishing a rulebook delivers it right away, so \"Tell them now\" is gone.",
+                "Pairing by tell for older versions is gone; pair with a code.",
+                "Show raw command text is gone, since there's no command text in chat any more.",
+            ]),
+        ]),
         new("0.2.7.3", "2026-11-12", "Alt characters, teleport notices and more",
         [
             new("New",

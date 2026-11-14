@@ -26,8 +26,8 @@ public sealed partial class ModuleWindow
         var first = true;
         foreach (var c in commands)
         {
-            var messages = plugin.ChatComposer.ComposeAll(OwnerMoodleOverride.ForSend(plugin.Configuration, c.Command, null));
-            var fits = ChatComposer.AllFit(messages);
+            var command = OwnerMoodleOverride.ForSend(plugin.Configuration, c.Command, null);
+            var fits = CommandSelector.Fits(command);
             if (!first)
             {
                 ImGui.SameLine(0, ImGui.GetStyle().ItemSpacing.X * 2);
@@ -40,18 +40,10 @@ public sealed partial class ModuleWindow
             using (ImRaii.Disabled(!canSend || !fits))
             {
                 if (ImGui.Button($"{c.Label}##cmdrow_{c.FavoriteId}"))
-                    plugin.ChatSender.SendAll(messages);
+                    plugin.SendCommand(command);
             }
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip((c.Help is null ? "" : c.Help + "\n") + (canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.")
-                    + "\nRight-click to copy.");
-            if (ImGui.BeginPopupContextItem($"cmdrowCopy_{c.FavoriteId}"))
-            {
-                using (ImRaii.Disabled(!fits || messages.Count > 1))
-                    if (ImGui.Selectable("Copy command"))
-                        ImGui.SetClipboardText(messages[0]);
-                ImGui.EndPopup();
-            }
+                ImGui.SetTooltip((c.Help is null ? "" : c.Help + "\n") + (canSend ? command : "Not paired with a Sub yet."));
             ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
             DrawFavoriteStar(c.FavoriteId);
             ImGui.EndGroup();

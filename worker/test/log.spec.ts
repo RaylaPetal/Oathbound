@@ -23,6 +23,12 @@ describe("logEvent redaction", () => {
     "catalogSnapshot",
     "invitationId",
     "requestId",
+    "nonce",
+    "text",
+    "character",
+    "pairIdHash",
+    "deviceKeyId",
+    "messageId",
   ];
 
   it.each(forbiddenFieldNames)("refuses to log a field named %s", (fieldName) => {

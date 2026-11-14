@@ -25,14 +25,13 @@ they've paired with that Owner, and they've turned on that kind of command. The 
 everything instantly with their safeword.
 
 > [!NOTE]
-> Commands travel as ordinary in-game `/tell`s between the two of you. Changes to your look are applied
-> through your own Glamourer and Penumbra, so anyone who sees your synced appearance (Snowcloak,
-> Lightless, or a similar sync tool) sees them too.
+> Commands travel between your two plugins through Oathbound's relay, end-to-end encrypted, and never as
+> game chat - nobody else sees them, in-game or on the relay. Both of you need a version with this (0.3 or
+> newer). Changes to your look are applied through your own Glamourer and Penumbra, so anyone who sees your
+> synced appearance (Snowcloak, Lightless, or a similar sync tool) sees them too.
 >
-> Your plugin hides those command messages from your own chat log and shows a short **[Oathbound]**
-> line instead, saying what was sent or what happened. That only tidies your own chat: a command sent in
-> party or a linkshell is still seen by everyone there. To see the raw messages, turn on **Show raw command
-> text** in Settings > Test Commands.
+> Each command shows as a short **[Oathbound]** line in your own chat: what was sent and whether it reached
+> your partner, or what was applied and why not.
 
 ---
 
@@ -70,16 +69,18 @@ Open **Settings** (`/obsettings`) and press **Create pairing code**. Give the co
 any way you like: Discord, `/say`, in person. They enter it in their own Settings, see who it's from, and
 press **Accept**. The next time you're online you'll be asked to **Confirm** that it's really them, and
 you're paired. You don't have to be online at the same time, and no tells are sent. A code works once and
-lasts 7 days.
+lasts 7 days. Both of you need Oathbound 0.3 or newer: a code from an older version is refused, with a note
+to ask them to update.
 
-Pairing with someone on an older version? Open **Older version? Pair by tell** in the same place and use
-the old invitation, where both of you need to be online.
+**Partner on an older version?** Commands don't reach them until they update. Their pairing shows **Needs to
+update Oathbound**, and anything their old plugin sends you is ignored, with one note saying so. The **Ask them
+to update** button sends them a single tell asking them to update - only when you press it.
 
 **Playing more than one character?** You pair once, as a person, not once per character. The first time you
 log into another character, Oathbound asks whether to **Link** it to your pairings (or **Not now**, or **Never for
 this character**). A linked character counts as you: commands and notices find you on whichever one you're
-playing, and the Owner's tells follow the Sub to the character they were last on (the Owner can also pick one by
-hand). A Sub's new characters are accepted by the Owner's plugin automatically. An Owner's new character can't
+playing, and the Owner's plugin follows the Sub to the character they're on. A Sub's new characters are accepted
+by the Owner's plugin automatically. An Owner's new character can't
 send the Sub anything until the Sub **Confirms** it. Everything Oathbound applies to a Sub - collar, restraints,
 cage, locks - follows them to every character, linked or not. Manage linked characters in **Settings >
 Characters**. If you're already paired with someone, link the character instead of pairing again.
@@ -96,7 +97,8 @@ A command in a category that's switched off is simply ignored.
 
 ### 3. The Owner commands
 The Owner's view shows ready-made **Quick Commands** built from the Sub's shared setup. Each one has a
-**Send** button, and one click sends one tell. The Sub's list reaches the Owner automatically, and the
+**Send** button, and one click sends one command. The Sub has to be online for it to reach them: a command sent
+while they're logged off is dropped, and your chat says so. The Sub's list reaches the Owner automatically, and the
 Sync tab shows whether it's up to date.
 
 ---
@@ -124,10 +126,11 @@ Sync tab shows whether it's up to date.
   outfit, title, moodles, restraints, leash, animations and toys. Your collar is the one thing it leaves
   on: a locked collar (and its moodle) comes off only when the Owner who collared you sends **Collar
   unlock**, or when that pairing ends. Your plugin also lets each of your Owners know you used your safeword, and
-  nothing more: a short tell so an Owner who's online knows at once, and a note on the relay for one who's
-  offline, which their plugin reads at its next check. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
+  nothing more: a short notice through the relay so an Owner who's online knows at once, and a note on the relay
+  for one who's offline, which their plugin reads when they next log in. You can also bind it to a hotkey. If you set a safeword, type it after the command (`/obpanic red`); if you don't,
   the plain command always works. Panic doesn't end your pairing. Unpairing is a separate action in Settings, and it reaches your
-  partner even if they're offline: their pairing ends the next time they log in, however long that takes.
+  partner even if they're offline: their pairing ends within seconds if they're online, or the next time they log
+  in, however long that takes.
 - **Only the two of you see the icons, the leash line, drawn cuffs and cage bounds.** They're drawn by your own clients - nobody
   else sees them, and drawing them sends nothing. The Sub's own view is exact; the Owner's is an estimate
   built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
@@ -144,8 +147,8 @@ Sync tab shows whether it's up to date.
   every consequence still needs the permission for its category, and a rulebook can never teleport you or
   touch your collar. A recurring oath starts again (or is offered again) after each run, and swearing to it is
   your consent to that too; you can stop it renewing at any time, and the current run still counts. Only you can
-  buy from your Owner's shop - no command or rule ever spends your points. Only a presence rule can leash you, take the leash off, or have you /tell your Owner a
-  message, and only with your Follow or Custom chat messages permission on. Your safeword pauses all rulebooks and voids open oaths until you
+  buy from your Owner's shop - no command or rule ever spends your points. Only a presence rule can leash you, take the leash off, or send your Owner a
+  message through Oathbound, and leashing only with your Follow permission on. Your safeword pauses all rulebooks and voids open oaths until you
   resume.
 - **A cage closes your own escapes - only the ones you allowed it to.** It needs its own permission and
   acknowledgement. While you're caged you can't leave, change any permission or acknowledgement, struggle, use a
@@ -273,13 +276,14 @@ further, and you should decide for yourself before turning them on:
   being drawn or the ledger crossing a threshold. Each one runs the same commands your Owner could send you
   (title, outfit, animation, moodle, restraint, toy, revert all), never teleport or the collar. A **presence**
   rule can also leash you to your Owner when they arrive (your client then sends them a short `collarleash on`
-  tell so the leash follows them across areas), take it off when they leave, and **send your Owner a /tell**
-  they wrote, by itself, when they arrive or leave. Leashing needs your Follow permission and the message needs
-  Custom chat messages; with either off, that part is skipped.
+  notice so the leash follows them across areas), take it off when they leave, and **send your Owner a message**
+  they wrote, by itself, when they arrive or leave. The message goes only to your Owner, through Oathbound, and
+  shows in their chat as an [Oathbound] line - never as game chat. Leashing needs your Follow permission; with it
+  off, that part is skipped.
   A **schedule** rule runs at the time of day your Owner set, or each time you log in. Anything other than toys
   and moodles waits until you're out of combat and cutscenes, and each rule has a cooldown of at least a minute.
 - **Games** roll only when you press Roll (or type the roll yourself), and both plugins count rolls straight from
-  the game's own roll lines. While a game runs, your plugin tells the other player in a short `collargame` tell which
+  the game's own roll lines. While a game runs, your plugin tells the other player in a short `collargame` notice which
   piece came off when you lose a strip round, and when the game ends on your side (quit, idle, panic, logging out). Your moves, prompts and
   forfeits are sent only when you press their buttons.
 - **Reactions** act on their own when someone uses an emote on you or says your trigger phrase. A
@@ -287,40 +291,46 @@ further, and you should decide for yourself before turning them on:
   once every 10 seconds per reaction. That's the kind of automation plugin rules frown on most, so only
   add a chat reply if you're comfortable with it.
 
-Every command the Owner sends is one deliberate click that sends one tell, with one exception: while a Sub
-is leashed, the Owner's plugin sends that Sub one "leash travel" tell on its own each time the Owner changes
-area, so the Sub can follow. The Sub's plugin has a matching one: when the Sub's leash comes off on their
-side (their safeword, or a leash their plugin couldn't put on), it sends the Owner one short "leash off" tell, so the Owner's plugin stops treating them as
-leashed. It also sends that tell once in reply to a "leash travel" that reaches a Sub who isn't leashed. When a
-"leash travel" can't bring the Sub over (missing Lifestream or vnavmesh, busy, caged, the journey failed or the Sub
-stopped it), the Sub's plugin sends the Owner one short "collarleash paused" tell carrying only a reason code, at most
-once per reason while the leash stays paused. Likewise, when a Teleport the Owner sent doesn't reach them, it sends
-one "collarleash tpfail" tell with a reason code. Panic, the Owner's own revert all, and unpairing send neither. Apart
-from those and a chat reply you set up yourself in Reactions, the plugin never auto-replies to chat. The shared
-leash and status tag (see Consent & safety) isn't chat at all: it travels with your character through SimpleHeels
-and your sync plugin, never through chat or Oathbound's relay. The only
-other tells it sends on its own are ones tied directly to something you just did, like confirming a pairing
-you accepted, or the optional "collarrulebook" tell when an Owner publishes a rulebook with **Tell them now**
-ticked, which only asks the Sub's plugin to pick it up right away. If you struggle free of a restraint lock, your
-plugin sends the Owner who set it one short "collarstruggle free" tell naming that restraint, and if you unlock one with
-a key your Owner gave you, one "collarstruggle key" tell naming it; failed tries and wrong keys send nothing. When you
-use your safeword, your plugin sends each of your Owners one "collarsafeword panic" tell that only says you used it
-(at most once a minute). During a
-game, the piece and game-ended `collargame` tells described under Games go out on their own. An Owner's
-**Grant leave** button (for an "ask before logging off" oath) sends one tell with the word they chose, only when
-they press it.
+Oathbound sends no game chat on its own. Commands and notices between paired players go through Oathbound's
+relay, not as tells, so nothing in your chat log or anyone else's comes from them. The only chat it ever sends is
+a game roll when you press Roll, a Reactions chat reply you set up yourself, a Custom Trigger's chat line (with
+your Custom chat messages permission), the muffled version of a line you type while Gagged, and the **Ask them to
+update** tell when you press that button for a partner on an older version.
 
-Your plugin also hides its command and notice messages from your own chat log, whether your plugin sent
-them or you typed them yourself, and prints a short [Oathbound] line in their place. It only changes what
-your own chat log shows, never what is sent or who sees it.
+Every command the Owner sends is one deliberate click, with one exception: while a Sub is leashed, the Owner's
+plugin sends that Sub one "leash travel" command on its own each time the Owner changes area, so the Sub can
+follow. The Sub's plugin sends these notices to the Owner on its own, through the relay:
+
+- **leash off** (`collarleash off`) when the Sub's leash comes off on their side (their safeword, or a leash
+  their plugin couldn't put on), so the Owner's plugin stops treating them as leashed; also once in reply to a
+  "leash travel" that reaches a Sub who isn't leashed;
+- **leash paused** (`collarleash paused`) with only a reason code, when a "leash travel" can't bring the Sub over
+  (missing Lifestream or vnavmesh, busy, caged, the journey failed or the Sub stopped it), at most once per reason
+  while the leash stays paused, and **teleport failed** (`collarleash tpfail`) when an Owner's Teleport doesn't
+  reach them;
+- **leash on** (`collarleash on`) and the Owner's own written message, from an accepted presence rule;
+- **struggled free** / **key used** (`collarstruggle free` / `collarstruggle key`) naming the restraint, when the
+  Sub escapes a lock or opens it with its key - failed tries and wrong keys send nothing;
+- **safeword** (`collarsafeword panic`), to each of the Sub's Owners when they use their safeword. It only says
+  that it happened, at most once a minute, and is always on;
+- during a game, the piece and game-ended `collargame` notices described under Games.
+
+Panic, the Owner's own revert all, and unpairing send no leash notice. An Owner's **Grant leave** button (for an
+"ask before logging off" oath) sends one notice, only when they press it. The shared leash and status tag (see
+Consent & safety) isn't chat or relay traffic at all: it travels with your character through SimpleHeels and your
+sync plugin.
 
 A Teleport command carries the Owner's world, zone, housing ward (if any) and position, so the Sub's
-plugin knows where to go. It's sent only to your paired Sub, the same way as every other command. A cage
-command likewise carries where the cage is, and is only ever sent as a /tell to your paired Sub.
+plugin knows where to go. Like every command, it's encrypted for your paired Sub and goes only to them. A cage
+command likewise carries where the cage is.
 
-Pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay service. Your
-catalog, the Owner's rulebook and the Sub's rulebook activity report are end-to-end encrypted, and the relay
-never sees their contents or your character's name. A Sub's restraint pictures go to their Owner the same way, as
+Commands, notices, pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay
+service. While you're logged in and paired, your plugin keeps one connection to it open, proven with your
+install's own key. Every command and notice is end-to-end encrypted for your pairing, and so are your catalog,
+the Owner's rulebook and the Sub's rulebook activity report: the relay never sees their contents or your
+character's name. It does see which anonymous pairing a message belongs to, when it was sent and how big it is,
+and it holds a message for at most two minutes if your partner's connection just dropped. If the relay is down,
+commands can't reach your partner, but your safeword, unpairing and everything already applied keep working. A Sub's restraint pictures go to their Owner the same way, as
 separately encrypted small copies: the relay keeps one only while that Sub's catalog still uses it, and only sees how
 many there are, their sizes and when they change - never the pictures or which restraint they belong to. While a Sub has a rulebook, their plugin uploads that
 encrypted activity report by itself, at most every 10 minutes and only when something changed. The relay also counts how many installs
@@ -343,7 +353,7 @@ risk.**
 The repository contains two projects:
 
 - `Oathbound.Plugin/`: the Dalamud plugin (C#, .NET 10), shared by both roles.
-- `worker/`: the Cloudflare Worker relay that handles pairing and encrypted catalog sync (TypeScript).
+- `worker/`: the Cloudflare Worker relay that carries commands and notices between paired plugins, plus pairing and encrypted sync (TypeScript).
 
 The wire format both sides agree on lives in `protocol/`.
 

@@ -22,16 +22,9 @@ public class SettingsWindow : Window, IDisposable
     private readonly Plugin plugin;
     private readonly CodePairingView codePairingView;
     private readonly RecoveryView recoveryView;
-    private string inviteTargetInput = "";
-    private bool sendingInvitation;
-    private bool acceptingInvitation;
-
-    /// Only meaningful for Switch: true invites as the Owner-side.
-    private bool inviteAsOwnerSide = true;
     private bool confirmingIdentityReset;
     private Guid? confirmingUnpairId;
     private bool charactersTabWasOpen;
-    private bool confirmingInviteReplace;
     private string triggerPhraseInput = "";
     private string testCommandInput = "";
     private int testCustomTriggerIndex;
@@ -197,8 +190,6 @@ public class SettingsWindow : Window, IDisposable
         {
             using (Section.Begin("testCommandCard"))
                 DrawTestCommandCard(config);
-            using (Section.Begin("rawCommandTextCard"))
-                DrawRawCommandTextCard(config);
             ImGui.EndTabItem();
         }
 
@@ -210,7 +201,7 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.FlaskVial, "Test an Owner command");
         ImGui.Separator();
-        IconGlyph.WrappedDisabled("Type what an Owner would send after \"/tell you\" and run it on yourself. Nothing is sent.");
+        IconGlyph.WrappedDisabled("Type a command as your Owner would send it and run it on yourself. Nothing is sent.");
 
         var aliases = config.Aliases;
         var savedTriggers = new List<(string Label, string Command)>
@@ -313,7 +304,7 @@ public class SettingsWindow : Window, IDisposable
             {
                 ImGui.TableSetupColumn("Side", ImGuiTableColumnFlags.WidthFixed, ImGui.CalcTextSize("Owned by").X);
                 ImGui.TableSetupColumn("Character", ImGuiTableColumnFlags.WidthStretch, 2f);
-                ImGui.TableSetupColumn("Trigger phrase", ImGuiTableColumnFlags.WidthStretch, 1f);
+                ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthStretch, 1f);
                 ImGui.TableSetupColumn("##unpair", ImGuiTableColumnFlags.WidthFixed, Layout.ButtonWidth("Unpair"));
                 ImGui.TableHeadersRow();
 
@@ -336,10 +327,7 @@ public class SettingsWindow : Window, IDisposable
                     }
 
                     ImGui.TableNextColumn();
-                    var (phrase, source) = TriggerPhraseInEffect(config, p);
-                    ImGui.TextWrapped(phrase);
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip(source);
+                    PeerRelayStatus.Draw(plugin, p);
 
                     ImGui.TableNextColumn();
                     using (ImRaii.Disabled(confirmingUnpairId is not null))
@@ -428,7 +416,7 @@ public class SettingsWindow : Window, IDisposable
                 ImGui.PushID(character.ToString());
                 var state = character.State switch
                 {
-                    PeerCharacterState.Confirmed => character.Is(pairing.PeerName, pairing.PeerWorld) ? "confirmed, tells go here" : "confirmed",
+                    PeerCharacterState.Confirmed => character.Is(pairing.PeerName, pairing.PeerWorld) ? "confirmed, current" : "confirmed",
                     PeerCharacterState.Pending => "waiting for you to confirm",
                     _ => "rejected",
                 };
@@ -476,16 +464,6 @@ public class SettingsWindow : Window, IDisposable
         }
     }
 
-    /// Sub-side: always our own. Owner-side: the peer's, falling back to ours when they never sent one.
-    private static (string Phrase, string Source) TriggerPhraseInEffect(PluginConfig config, PairingState p)
-    {
-        if (p.Direction == PairingDirection.SubSide)
-            return (config.TriggerPhrase, "Your own trigger phrase - it's what your Owner's commands must start with.");
-        if (p.PeerTriggerPhrase is { Length: > 0 } peerPhrase)
-            return (peerPhrase, "Your Sub's trigger phrase - your commands to them start with it.");
-        return (config.TriggerPhrase, "Your own trigger phrase - your Sub hasn't sent theirs.");
-    }
-
     private void DrawRevocationDeliveryStatus(PluginConfig config)
     {
         var mostRecentDelivery = config.Pairings
@@ -504,103 +482,13 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.WrappedColored(delivery == "delivered" ? Theme.Success : Theme.Warning, label);
     }
 
-    /// An invitation from someone on an older version shows here even while "Pair by tell" is collapsed.
     private void DrawPairWithSection(PluginConfig config)
     {
-        var pairingService = plugin.PairingService;
         codePairingView.Draw(config);
-
-        if (pairingService.Pending is { } request)
-        {
-            ImGui.Spacing();
-            var roleLabel = request.SenderRole == PluginRole.Owner ? "your Owner" : "your Sub";
-            var expiresIn = TimeSpan.FromSeconds(Math.Max(0, request.ExpiresAt - DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-            var invitationExpired = request.ExpiresAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            IconGlyph.WrappedColored(Theme.Warning, $"Invitation from {request.Name}@{request.World} - they'll be {roleLabel}. Expires in {expiresIn.Minutes}m {expiresIn.Seconds}s.");
-            if (request.SenderRole == config.Role)
-                IconGlyph.WrappedColored(Theme.Danger, $"You're both set to {config.Role} - one of you should switch Role, or nothing will ever trigger.");
-            using (ImRaii.Disabled(acceptingInvitation || invitationExpired))
-            {
-                if (ImGui.Button(acceptingInvitation ? "Accepting..." : "Accept##tellAccept"))
-                {
-                    acceptingInvitation = true;
-                    Plugin.FireAndForget(AcceptInvitationAsync());
-                }
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Reject##tellReject"))
-                pairingService.DismissPending();
-            if (invitationExpired)
-                IconGlyph.WrappedColored(Theme.Warning, "This invitation expired. Reject it and ask the sender to create another.");
-        }
-        else if (pairingService.AwaitingActivation)
-        {
-            IconGlyph.WrappedColored(Theme.Warning, "Waiting for the other side to confirm your tell pairing...");
-        }
-
-        if (pairingService.LastError is { Length: > 0 } lastError)
-            IconGlyph.WrappedColored(Theme.Danger, lastError);
-
-        ImGui.Spacing();
-        if (ImGui.CollapsingHeader("Older version? Pair by tell###tellPairing"))
-            DrawTellPairing(config);
 
         ImGui.Spacing();
         if (plugin.RelayClient.LastReachable is false)
-            IconGlyph.WrappedColored(Theme.Warning, "Couldn't reach Oathbound's server last time. Pairing needs it, but commands and panic still work.");
-    }
-
-    private void DrawTellPairing(PluginConfig config)
-    {
-        var pairingService = plugin.PairingService;
-        ImGui.TextWrapped("Enter who to pair with as you'd address a tell. You both need to be online.");
-        if (config.Role == PluginRole.Switch)
-        {
-            if (ImGui.RadioButton("Invite as Owner (they'll be your Sub)", inviteAsOwnerSide)) inviteAsOwnerSide = true;
-            ImGui.SameLine();
-            if (ImGui.RadioButton("Invite as Sub (they'll be your Owner)", !inviteAsOwnerSide)) inviteAsOwnerSide = false;
-        }
-        using (ImRaii.Disabled(sendingInvitation))
-        {
-            ImGui.InputTextWithHint("Pair with", "Name Surname@World", ref inviteTargetInput, 64);
-            using (ImRaii.Disabled(inviteTargetInput.Trim().Length == 0 || confirmingInviteReplace))
-            {
-                if (ImGui.Button(sendingInvitation ? "Sending..." : "Send Invitation"))
-                {
-                    if (pairingService.DescribeOutstandingInvitation() is not null)
-                        confirmingInviteReplace = true;
-                    else
-                    {
-                        sendingInvitation = true;
-                        Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
-                    }
-                }
-            }
-        }
-        IconGlyph.HelpMarker("Sends a pairing invitation by tell. It expires in 15 minutes.");
-        if (confirmingInviteReplace && pairingService.DescribeOutstandingInvitation() is { } outstandingInvite)
-        {
-            IconGlyph.WrappedColored(Theme.Danger, $"You already have an unconfirmed invitation outstanding to {outstandingInvite.Target}. Sending a new one abandons it - if they accept it later, nothing will happen on your side.");
-            if (ImGui.Button("Send new invitation anyway"))
-            {
-                confirmingInviteReplace = false;
-                sendingInvitation = true;
-                Plugin.FireAndForget(SendInvitationAsync(inviteTargetInput.Trim()));
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel##inviteReplaceCancel"))
-                confirmingInviteReplace = false;
-        }
-        else if (confirmingInviteReplace)
-        {
-            // The outstanding invitation expired or completed while this prompt was open.
-            confirmingInviteReplace = false;
-        }
-        if (pairingService.OutgoingInvitationExpiresAt is { } outgoingExpiry)
-        {
-            var remaining = TimeSpan.FromSeconds(Math.Max(0, outgoingExpiry - DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-            IconGlyph.WrappedDisabled($"Invitation sent to {pairingService.OutgoingInvitationTarget}; expires in {remaining.Minutes}m {remaining.Seconds}s.");
-        }
+            IconGlyph.WrappedColored(Theme.Warning, "Couldn't reach Oathbound's server last time. Pairing and commands need it; panic always works.");
     }
 
     private void DrawRoleSection(PluginConfig config, bool subLocked)
@@ -627,59 +515,10 @@ public class SettingsWindow : Window, IDisposable
                 config.Save();
             }
         }
-        IconGlyph.HelpMarker("The word that must start every ongoing command tell, e.g. \"command strip\".");
+        IconGlyph.HelpMarker("Starts a chat phrase for your Reactions, e.g. \"collar kneel\". Commands from your Owner don't use it - they come through Oathbound directly.");
 
         if (subLocked)
             IconGlyph.WrappedColored(Theme.TextMuted, "Role and trigger phrase are locked while you hold a Sub-side pairing - unpair it above to change them.");
-
-        ImGui.Spacing();
-        var linkshellNumber = config.LinkshellNumber;
-        Layout.ItemWidth(80);
-        if (ImGui.InputInt("Linkshell number", ref linkshellNumber))
-        {
-            config.LinkshellNumber = Math.Clamp(linkshellNumber, 1, 8);
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Which of your 8 linkshells outgoing commands use when the header's channel selector is set to Linkshell.");
-
-        var cwlsNumber = config.CrossWorldLinkshellNumber;
-        Layout.ItemWidth(80);
-        if (ImGui.InputInt("Cross-world Linkshell number", ref cwlsNumber))
-        {
-            config.CrossWorldLinkshellNumber = Math.Clamp(cwlsNumber, 1, 8);
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Which cross-world linkshell commands use when that channel is picked.");
-    }
-
-    private async System.Threading.Tasks.Task SendInvitationAsync(string target)
-    {
-        var direction = plugin.Configuration.Role switch
-        {
-            PluginRole.Owner => PairingDirection.OwnerSide,
-            PluginRole.Sub => PairingDirection.SubSide,
-            _ => inviteAsOwnerSide ? PairingDirection.OwnerSide : PairingDirection.SubSide,
-        };
-        try
-        {
-            await plugin.PairingService.CreateAndSendInvitationAsync(target, direction, CancellationToken.None);
-        }
-        finally
-        {
-            sendingInvitation = false;
-        }
-    }
-
-    private async System.Threading.Tasks.Task AcceptInvitationAsync()
-    {
-        try
-        {
-            await plugin.PairingService.AcceptPendingAsync(CancellationToken.None);
-        }
-        finally
-        {
-            acceptingInvitation = false;
-        }
     }
 
     /// Fingerprint only - never the key itself.
@@ -772,18 +611,6 @@ public class SettingsWindow : Window, IDisposable
                 plugin.AchievementToastWindow.PlaySound(sound);
         }
         IconGlyph.HelpMarker("The same sounds as <se.1> to <se.16> in chat, at your game's sound effect volume.");
-    }
-
-    private static void DrawRawCommandTextCard(PluginConfig config)
-    {
-        IconGlyph.Text(FontAwesomeIcon.CommentDots, "Chat log");
-        ImGui.Separator();
-        if (ImGuiCheckbox("Show raw command text", config.ShowRawCommandText, out var showRaw))
-        {
-            config.ShowRawCommandText = showRaw;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Oathbound normally hides commands and its own notices from your chat log and prints a short [Oathbound] line instead. Turn this on to also see the raw text, for troubleshooting. Anyone else in a party or linkshell always sees commands sent there.");
     }
 
     private void DrawTutorialCard(PluginConfig config)

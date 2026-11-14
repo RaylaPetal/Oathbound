@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { notifyPeer } from "../lib/hints";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import {
@@ -248,6 +249,7 @@ export async function publishRulebookKey(request: Request, env: Env): Promise<Re
     .run();
   if (existing?.item_r2_key) await deleteCiphertext(env, existing.item_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }
 
@@ -382,6 +384,7 @@ export async function uploadRulebookItem(request: Request, env: Env): Promise<Re
   }
   if (mailbox.item_r2_key && mailbox.item_r2_key !== r2Key) await deleteCiphertext(env, mailbox.item_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }
 

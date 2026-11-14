@@ -12,14 +12,14 @@ namespace Oathbound.Plugin.Commands;
 public sealed class OwnerStatusEstimateTracker : IDisposable
 {
     private readonly PluginConfig config;
-    private readonly ChatSender sender;
+    private readonly Relay.PeerMessenger messenger;
     private readonly Dictionary<Guid, OwnerStatusEstimate> estimates = new();
 
-    public OwnerStatusEstimateTracker(PluginConfig config, ChatSender sender)
+    public OwnerStatusEstimateTracker(PluginConfig config, Relay.PeerMessenger messenger)
     {
         this.config = config;
-        this.sender = sender;
-        sender.Sent += OnSent;
+        this.messenger = messenger;
+        messenger.SendResult += OnSendResult;
     }
 
     /// Null if nothing is estimated active. Drops ended pairings and expired timed restraints.
@@ -89,66 +89,29 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         return true;
     }
 
-    private void OnSent(string text)
+    /// Only what the Sub's connection actually received counts.
+    private void OnSendResult(Relay.PeerSendResult result)
     {
-        // A command goes to the active pairing, same as ChatComposer.Wrap.
-        if (config.GetActivePairing() is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
-        if (StripEnvelope(text, pairing) is not { Length: > 0 } body) return;
-        if (HasTrigger(text, pairing))
-            CommandSent?.Invoke(body);
+        if (result.Delivery != Relay.PeerDelivery.Delivered || result.Kind != Relay.PeerMessagePlaintext.CommandKind) return;
+        if (config.FindPairingById(result.PairingId) is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
+        var body = result.Text.Trim();
+        if (body.Length == 0) return;
+        CommandSent?.Invoke(body);
 
         if (!estimates.TryGetValue(pairing.Id, out var estimate))
             estimates[pairing.Id] = estimate = new OwnerStatusEstimate();
         Apply(estimate, body);
     }
 
-    /// A command to the active Sub, as its body after the trigger phrase. Notices carry no trigger and aren't raised.
+    /// A command a Sub received, as sent.
     public event Action<string>? CommandSent;
-
-    private bool HasTrigger(string text, PairingState pairing)
-    {
-        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
-        return trigger.Length > 0 && text.Contains(" " + trigger + " ", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// Leaves the command body exactly as ChatComposer.Wrap received it.
-    private string? StripEnvelope(string text, PairingState pairing)
-    {
-        var rest = text.TrimStart();
-        if (!rest.StartsWith('/')) return null;
-        var isTell = rest.StartsWith("/tell ", StringComparison.OrdinalIgnoreCase);
-        rest = SkipToken(rest);
-        if (isTell)
-            rest = SkipTellTarget(rest, pairing);
-
-        var trigger = (!string.IsNullOrWhiteSpace(pairing.PeerTriggerPhrase) ? pairing.PeerTriggerPhrase : config.TriggerPhrase).Trim();
-        if (trigger.Length > 0 && rest.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
-            rest = rest[trigger.Length..];
-        return rest.Trim();
-    }
-
-    private static string SkipToken(string s)
-    {
-        var space = s.IndexOf(' ');
-        return space < 0 ? "" : s[(space + 1)..].TrimStart();
-    }
-
-    /// The tell target contains a space, so skip past the peer's whole address.
-    private static string SkipTellTarget(string s, PairingState pairing)
-    {
-        var address = $"{pairing.PeerName}@{pairing.PeerWorld}";
-        if (s.StartsWith(address, StringComparison.OrdinalIgnoreCase))
-            return s[address.Length..].TrimStart();
-        var at = s.IndexOf('@');
-        return at < 0 ? s : SkipToken(s[at..]);
-    }
 
     private void Apply(OwnerStatusEstimate estimate, string body)
     {
         var (word, rest) = SplitFirst(body);
         switch (word.ToLowerInvariant())
         {
-            case ControlWords.Leash when rest.StartsWith(ChatComposer.LeashTravelWord + " ", StringComparison.OrdinalIgnoreCase):
+            case ControlWords.Leash when rest.StartsWith(CommandComposer.LeashTravelWord + " ", StringComparison.OrdinalIgnoreCase):
                 // Leash travel isn't a new leash, and may be addressed to a pairing other than the active one.
                 break;
             case ControlWords.Leash:
@@ -177,7 +140,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
                 break;
             case "gesture":
                 var animation = Unquote(LockTimerOption.StripSeconds(rest, out _).Trim());
-                estimate.LastAnimation = animation.Equals(ChatComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase) ? null : animation;
+                estimate.LastAnimation = animation.Equals(CommandComposer.StopGestureWord, StringComparison.OrdinalIgnoreCase) ? null : animation;
                 break;
             case "moodle":
                 ApplyMoodle(estimate, rest);
@@ -321,7 +284,7 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
         return space < 0 ? (trimmed, "") : (trimmed[..space], trimmed[(space + 1)..].Trim());
     }
 
-    public void Dispose() => sender.Sent -= OnSent;
+    public void Dispose() => messenger.SendResult -= OnSendResult;
 }
 
 /// One restraint the Owner sent, named as their command named it. Re-sending it replaces its lock, as on the Sub.

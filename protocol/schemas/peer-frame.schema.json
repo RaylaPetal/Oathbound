@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/peer-frame.schema.json",
+  "title": "Live connection messages",
+  "description": "Text messages on the live connection (GET /v1/socket). See constants.json socketAuth and peerMessage. The relay reads only the routing fields of a send; nonce and ciphertext are opaque to it.",
+  "oneOf": [
+    { "$ref": "#/$defs/challenge" },
+    { "$ref": "#/$defs/auth" },
+    { "$ref": "#/$defs/authOk" },
+    { "$ref": "#/$defs/send" },
+    { "$ref": "#/$defs/frame" },
+    { "$ref": "#/$defs/ack" },
+    { "$ref": "#/$defs/hint" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "nonce22": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+    "side": { "enum": ["owner", "sub"] },
+    "header": {
+      "type": "object",
+      "required": ["pairIdHash", "pairEpoch", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+        "from": { "$ref": "#/$defs/side" },
+        "seq": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "sentAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+        "nonce": { "description": "AES-GCM nonce, 12 bytes base64url.", "type": "string", "pattern": "^[A-Za-z0-9_-]{16}$" },
+        "ciphertext": { "description": "AES-GCM ciphertext with tag, base64url.", "type": "string", "pattern": "^[A-Za-z0-9_-]{22,10944}$" }
+      }
+    },
+    "challenge": {
+      "description": "relay -> client, once on connect.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "nonce", "serverTime"],
+      "properties": {
+        "type": { "const": "challenge" },
+        "nonce": { "$ref": "#/$defs/nonce22" },
+        "serverTime": { "$ref": "common.schema.json#/$defs/unixSeconds" }
+      }
+    },
+    "auth": {
+      "description": "client -> relay, signature over the socketAuth base string.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "deviceKeyId", "signature"],
+      "properties": {
+        "type": { "const": "auth" },
+        "deviceKeyId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+      }
+    },
+    "authOk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "auth-ok" } }
+    },
+    "send": {
+      "description": "client -> relay: forward to the other device of the pairing. safety is honoured only from the Sub side.",
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/header" }],
+      "required": ["type", "id", "safety", "pairIdHash", "pairEpoch", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "type": { "const": "send" },
+        "id": { "description": "Client-chosen id echoed in acks.", "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+        "safety": { "type": "boolean" },
+        "pairIdHash": true, "pairEpoch": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
+      }
+    },
+    "frame": {
+      "description": "relay -> client: a frame from the other device, exactly as sent minus id and safety.",
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/header" }],
+      "required": ["type", "pairIdHash", "pairEpoch", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "type": { "const": "frame" },
+        "pairIdHash": true, "pairEpoch": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
+      }
+    },
+    "ack": {
+      "description": "relay -> client. held is followed later by a second ack for the same id with delivered or offline.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id", "result"],
+      "properties": {
+        "type": { "const": "ack" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+        "result": { "enum": ["delivered", "held", "offline", "needs_update", "over_limit", "over_budget", "refused"] }
+      }
+    },
+    "hint": {
+      "description": "relay -> client: something on this pairing changed; run the pair status check for it.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "pairIdHash", "pairEpoch"],
+      "properties": {
+        "type": { "const": "hint" },
+        "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+        "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" }
+      }
+    },
+    "error": {
+      "description": "relay -> client before closing the connection.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "code"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "enum": ["unauthorized", "invalid_request", "replaced"] }
+      }
+    },
+    "plaintext": {
+      "description": "The decrypted ciphertext.",
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "kind", "text", "character"],
+      "properties": {
+        "v": { "const": 1 },
+        "kind": { "enum": ["command", "notice"] },
+        "text": { "type": "string", "minLength": 1 },
+        "character": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false, "required": ["n", "w"],
+              "properties": { "n": { "type": "string", "minLength": 1, "maxLength": 32 }, "w": { "type": "string", "minLength": 1, "maxLength": 32 } }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

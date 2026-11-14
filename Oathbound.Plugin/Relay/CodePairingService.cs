@@ -83,12 +83,6 @@ public sealed class CodePairingService
     public async Task<string?> CreateCodeAsync(PairingDirection direction, PairingCharacter self, CancellationToken ct)
     {
         if (!DirectionAllowed(direction)) { Fail("The current Role does not support that pairing direction."); return null; }
-        if (direction == PairingDirection.SubSide && string.IsNullOrWhiteSpace(config.TriggerPhrase))
-        {
-            Fail("Set a trigger phrase in Settings before pairing as Sub - without one, incoming commands can never apply.");
-            return null;
-        }
-
         try
         {
             identity.EnsureIdentity();
@@ -163,6 +157,11 @@ public sealed class CodePairingService
     {
         if (!state.IsInviter || state.Status != "needs-confirm" || state.PeerDeviceKeyId is null || state.PeerPublicKeyX is null || state.PeerPublicKeyY is null)
             return false;
+        if (state.PeerNeedsUpdate)
+        {
+            Fail($"{state.PeerName}@{state.PeerWorld} needs to update Oathbound before you can pair. Reject this acceptance and make a new code once they have.");
+            return false;
+        }
         if (config.FindActivePairingWithDevice(state.PeerDeviceKeyId, state.Direction) is { } already)
         {
             Fail(PluginConfig.AlreadyPairedMessage(already) + " Reject this acceptance.");
@@ -232,6 +231,11 @@ public sealed class CodePairingService
             }
             var inviter = PairingCodes.DecryptCharacter(code, invitationId, inviter: true, invitation.EncryptedCharacter);
             if (inviter is null) { Fail("That invitation couldn't be read."); return false; }
+            if (!inviter.SupportsLive)
+            {
+                Fail($"{inviter.Name}@{inviter.World} made this code on an older Oathbound. Ask them to update, then make a new code.");
+                return false;
+            }
             if (invitation.Role is not ("owner" or "sub")) { Fail("That invitation couldn't be read."); return false; }
 
             var ownDirection = invitation.Role == "owner" ? PairingDirection.SubSide : PairingDirection.OwnerSide;
@@ -266,12 +270,6 @@ public sealed class CodePairingService
     public async Task<bool> AcceptPreviewAsync(PairingCharacter self, CancellationToken ct)
     {
         if (Preview is not { } preview) return false;
-        if (preview.OwnDirection == PairingDirection.SubSide && string.IsNullOrWhiteSpace(config.TriggerPhrase))
-        {
-            Fail("Set a trigger phrase in Settings before accepting this - without one, incoming commands can never apply.");
-            return false;
-        }
-
         var state = new CodeInvitationState
         {
             IsInviter = false,
@@ -392,11 +390,14 @@ public sealed class CodePairingService
                 state.PeerName = character.Name;
                 state.PeerWorld = character.World;
                 state.PeerTriggerPhrase = character.TriggerPhrase;
+                state.PeerNeedsUpdate = !character.SupportsLive;
                 state.PeerDeviceKeyId = acceptance.AccepterDeviceKeyId;
                 state.PeerPublicKeyX = acceptance.AccepterPublicKey.X;
                 state.PeerPublicKeyY = acceptance.AccepterPublicKey.Y;
                 config.SaveNow();
-                OathboundChat.Print(config.FindActivePairingWithDevice(state.PeerDeviceKeyId, state.Direction) is not null
+                OathboundChat.Print(state.PeerNeedsUpdate
+                    ? $"{character.Name}@{character.World} accepted your pairing code on an older Oathbound - reject it in Settings and ask them to update first."
+                    : config.FindActivePairingWithDevice(state.PeerDeviceKeyId, state.Direction) is not null
                     ? $"{character.Name}@{character.World} accepted your pairing code, but you're already paired with that person - reject it in Settings and have them link the character instead."
                     : $"{character.Name}@{character.World} accepted your pairing code - open Settings to confirm.");
                 break;

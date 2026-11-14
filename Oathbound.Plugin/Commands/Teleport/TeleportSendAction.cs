@@ -9,8 +9,9 @@ public static class TeleportSendAction
     {
         if (!TryResolveTarget(out var target, out var error))
             return (false, error);
-        plugin.ChatSender.Send(plugin.ChatComposer.ComposeTeleport(target));
-        return (true, null);
+        return plugin.SendCommand(plugin.CommandComposer.ComposeTeleport(target)) is { } failed
+            ? (false, OwnerSendFeedback.Explain(failed))
+            : (true, null);
     }
 
     /// Also used by LeashTravelWatcher.

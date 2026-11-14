@@ -37,7 +37,7 @@ public sealed partial class ModuleWindow
         ("Obedience", [
             (OathCondition.KeepItOn, "Keep my outfit on", "The outfit you last put on them has to stay on. If it comes off they're told, and have a grace time to put it back with one click."),
             (OathCondition.StayAtSide, "Stay at my side", "Whenever you're near each other, they stay within the range you set. Straying past it for longer than the grace time breaks it."),
-            (OathCondition.AskBeforeLogoff, "Ask before logging off", "They may only log off soon after you /tell them the word you choose. You get a Grant leave button in the Overview tab that sends it."),
+            (OathCondition.AskBeforeLogoff, "Ask before logging off", "They may only log off soon after you grant them leave with the Grant leave button in the Overview tab."),
         ]),
         ("Manners", [
             (OathCondition.SayGoodnight, "Say goodnight before logging off", "Send you a tell in the 15 minutes before they log off. Optionally it has to say something."),
@@ -84,7 +84,6 @@ public sealed partial class ModuleWindow
     private string? rbRequestedTab;
     private Task<string?>? rbPublishTask;
     private string? rbPublishResult;
-    private bool rbNudgeOnPublish = true;
     private int rbLedgerAward = 1;
     private string rbLedgerReason = "";
     private int lastRulebookTabFrame = -10;
@@ -276,16 +275,11 @@ public sealed partial class ModuleWindow
             IconGlyph.HelpMarker("Changes their ledger score. Thresholds you set in the Ledger tab fire when it crosses them.");
 
             // The words their client knows are the ones in the version it has, not the draft.
-            var grantWords = (state.PublishedDocument?.Oaths ?? [])
-                .Where(o => o.Condition == OathCondition.AskBeforeLogoff && o.Phrase.Trim().Length > 0)
-                .Select(o => o.Phrase.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            foreach (var word in grantWords)
+            if ((state.PublishedDocument?.Oaths ?? []).Any(o => o.Condition == OathCondition.AskBeforeLogoff))
             {
-                ImGui.PushID("grant" + word);
-                if (ImGui.Button(grantWords.Count == 1 ? "Grant leave" : $"Grant leave (\"{word}\")"))
-                    plugin.RulebookService.SendGrantLeave(pairing, word);
-                IconGlyph.HelpMarker($"Sends {pairing.PeerName} a /tell with only \"{word}\", which lets them log off for the time their oath says.");
-                ImGui.PopID();
+                if (ImGui.Button("Grant leave"))
+                    plugin.RulebookService.SendGrantLeave(pairing);
+                IconGlyph.HelpMarker($"Lets {pairing.PeerName} log off for the time their oath says.");
             }
         }
     }

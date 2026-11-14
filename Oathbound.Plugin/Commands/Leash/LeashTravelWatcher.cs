@@ -21,8 +21,8 @@ public sealed class LeashTravelWatcher
 
     private readonly PluginConfig config;
     private readonly OwnerStatusEstimateTracker estimates;
-    private readonly ChatComposer composer;
-    private readonly ChatSender sender;
+    private readonly CommandComposer composer;
+    private readonly Relay.PeerMessenger messenger;
 
     private (string World, uint Territory, int Instance)? lastArea;
     private Vector3 lastPosition;
@@ -30,12 +30,12 @@ public sealed class LeashTravelWatcher
     private bool pendingSend;
     private DateTime movedAt;
 
-    public LeashTravelWatcher(PluginConfig config, OwnerStatusEstimateTracker estimates, ChatComposer composer, ChatSender sender)
+    public LeashTravelWatcher(PluginConfig config, OwnerStatusEstimateTracker estimates, CommandComposer composer, Relay.PeerMessenger messenger)
     {
         this.config = config;
         this.estimates = estimates;
         this.composer = composer;
-        this.sender = sender;
+        this.messenger = messenger;
     }
 
     public void OnFrameworkUpdate()
@@ -108,7 +108,7 @@ public sealed class LeashTravelWatcher
         }
 
         foreach (var pairing in leashed)
-            sender.Send(composer.ComposeLeashTravel(pairing, target));
+            messenger.SendCommand(pairing, composer.ComposeLeashTravel(target));
     }
 
     /// Matched by name and home world, never by name alone.

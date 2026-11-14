@@ -1,60 +1,52 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
+using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// The one place that can transmit chat. Every call comes from a single button click: one press, one command.
-/// Never wire it to anything that fires without that click. A Reaction's chat reply is the one deliberate exception,
-/// and it lives outside this class.
+/// Sends exactly two kinds of game chat: the Games Roll button's commands, and the "Ask them to update" reminder to a
+/// partner still on a version from before live messaging. Every call comes from a single button click. Reactions
+/// replies and Custom Trigger chat actions send their own lines; commands and notices between paired players never
+/// go through chat at all.
 public sealed class ChatSender
 {
-    /// Exactly the prefixes ChatComposer can produce. A message without one would land in the active channel and leak
-    /// the command into public chat.
-    private static readonly Regex ValidPrefix = new(@"^/(tell|p|a|l[1-8]|cwl[1-8]) ", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    /// The Games Roll button's commands, and nothing else of their kind. `/dice` rolls in the active channel, so a party
-    /// roll first switches it with a bare `/p`.
+    /// `/dice` rolls in the active channel, so a party roll first switches it with a bare `/p`.
     private static readonly Regex RollCommand = new(@"^(/p|/(random|dice) [0-9]{1,3})$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public bool Send(string text)
+    private static readonly TimeSpan ReminderCooldown = TimeSpan.FromMinutes(1);
+    private readonly Dictionary<Guid, DateTime> lastReminderUtc = new();
+
+    public const string UpdateReminderText =
+        "[Oathbound] I've updated Oathbound - commands between us now need you to update too. Please update the plugin in /xlplugins.";
+
+    public bool SendRoll(string command)
     {
-        if (!ValidPrefix.IsMatch(text.TrimStart()) && !RollCommand.IsMatch(text.Trim()))
+        if (!RollCommand.IsMatch(command.Trim()))
         {
-            Plugin.Log.Warning("Refused to send a command that wasn't one of this plugin's own composed channel commands - is a peer identity captured yet?");
+            Plugin.Log.Warning("Refused to send something that isn't a game roll command.");
             return false;
         }
-
-        PluginOutput.RecordChat(text);
-        ECommons.Automation.Chat.SendMessage(text);
-        Sent?.Invoke(text);
+        PluginOutput.RecordChat(command);
+        ECommons.Automation.Chat.SendMessage(command);
         return true;
     }
 
-    /// Observers only; never a path that sends.
-    public event Action<string>? Sent;
+    /// Seconds until the reminder can be sent again for this pairing; 0 when it can.
+    public int ReminderWaitSeconds(PairingState pairing) =>
+        lastReminderUtc.TryGetValue(pairing.Id, out var last) && DateTime.UtcNow - last < ReminderCooldown
+            ? (int)Math.Ceiling((ReminderCooldown - (DateTime.UtcNow - last)).TotalSeconds)
+            : 0;
 
-    /// The game drops messages sent too fast.
-    private static readonly TimeSpan MessageSpacing = TimeSpan.FromSeconds(1);
-
-    /// All messages are checked up front, so either every one is sent or none is.
-    public bool SendAll(IReadOnlyList<string> messages)
+    /// One plain tell to the partner's current character, at most once a minute per pairing.
+    public bool SendUpdateReminder(PairingState pairing)
     {
-        if (messages.Count == 0)
+        if (pairing is not { IsPaired: true, PeerName: { Length: > 0 } name, PeerWorld: { Length: > 0 } world } || ReminderWaitSeconds(pairing) > 0)
             return false;
-        if (!messages.All(m => ValidPrefix.IsMatch(m.TrimStart())))
-        {
-            Plugin.Log.Warning("Refused to send a command that wasn't one of this plugin's own composed channel commands - is a peer identity captured yet?");
-            return false;
-        }
-
-        Send(messages[0]);
-        for (var i = 1; i < messages.Count; i++)
-        {
-            var message = messages[i];
-            _ = Plugin.Framework.RunOnTick(() => Send(message), MessageSpacing * i);
-        }
+        lastReminderUtc[pairing.Id] = DateTime.UtcNow;
+        var text = $"/tell {name}@{world} {UpdateReminderText}";
+        PluginOutput.RecordChat(text);
+        ECommons.Automation.Chat.SendMessage(text);
         return true;
     }
 }

@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using Dalamud.Interface.ImGuiNotification;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
+using Oathbound.Plugin.Relay;
 
 namespace Oathbound.Plugin.Games;
 
@@ -65,7 +66,7 @@ public sealed class GameSession
 }
 
 /// Runs a game between the two people of a pairing. Each client keeps its own copy of the session and moves it on only
-/// from roll lines it read itself and `collargame` tells for the moves a roll can't show, so neither trusts the other's
+/// from roll lines it read itself and `collargame` notices for the moves a roll can't show, so neither trusts the other's
 /// word for a roll. Losses act only on the local player.
 public sealed class GamesService
 {
@@ -73,25 +74,32 @@ public sealed class GamesService
 
     private static readonly TimeSpan InviteLifetime = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan IdleLimit = TimeSpan.FromMinutes(15);
-    /// The game drops chat lines sent faster than this.
+    /// The game drops chat lines sent faster than this; only the roll button's commands are chat.
     private static readonly TimeSpan SendSpacing = TimeSpan.FromSeconds(1.1);
     private const int MaxLog = 40;
     private const string SessionIdAlphabet = "0123456789abcdefghjkmnpqrstvwxyz";
 
     private readonly PluginConfig config;
-    private readonly ChatComposer composer;
+    private readonly CommandComposer composer;
     private readonly ChatSender sender;
+    private readonly PeerMessenger messenger;
     private readonly StripService strip;
+    /// Roll commands only.
     private readonly Queue<string> outbox = new();
     private DateTime lastSentUtc = DateTime.MinValue;
 
-    public GamesService(PluginConfig config, ChatComposer composer, ChatSender sender, StripService strip)
+    public GamesService(PluginConfig config, CommandComposer composer, ChatSender sender, PeerMessenger messenger, StripService strip)
     {
         this.config = config;
         this.composer = composer;
         this.sender = sender;
+        this.messenger = messenger;
         this.strip = strip;
+        messenger.SendResult += OnSendResult;
     }
+
+    /// Why the last outgoing invite didn't reach the other player, until the next invite.
+    public string? InviteFailure { get; private set; }
 
     public GameInvite? Invite { get; private set; }
     public GameSession? Session { get; private set; }
@@ -128,7 +136,8 @@ public sealed class GamesService
         if (!invite.Penalty.IsOff)
             body += " " + invite.Penalty.Word;
         Invite = invite;
-        Send(name, world, body);
+        InviteFailure = null;
+        Send(invite.PairingId, body);
         return null;
     }
 
@@ -136,7 +145,7 @@ public sealed class GamesService
     {
         if (Invite is not { Outgoing: true } invite)
             return;
-        Send(invite.PeerName, invite.PeerWorld, $"withdraw {invite.Id}");
+        Send(invite.PairingId, $"withdraw {invite.Id}");
         Invite = null;
     }
 
@@ -145,7 +154,7 @@ public sealed class GamesService
         if (Invite is not { Outgoing: false } invite || Session is not null)
             return;
         Invite = null;
-        Send(invite.PeerName, invite.PeerWorld, $"accept {invite.Id}");
+        Send(invite.PairingId, $"accept {invite.Id}");
         Start(invite, Seat.Guest);
     }
 
@@ -154,7 +163,7 @@ public sealed class GamesService
         if (Invite is not { Outgoing: false } invite)
             return;
         Invite = null;
-        Send(invite.PeerName, invite.PeerWorld, $"decline {invite.Id}");
+        Send(invite.PairingId, $"decline {invite.Id}");
     }
 
     private void Start(GameInvite invite, Seat me)
@@ -199,7 +208,7 @@ public sealed class GamesService
     public void Answer(bool done) => Move(s => s.Rules.Answer(s.Me, done), id => $"{(done ? "done" : "refuse")} {id}");
 
     /// `command` is an already composed Owner command, sent after the prompt only to this player's own Sub.
-    public void SendPrompt(string text, IReadOnlyList<string>? command = null, string? commandLabel = null)
+    public void SendPrompt(string text, string? command = null, string? commandLabel = null)
     {
         var clean = GameDecks.Clean(text);
         if (clean.Length == 0)
@@ -216,23 +225,22 @@ public sealed class GamesService
         var outcome = action(s);
         if (!outcome.Accepted)
             return false;
-        Send(s.PeerName, s.PeerWorld, body(s.Id));
+        Send(s.PairingId, body(s.Id));
         Apply(s, outcome);
         return true;
     }
 
-    /// Through the same queue as the game's tells, so neither is dropped for coming too fast. It applies on the Sub's
-    /// side like any other command, only within their permissions.
-    private void SendCommand(GameSession s, IReadOnlyList<string>? command, string? label)
+    /// To this session's pairing, after the game message; it applies on the Sub's side like any other command, only
+    /// within their permissions.
+    private void SendCommand(GameSession s, string? command, string? label)
     {
-        if (command is not { Count: > 0 } || !IsOwnerOfPeer(s))
+        if (command is not { Length: > 0 } || !IsOwnerOfPeer(s) || config.FindPairingById(s.PairingId) is not { IsPaired: true } pairing)
             return;
-        foreach (var message in command)
-            outbox.Enqueue(message);
+        messenger.SendCommand(pairing, composer.Compose(command));
         AddLog(s, $"Also sent {s.NameOf(s.Peer)}: {label ?? "a command"}.");
     }
 
-    public void SendForfeit(string text, IReadOnlyList<string>? command = null, string? commandLabel = null)
+    public void SendForfeit(string text, string? command = null, string? commandLabel = null)
     {
         if (Session is not { ForfeitsToGive: > 0 } s)
             return;
@@ -240,7 +248,7 @@ public sealed class GamesService
         if (clean.Length == 0)
             return;
         s.ForfeitsToGive--;
-        Send(s.PeerName, s.PeerWorld, $"forfeit {s.Id} \"{clean}\"");
+        Send(s.PairingId, $"forfeit {s.Id} \"{clean}\"");
         AddLog(s, $"Forfeit for {s.NameOf(s.Peer)}: {clean}");
         SendCommand(s, command, commandLabel);
     }
@@ -272,8 +280,7 @@ public sealed class GamesService
         Invite = null;
         if (Session is not { } s)
             return;
-        // Sent now: nothing drains the queue once logged out.
-        sender.Send(composer.ComposeGame(s.PeerName, s.PeerWorld, $"quit {s.Id} logout"));
+        Send(s.PairingId, $"quit {s.Id} logout");
         End("logout", "The game ended: you logged out.", notifyPeer: false);
     }
 
@@ -286,14 +293,14 @@ public sealed class GamesService
     /// The lost game's penalty this player is serving, if any.
     public GamePenaltyRecord? Penalty => config.Games.Penalty;
 
-    // ---- Chat input
+    // ---- Peer input
 
-    /// A `collargame` tell. True when it was one, handled or not, so it's hidden like the other notices.
-    public bool HandleTell(string? name, string? world, string text)
+    /// A `collargame` notice from this pairing's other player. True when it was one, handled or not.
+    public bool HandleFrame(PairingState pairing, string text)
     {
         if (!text.StartsWith(Keyword + " ", StringComparison.OrdinalIgnoreCase))
             return false;
-        if (name is null || world is null || config.FindPairing(name, world) is not { IsPaired: true } pairing)
+        if (!pairing.IsPaired || pairing.PeerName is not { } name || pairing.PeerWorld is not { } world)
             return true;
         var (verb, rest) = Split(text[Keyword.Length..]);
         var (id, args) = Split(rest);
@@ -307,19 +314,19 @@ public sealed class GamesService
                 case "invite":
                     OnInvite(pairing, name, world, id, args);
                     break;
-                case "accept" when Invite is { Outgoing: true } mine && mine.Id == id && SamePeer(mine.PeerName, mine.PeerWorld, name, world) && Session is null:
+                case "accept" when Invite is { Outgoing: true } mine && mine.Id == id && mine.PairingId == pairing.Id && Session is null:
                     Invite = null;
                     Start(mine, Seat.Inviter);
                     break;
-                case "decline" when Invite is { Outgoing: true } mine && mine.Id == id && SamePeer(mine.PeerName, mine.PeerWorld, name, world):
+                case "decline" when Invite is { Outgoing: true } mine && mine.Id == id && mine.PairingId == pairing.Id:
                     Invite = null;
                     OathboundChat.Print($"{name} declined the game.");
                     break;
-                case "withdraw" when Invite is { Outgoing: false } theirs && theirs.Id == id && SamePeer(theirs.PeerName, theirs.PeerWorld, name, world):
+                case "withdraw" when Invite is { Outgoing: false } theirs && theirs.Id == id && theirs.PairingId == pairing.Id:
                     Invite = null;
                     break;
                 default:
-                    if (Session is { } s && s.Id == id && SamePeer(s.PeerName, s.PeerWorld, name, world))
+                    if (Session is { } s && s.Id == id && s.PairingId == pairing.Id)
                         OnSessionTell(s, verb.ToLowerInvariant(), args);
                     break;
             }
@@ -479,7 +486,7 @@ public sealed class GamesService
         if (s.Loss != LossRule.Forfeit)
         {
             var slot = strip.StripNext(s.Id, out var skipped);
-            Send(s.PeerName, s.PeerWorld, $"stripped {s.Id} {(slot is { } taken ? StripService.SlotName(taken).Replace(' ', '-') : "none")}");
+            Send(s.PairingId, $"stripped {s.Id} {(slot is { } taken ? StripService.SlotName(taken).Replace(' ', '-') : "none")}");
             if (slot is { } piece)
             {
                 s.Stripped[(int)s.Me].Add(StripService.SlotName(piece));
@@ -633,7 +640,7 @@ public sealed class GamesService
         if (config.Games.Penalty?.SessionIds.Contains(s.Id) != true)
             strip.RestoreAll(s.Id);
         if (notifyPeer)
-            Send(s.PeerName, s.PeerWorld, $"quit {s.Id} {reason}");
+            Send(s.PairingId, $"quit {s.Id} {reason}");
         OathboundChat.Print(message);
         Plugin.Log.Information($"Game {s.Id} ended: {reason}.");
     }
@@ -650,13 +657,39 @@ public sealed class GamesService
 
     // ---- Helpers
 
-    private void Send(string name, string world, string body) => outbox.Enqueue(composer.ComposeGame(name, world, body));
+    private void Send(Guid pairingId, string body)
+    {
+        if (config.FindPairingById(pairingId) is { IsPaired: true } pairing)
+            messenger.SendNotice(pairing, composer.ComposeGame(body));
+    }
+
+    /// An invite that didn't reach the other player is dropped, with why.
+    private void OnSendResult(PeerSendResult result)
+    {
+        if (Invite is not { Outgoing: true } invite || result.PairingId != invite.PairingId
+            || !result.Text.StartsWith(composer.ComposeGame($"invite {invite.Id} "), StringComparison.Ordinal))
+            return;
+        var why = result.Delivery switch
+        {
+            PeerDelivery.Offline or PeerDelivery.Held => $"{invite.PeerName} is offline.",
+            PeerDelivery.NeedsUpdate => $"{invite.PeerName} needs to update Oathbound first.",
+            PeerDelivery.RelayUnreachable => "Couldn't reach the Oathbound relay.",
+            PeerDelivery.OverLimit or PeerDelivery.OverBudget => "The Oathbound relay is busy - try again in a bit.",
+            PeerDelivery.Delivered => null,
+            _ => "The invite couldn't be sent.",
+        };
+        if (why is null)
+            return;
+        Invite = null;
+        InviteFailure = why;
+        OathboundChat.Print($"Your game invite wasn't sent: {why}");
+    }
 
     private void DrainOutbox(DateTime now)
     {
         if (outbox.Count == 0 || now - lastSentUtc < SendSpacing)
             return;
-        sender.Send(outbox.Dequeue());
+        sender.SendRoll(outbox.Dequeue());
         lastSentUtc = now;
     }
 

@@ -8,11 +8,11 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Relay;
 
-/// Sub side: tells every Owner that panic was used, and nothing else - a tell so an online Owner knows at once, and a
-/// relay report for one who isn't. Both carry the same `at`, which is how the Owner's client counts them as one.
+/// Sub side: tells every Owner that panic was used, and nothing else - a live frame so an online Owner knows at once,
+/// and a relay report for one who isn't. Both carry the same `at`, which is how the Owner's client counts them as one.
 public sealed class SafewordNotifier
 {
-    /// A Sub pressing the hotkey repeatedly sends one notice, not a stream of tells.
+    /// A Sub pressing the hotkey repeatedly sends one notice, not a stream of them.
     private static readonly TimeSpan RepeatWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(5);
     /// An older relay without the endpoint.
@@ -20,8 +20,8 @@ public sealed class SafewordNotifier
 
     private readonly PluginConfig config;
     private readonly RelayClient relay;
-    private readonly ChatComposer composer;
-    private readonly ChatSender sender;
+    private readonly CommandComposer composer;
+    private readonly PeerMessenger messenger;
 
     /// Written from relay continuations too. In memory only, so a report still unsent at unload is lost.
     private readonly ConcurrentDictionary<Guid, long> pending = new();
@@ -29,12 +29,12 @@ public sealed class SafewordNotifier
     private DateTime retryNotBeforeUtc;
     private int busy;
 
-    public SafewordNotifier(PluginConfig config, RelayClient relay, ChatComposer composer, ChatSender sender)
+    public SafewordNotifier(PluginConfig config, RelayClient relay, CommandComposer composer, PeerMessenger messenger)
     {
         this.config = config;
         this.relay = relay;
         this.composer = composer;
-        this.sender = sender;
+        this.messenger = messenger;
     }
 
     /// Panic only, never unpair. Only queues work, so it can't hold up panic's reverts.
@@ -48,8 +48,7 @@ public sealed class SafewordNotifier
         var at = new DateTimeOffset(now).ToUnixTimeSeconds();
         foreach (var pairing in config.Pairings.Where(p => p is { IsPaired: true, Direction: PairingDirection.SubSide }))
         {
-            if (!string.IsNullOrWhiteSpace(pairing.PeerName) && !string.IsNullOrWhiteSpace(pairing.PeerWorld))
-                sender.Send(composer.ComposeSafewordPing(pairing.PeerName, pairing.PeerWorld, at));
+            messenger.SendSafetyNotice(pairing, composer.ComposeSafewordPing(at));
             if (pairing.PairIdHash is not null)
                 pending[pairing.Id] = at;
         }
@@ -77,7 +76,7 @@ public sealed class SafewordNotifier
     {
         try
         {
-            await relay.PutSafewordAsync(pairing.PairIdHash!, pairing.PairEpoch, at, ChatComposer.SafewordRelayMood, ct).ConfigureAwait(false);
+            await relay.PutSafewordAsync(pairing.PairIdHash!, pairing.PairEpoch, at, CommandComposer.SafewordRelayMood, ct).ConfigureAwait(false);
             // A newer safeword queued meanwhile stays queued.
             pending.TryRemove(new(pairing.Id, at));
         }

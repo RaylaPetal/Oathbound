@@ -272,40 +272,23 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
+    /// Kept under its old name for the many module rows that call it; there's nothing to copy any more.
     private void DrawSendCopyButtons(string command, bool canSend, string idSuffix, string sendLabel = "Send")
     {
-        var messages = plugin.ChatComposer.ComposeAll(command);
-        var fits = ChatComposer.AllFit(messages);
-
-        using (ImRaii.Disabled(!canSend || !fits))
-        {
-            if (ImGui.Button($"{sendLabel}##{idSuffix}"))
-                plugin.ChatSender.SendAll(messages);
-        }
+        DrawSendOnly(command, canSend, idSuffix, sendLabel);
         TutorialService.Anchor(TutorialAnchors.QuickSend);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
-
-        ContinueRowOrWrap(ButtonWidth("Copy"));
-        // A command that goes out as several messages can't be pasted as one.
-        using (ImRaii.Disabled(!fits || messages.Count > 1))
-        if (ImGui.Button($"Copy##{idSuffix}"))
-            ImGui.SetClipboardText(messages[0]);
-        if (messages.Count > 1 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip($"Too long for one message - Send delivers it as {messages.Count} messages, one per action.");
     }
 
     private void DrawSendOnly(string command, bool canSend, string idSuffix, string label)
     {
-        var messages = plugin.ChatComposer.ComposeAll(command);
-        var fits = ChatComposer.AllFit(messages);
+        var fits = CommandSelector.Fits(command);
         using (ImRaii.Disabled(!canSend || !fits))
         {
             if (ImGui.Button($"{label}##{idSuffix}"))
-                plugin.ChatSender.SendAll(messages);
+                plugin.SendCommand(command);
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.");
+            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
     }
 
     private static int DrawItemSelector(string comboId, string[] labels, ref int? selectedIndex)

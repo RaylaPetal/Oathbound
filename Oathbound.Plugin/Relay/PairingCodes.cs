@@ -7,7 +7,13 @@ using System.Text.Json;
 namespace Oathbound.Plugin.Relay;
 
 /// Carried encrypted, so the relay never learns who pairs.
-public sealed record PairingCharacter(string Name, string World, string? TriggerPhrase);
+/// `Transport` is what the other side's version can receive; a version from before live messaging sends none.
+public sealed record PairingCharacter(string Name, string World, string? TriggerPhrase, string? Transport = PairingCharacter.LiveTransport)
+{
+    public const string LiveTransport = "relay-live-v1";
+
+    public bool SupportsLive => Transport == LiveTransport;
+}
 
 /// Must agree byte-for-byte with protocol/constants.json and crypto-vectors.json; the plugin side is only checked by hand.
 public static class PairingCodes
@@ -90,6 +96,7 @@ public static class PairingCodes
         var fields = new Dictionary<string, object?> { ["name"] = character.Name, ["world"] = character.World };
         if (!string.IsNullOrWhiteSpace(character.TriggerPhrase))
             fields["triggerPhrase"] = character.TriggerPhrase.Trim();
+        fields["transport"] = PairingCharacter.LiveTransport;
         var plaintext = Encoding.UTF8.GetBytes(CanonicalJson.Serialize(fields));
         var nonce = RelayCrypto.RandomBytes(RelayCrypto.AeadNonceLengthBytes);
         var ciphertext = RelayCrypto.AesGcmEncrypt(CharacterKey(normalizedPairingCode), nonce, plaintext, CharacterAad(invitationId, inviter));
@@ -110,7 +117,8 @@ public static class PairingCodes
             var world = root.GetProperty("world").GetString();
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world)) return null;
             var trigger = root.TryGetProperty("triggerPhrase", out var t) ? t.GetString() : null;
-            return new PairingCharacter(name, world, trigger);
+            var transport = root.TryGetProperty("transport", out var tr) ? tr.GetString() : null;
+            return new PairingCharacter(name, world, trigger, transport);
         }
         catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException or KeyNotFoundException or InvalidOperationException)
         {

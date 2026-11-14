@@ -17,11 +17,10 @@ public static class CageSendAction
     {
         if (plugin.Configuration.ActivePairing is not { Direction: PairingDirection.OwnerSide } pairing)
             return (false, "Select an Owner-side pairing first.");
-        var message = plugin.ChatComposer.ComposeCage(pairing, body);
-        if (!CommandSelector.Fits(message))
+        if (!CommandSelector.Fits(body))
             return (false, "That cage command is too long to send - try a shorter name.");
-        if (!plugin.ChatSender.Send(message))
-            return (false, "The command couldn't be sent.");
+        if (plugin.SendCommand(pairing, body) is { } failed)
+            return (false, OwnerSendFeedback.Explain(failed));
         plugin.OwnerCageStatus.MarkSent(pairing, cage, open);
         return (true, null);
     }

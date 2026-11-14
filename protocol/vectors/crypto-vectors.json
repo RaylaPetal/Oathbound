@@ -247,5 +247,35 @@
     "plaintextUtf8": "{\"v\":1,\"seq\":7,\"at\":1700003000,\"linked\":[{\"n\":\"Mira A\",\"w\":\"Odin\"},{\"n\":\"Mira B\",\"w\":\"Lich\"}],\"unlinked\":[],\"current\":1,\"accepted\":[{\"n\":\"Kai A\",\"w\":\"Odin\"}]}",
     "nonceBase64Url": "AAECAwQFBgcICQoL",
     "ciphertextWithTagBase64Url": "xYNS0MMmCT5g3OANamfRoBMrFm422s1l5mccp3gfGTZRtm5o4fd4m0yw9vpR2Hxgoa8tdOecGkOG7t42S4AnHWAtxX3QZEEFWjxBGVbNVASzXaXDTfS3CfazQ8DOoMP9EO9AuaTDmGYwCH61ymCqwEnWsQhdmtzcSF58U-T7Ce5n2SMEBUp6yo9VNukHQcfd3mIQA9UoVabPPX4a3mSFCbl_lIp0pYf-R1hXdwBe"
+  },
+  "socketAuth": {
+    "description": "Live connection challenge answer: ECDSA P-256/SHA-256 raw r||s over \"oathbound-socket-v1\\n\" + deviceKeyId + \"\\n\" + challenge nonce, signed with ecdsaSignRequest's key. deviceKeyId is SHA-256 of the JCS public key JWK (kty, crv, x, y). Only verification success is asserted.",
+    "publicKeyJwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "aTWHGmnunopMnVuQMMeGdWwIN8ODjSkA15jdLg92hts",
+      "y": "8ozE6y__J-SN0ZZzqDAmkc0jBJaFUrZbBZD1gUtKJLs"
+    },
+    "deviceKeyId": "369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add",
+    "challengeNonce": "c2hhbGxlbmdlTm9uY2UwMQ",
+    "baseString": "oathbound-socket-v1\n369655f502eec5bc1c4c0daea35bacdf3485d7e505f58f08a1941c2379776add\nc2hhbGxlbmdlTm9uY2UwMQ",
+    "signatureBase64Url": "uatTvvGPj7XU9UAC8wgW4GFbdsDfAY9gYDiY5wV-HOYsE5y6-CderPkTp5wy_XycQZd1QxEeHzznv8SM2N2LIQ",
+    "verifiesWithPublicKey": true
+  },
+  "peerMessage": {
+    "description": "Peer frame between the two devices of a pairing: pairCharacters' static ECDH shared secret, salt SHA-256(UTF-8 pairIdHash + \"|\" + pairEpoch), HKDF-SHA256 info \"oathbound-relay-message-v1\" + pairIdHash + pairEpoch, AES-256-GCM with AAD = JCS of {pairIdHash, pairEpoch, from, seq, sentAt}.",
+    "pairIdHash": "65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f",
+    "pairEpoch": 2,
+    "from": "owner",
+    "seq": 1700003000123,
+    "sentAt": 1700003000,
+    "sharedSecretHex": "780dc0923dac82ca3947113b1f7729f3a3c5c3a3d5500a65118462c91b86aa95",
+    "saltSha256Hex": "407d9d08cf3bd154c6795ee2375e75471fa657d30a050b82ece7a43d190eca2d",
+    "infoUtf8": "oathbound-relay-message-v165628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f2",
+    "derivedAesKeyHex": "09ae9e1a89898f7df6cb60d9f9edea72bb01341134930223cf88bd83d6dae686",
+    "additionalAuthenticatedDataCanonicalJson": "{\"from\":\"owner\",\"pairEpoch\":2,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"sentAt\":1700003000,\"seq\":1700003000123}",
+    "plaintextUtf8": "{\"v\":1,\"kind\":\"command\",\"text\":\"outfit lock \\\"Maid\\\" 1h\",\"character\":{\"n\":\"Kai A\",\"w\":\"Odin\"}}",
+    "nonceBase64Url": "AAECAwQFBgcICQoL",
+    "ciphertextWithTagBase64Url": "LVM0Squ3Dp2ZPxjuRaC_WADyCXcvT7ArQj-dEBpAlO2y0VgBb_Kz3q856wqA-5poftD6eYQ9Za3VY-ZTTK6kYdY1L2g9xEY8ZKfFL_DPcrYVdwP5od7Hr4XuINN4Qox3bTxP2dEHDweYrhE13fk"
   }
 }

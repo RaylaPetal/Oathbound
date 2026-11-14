@@ -28,18 +28,8 @@ public enum PairingDirection
     SubSide,
 }
 
-/// Linkshell/CrossWorldLinkshell also need a slot number (LinkshellNumber/CrossWorldLinkshellNumber) to send on.
-public enum ChatChannel
-{
-    Tell,
-    Party,
-    Alliance,
-    Linkshell,
-    CrossWorldLinkshell,
-}
-
-/// Identity is bound by matching PeerName/PeerWorld against the verified sender of the pairing tells, cross-checked
-/// against the relay's signed envelopes. `Paired` is only set after a fully verified handshake, never by relay state alone.
+/// The peer is identified by its device key (PeerDeviceKeyId / PeerPublicKey*), which every frame between the two is
+/// sealed for. `Paired` is only set after a fully verified pairing, never by relay state alone.
 [Serializable]
 public class PairingState
 {
@@ -65,8 +55,10 @@ public class PairingState
     public string? PeerWorld { get; set; }
     public bool Paired { get; set; }
 
-    /// Null when the peer didn't declare one; ChatComposer falls back to our own TriggerPhrase.
+    /// Null when the peer didn't declare one; CommandComposer falls back to our own TriggerPhrase.
     public string? PeerTriggerPhrase { get; set; }
+    /// The accepting side's version can't receive live messages, so this can't be confirmed.
+    public bool PeerNeedsUpdate { get; set; }
 
     /// Monotonic across every epoch; the next outgoing revocation uses this + 1.
     public int OutgoingRevocationSequence { get; set; }
@@ -76,7 +68,7 @@ public class PairingState
 
     public long LastRevocationCheckUnixSeconds { get; set; }
 
-    /// Owner side: the Sub's latest safeword, from a tell or the relay; 0 = none. A notice not newer than this is a duplicate.
+    /// Owner side: the Sub's latest safeword, from a frame or the relay report; 0 = none. A notice not newer than this is a duplicate.
     public long LastSafewordAt { get; set; }
     /// The banner shows while LastSafewordAt is newer than this.
     public long SafewordDismissedAt { get; set; }
@@ -123,13 +115,9 @@ public class PairingState
 
     public bool IsPaired => Paired && !string.IsNullOrWhiteSpace(PeerName) && !string.IsNullOrWhiteSpace(PeerWorld);
 
-    /// Every character of the other person this pairing knows. PeerName/PeerWorld above is only where tells go now;
-    /// identity checks go through IsConfirmedCharacter.
+    /// Every character of the other person this pairing knows. PeerName/PeerWorld above is only their current
+    /// character; identity checks go through IsConfirmedCharacter.
     public List<PeerCharacter> PeerCharacters { get; set; } = new();
-
-    /// User-chosen send target; ignored unless it's still a confirmed character.
-    public string? PinnedTargetName { get; set; }
-    public string? PinnedTargetWorld { get; set; }
 
     /// The character the peer's latest record said it was on, and when that record was published.
     public string? PresenceName { get; set; }
@@ -138,6 +126,22 @@ public class PairingState
 
     /// Records at or below this are stale or replayed and are ignored.
     public long LastAppliedPeerRecordSeq { get; set; }
+
+    /// Live relay frames this install sent on this pairing; the next uses max(this + 1, unix ms) so a config restored
+    /// from a backup can't reuse a number the peer already accepted.
+    public long OutgoingFrameSeq { get; set; }
+    /// Frames from the peer at or below this are replays and are ignored.
+    public long LastAcceptedFrameSeq { get; set; }
+
+    public long NextOutgoingFrameSeq()
+    {
+        OutgoingFrameSeq = Math.Max(OutgoingFrameSeq + 1, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        return OutgoingFrameSeq;
+    }
+
+    /// What the relay last said about the peer's live connection; NeedsUpdate is kept across sessions for the badge.
+    public PeerRelayState PeerRelayState { get; set; }
+    public long PeerRelayStateAt { get; set; }
     /// The relay only stores a record whose seq is higher than the last one. Never below the publish time, so an
     /// install restored from a backup can't fall behind what the relay already holds.
     public long OutgoingCharactersSeq { get; set; }
@@ -186,34 +190,22 @@ public class PairingState
         }
     }
 
-    /// Records an accepted tell from one of the peer's confirmed characters; returns true if the send target moved.
-    public bool NoteTellFrom(string? name, string? world)
-    {
-        if (FindPeerCharacter(name, world) is not { State: PeerCharacterState.Confirmed } character) return false;
-        character.LastSeenAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        return ResolveTarget();
-    }
-
-    /// Pin, else the fresher of the published presence and the last tell, else the first confirmed character.
-    /// Rewrites PeerName/PeerWorld so every sender and label follows; returns true if it changed.
+    /// The fresher of the published presence and the character the last accepted frame named, else the first confirmed
+    /// character. Rewrites PeerName/PeerWorld so every label and world lookup follows; returns true if it changed.
     public bool ResolveTarget()
     {
         var confirmed = ConfirmedCharacters.ToList();
         if (confirmed.Count == 0) return false;
 
-        var target = confirmed.FirstOrDefault(c => c.Is(PinnedTargetName, PinnedTargetWorld));
-        if (target is null)
+        var presence = confirmed.FirstOrDefault(c => c.Is(PresenceName, PresenceWorld));
+        var lastSeen = confirmed.Where(c => c.LastSeenAt > 0).OrderByDescending(c => c.LastSeenAt).FirstOrDefault();
+        var target = (presence, lastSeen) switch
         {
-            var presence = confirmed.FirstOrDefault(c => c.Is(PresenceName, PresenceWorld));
-            var lastSeen = confirmed.Where(c => c.LastSeenAt > 0).OrderByDescending(c => c.LastSeenAt).FirstOrDefault();
-            target = (presence, lastSeen) switch
-            {
-                ({ } p, { } s) => s.LastSeenAt > PresenceAt ? s : p,
-                ({ } p, null) => p,
-                (null, { } s) => s,
-                _ => confirmed.FirstOrDefault(c => c.Is(PeerName, PeerWorld)) ?? confirmed[0],
-            };
-        }
+            ({ } p, { } s) => s.LastSeenAt > PresenceAt ? s : p,
+            ({ } p, null) => p,
+            (null, { } s) => s,
+            _ => confirmed.FirstOrDefault(c => c.Is(PeerName, PeerWorld)) ?? confirmed[0],
+        };
 
         if (PeerName == target.Name && PeerWorld == target.World) return false;
         PeerName = target.Name;
@@ -221,12 +213,11 @@ public class PairingState
         return true;
     }
 
-    /// Unpairing forgets every character, pin and presence of this pairing.
+    /// Unpairing forgets every character and presence of this pairing.
     public void ClearCharacters()
     {
         PeerCharacters.Clear();
         PeerAcceptedMine.Clear();
-        PinnedTargetName = PinnedTargetWorld = null;
         PresenceName = PresenceWorld = null;
         PresenceAt = 0;
         LastAppliedPeerRecordSeq = 0;
@@ -234,11 +225,22 @@ public class PairingState
     }
 }
 
+public enum PeerRelayState
+{
+    Unknown,
+    /// A frame reached the peer's live connection.
+    Reachable,
+    /// The peer was connected before but isn't now.
+    Offline,
+    /// The peer's install has never opened a live connection: it runs a version from before live messaging.
+    NeedsUpdate,
+}
+
 public enum PeerCharacterState
 {
     Confirmed,
 
-    /// Sub side only: an Owner character announced but not yet confirmed by the Sub. Its tells are ignored.
+    /// Sub side only: an Owner character announced but not yet confirmed by the Sub. Commands sent from it are refused.
     Pending,
 
     /// Sub side only: refused by the Sub; not offered again unless the Owner unlinks and re-links it.
@@ -262,7 +264,7 @@ public class PeerCharacter : CharacterRef
 {
     public PeerCharacterState State { get; set; }
     public long ConfirmedAt { get; set; }
-    /// Last accepted tell from this character; 0 = never.
+    /// Last accepted frame naming this character; 0 = never.
     public long LastSeenAt { get; set; }
 }
 
@@ -354,6 +356,8 @@ public class CodeInvitationState
     public string? PeerName { get; set; }
     public string? PeerWorld { get; set; }
     public string? PeerTriggerPhrase { get; set; }
+    /// The accepting side's version can't receive live messages, so this can't be confirmed.
+    public bool PeerNeedsUpdate { get; set; }
     public string? PeerDeviceKeyId { get; set; }
     public string? PeerPublicKeyX { get; set; }
     public string? PeerPublicKeyY { get; set; }
@@ -1123,14 +1127,6 @@ public class PluginConfig : IPluginConfiguration
 
     /// The Sub's own muffled sounds, mixed into gagged chat. Never sent to anyone.
     public List<string> GagSounds { get; set; } = new();
-
-    public ChatChannel OutgoingChannel { get; set; } = ChatChannel.Tell;
-
-    /// Troubleshooting only: leaves command and notice lines in the chat log next to their Oathbound line.
-    public bool ShowRawCommandText { get; set; }
-
-    public int LinkshellNumber { get; set; } = 1;
-    public int CrossWorldLinkshellNumber { get; set; } = 1;
 
     /// Never transmitted; only alias names cross chat.
     public AliasBook Aliases { get; set; } = new();

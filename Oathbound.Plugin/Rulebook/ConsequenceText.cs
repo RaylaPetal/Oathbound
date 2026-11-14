@@ -287,12 +287,12 @@ public static class RuleText
         if (r.LeashOnArrive)
             arrive.Add($"leash you to {owner} ({r.LeashLengthYalms} yalms{(r.LeashPauseInDuties ? ", paused in duties" : "")})");
         if (!string.IsNullOrWhiteSpace(r.ArriveTell))
-            arrive.Add($"you /tell {owner} \"{r.ArriveTell.Trim()}\"");
+            arrive.Add($"you send {owner} \"{r.ArriveTell.Trim()}\"");
         var depart = r.Depart.Select(ConsequenceText.Describe).ToList();
         if (r.UnleashOnDepart)
             depart.Add("take the leash off");
         if (!string.IsNullOrWhiteSpace(r.DepartTell))
-            depart.Add($"you /tell {owner} \"{r.DepartTell.Trim()}\"");
+            depart.Add($"you send {owner} \"{r.DepartTell.Trim()}\"");
         return
         [
             ("When", $"{Cap(owner)} comes within {r.RangeYalms:0} yalms{(r.SkipInDuties ? ", outside duties" : "")}"),

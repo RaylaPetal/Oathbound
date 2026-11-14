@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { notifyPeer } from "../lib/hints";
 import { resolverFromStoredDeviceKeys, verifySignedRequest } from "../lib/auth";
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import { capabilityHash, isValidCapabilityShape } from "../lib/capability";
@@ -163,6 +164,7 @@ export async function createCatalogRequest(request: Request, env: Env): Promise<
     )
     .run();
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }
 

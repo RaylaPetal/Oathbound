@@ -446,34 +446,7 @@ public sealed class CustomTriggerCommand
         return actions.Count > 0;
     }
 
-    private const string CastPrefix = "customtrigger cast ";
     private const string CustomMoodleSegment = "custommoodle";
-
-    /// Splits a bundle too long for one message into one single-action `cast` per action. Null if not a cast command.
-    public static List<string>? SplitCastCommand(string command)
-    {
-        const string categoryWord = "customtrigger ";
-        const string castWord = "cast ";
-        var trimmed = command.Trim();
-        if (!trimmed.StartsWith(categoryWord, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        // Every part carries the lock option, so whichever part holds the restraint still locks.
-        var afterCategory = LockTimerOption.Strip(trimmed[categoryWord.Length..], out var restraintLock).TrimStart();
-        if (!afterCategory.StartsWith(castWord, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        var remainder = afterCategory[castWord.Length..].Trim();
-        if (!TryParseCastCommand(remainder, out var label, out _))
-            return null;
-
-        SplitChatTail(remainder[(remainder.IndexOf('"', 1) + 1)..].Trim(), out var beforeChat, out var chatText);
-        var head = $"{CastPrefix}\"{label}\" ";
-        var parts = beforeChat.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(segment => head + segment).ToList();
-        if (chatText is { Length: > 0 })
-            parts.Add($"{head}chat={chatText}");
-        return parts.Select(part => LockTimerOption.Insert(part, restraintLock)).ToList();
-    }
 
     private static void SplitChatTail(string tail, out string beforeChat, out string? chatText)
     {

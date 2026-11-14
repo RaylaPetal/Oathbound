@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Chat lines and emotes this plugin produced itself (automatic tells, Reactions, an Owner's Custom Trigger chat
+/// Chat lines and emotes this plugin produced itself (the update reminder, Reactions, an Owner's Custom Trigger chat
 /// or animation), so rulebook oaths only judge what the Sub chose to say or do.
 public static class PluginOutput
 {

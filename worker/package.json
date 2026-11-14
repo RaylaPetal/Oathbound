@@ -13,6 +13,8 @@
     "db:migrate:local": "wrangler d1 migrations apply RELAY_DB --local --env local",
     "db:migrate:staging": "wrangler d1 migrations apply RELAY_DB --remote --env staging",
     "db:migrate:production": "wrangler d1 migrations apply RELAY_DB --remote --env production",
+    "db:migrate:testing": "wrangler d1 migrations apply RELAY_DB --remote --env testing",
+    "deploy:testing": "wrangler deploy --env testing",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:production": "wrangler deploy --env production"
   },

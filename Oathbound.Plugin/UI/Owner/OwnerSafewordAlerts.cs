@@ -10,7 +10,7 @@ namespace Oathbound.Plugin.UI;
 /// one safeword is dropped. Only ever says that it was used. Framework thread.
 public sealed class OwnerSafewordAlerts
 {
-    /// A tell can carry any number; one far ahead would hide every later safeword.
+    /// A notice can carry any number; one far ahead would hide every later safeword.
     private const long FutureToleranceSeconds = 300;
 
     private readonly PluginConfig config;

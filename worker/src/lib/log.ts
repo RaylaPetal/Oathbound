@@ -6,8 +6,10 @@
  * observable without sensitive logging"). A log-capture test (task 8.1)
  * asserts no emitted line ever contains one of these field names.
  */
+// Live frames add the frame's nonce/text/character and the pair and device it moves between, so traffic can't be
+// tied to a pairing from the logs.
 const FORBIDDEN_FIELD_NAME_PATTERN =
-  /signature|privatekey|private_key|secret|capability|ciphertext|plaintext|charactername|character_name|world|catalog|invitationid|requestid/i;
+  /signature|privatekey|private_key|secret|capability|ciphertext|plaintext|charactername|character_name|world|catalog|invitationid|requestid|^nonce$|^text$|^character$|pairid|devicekeyid|messageid/i;
 
 export type LogFields = Record<string, string | number | boolean | null | undefined>;
 

@@ -71,7 +71,7 @@ public sealed class SubControlWindow : Window, IDisposable
         estimate = pairing is { Direction: PairingDirection.OwnerSide } ? plugin.OwnerStatusEstimates.ForBanner(pairing) : null;
         collarLocked = pairing is null || plugin.OwnerCollarStatus.For(pairing) is not { } collar || collar.State != CollarStatusReporter.Unlocked;
         if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No /tell target yet - every Send below is disabled until an Owner-side pairing is active.");
+            IconGlyph.WrappedColored(Theme.Warning, "Not paired with a Sub yet - every Send below is disabled until an Owner-side pairing is active.");
         else
             OwnerStatusView.Draw(plugin, includeRestraints: false);
         ImGui.Spacing();
@@ -113,7 +113,7 @@ public sealed class SubControlWindow : Window, IDisposable
     {
         ["title clear"] = e => e.LastTitle is not null,
         ["outfit unlock"] = e => e.LastOutfit is not null && e.LastOutfitLocked,
-        [$"gesture {ChatComposer.StopGestureWord}"] = e => e.LastAnimation is not null,
+        [$"gesture {CommandComposer.StopGestureWord}"] = e => e.LastAnimation is not null,
         [ControlWords.Unleash] = e => e.Leashed,
         ["moodle clear"] = e => e.Moodles.Count > 0,
         ["restraint unlock"] = e => e.Restraints.Count > 0,
@@ -335,11 +335,11 @@ public sealed class SubControlWindow : Window, IDisposable
             var lockText = cage.LockSeconds is { } s ? $"for {RestraintLock.Format(TimeSpan.FromSeconds(s))}" : "until you open it";
             var tooltip = canSend
                 ? $"Cage your Sub in \"{cage.Name}\" ({cage.PlaceLabel}) {lockText}. If they aren't there, it waits for them."
-                : "No /tell target yet - pairing hasn't captured your Sub's name.";
+                : "Not paired with a Sub yet.";
             if (DrawRow($"subControlCage_{cage.Id}", $"Cage: {cage.Name}", tooltip, canSend))
                 ReportCageResult(CageSendAction.TrySend(plugin, cage));
         }
-        if (DrawRow("subControlCageOpen", "Open cage", canSend ? "Let your Sub out, or call off a cage still waiting for them." : "No /tell target yet - pairing hasn't captured your Sub's name.", canSend, tint: ReleaseTint))
+        if (DrawRow("subControlCageOpen", "Open cage", canSend ? "Let your Sub out, or call off a cage still waiting for them." : "Not paired with a Sub yet.", canSend, tint: ReleaseTint))
             ReportCageResult(CageSendAction.TryOpen(plugin));
     }
 
@@ -362,7 +362,7 @@ public sealed class SubControlWindow : Window, IDisposable
         if (!CategoryHeader("Teleport"))
             return;
 
-        var tooltip = canSend ? "Teleport your paired Sub to your current position." : "No /tell target yet - pairing hasn't captured your Sub's name.";
+        var tooltip = canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.";
         if (!DrawRow("subControlTeleport", "Teleport Sub to me", tooltip, canSend))
             return;
         var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
@@ -380,11 +380,10 @@ public sealed class SubControlWindow : Window, IDisposable
     /// `trailing` draws extra controls (the lock settings) on the lines below the label, inside the tile.
     private void DrawSendRow(string label, string command, bool canSend, string? fullLabel = null, Action? trailing = null, Vector4? tint = null)
     {
-        var messages = plugin.ChatComposer.ComposeAll(command);
-        var fits = ChatComposer.AllFit(messages);
-        var status = !fits ? "Command is too long for a safe chat payload." : canSend ? string.Join("\n", messages) : "No /tell target yet - pairing hasn't captured your Sub's name.";
+        var fits = CommandSelector.Fits(command);
+        var status = !fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.";
         if (DrawRow($"subControl_{label}_{command}", label, $"{fullLabel ?? label}\n\n{status}", canSend && fits, trailing, tint))
-            plugin.ChatSender.SendAll(messages);
+            plugin.SendCommand(command);
     }
 
     private static float SendButtonSize => ImGui.GetFrameHeight();

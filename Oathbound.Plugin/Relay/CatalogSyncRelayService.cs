@@ -16,8 +16,8 @@ public sealed class CatalogSyncRelayService
     private readonly PluginConfig config;
     private readonly RelayClient relay;
     private readonly DeviceIdentityService identity;
-    private readonly ChatComposer composer;
-    private readonly ChatSender sender;
+    private readonly CommandComposer composer;
+    private readonly PeerMessenger messenger;
     private readonly CatalogSyncService catalogSync;
     private readonly CatalogPictureService pictures;
 
@@ -38,14 +38,14 @@ public sealed class CatalogSyncRelayService
     public DateTimeOffset? LastAttemptAt { get; private set; }
     public CatalogSnapshotResult? LastImportResult { get; private set; }
 
-    public CatalogSyncRelayService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, ChatComposer composer, ChatSender sender, CatalogSyncService catalogSync, CatalogPictureService pictures)
+    public CatalogSyncRelayService(PluginConfig config, RelayClient relay, DeviceIdentityService identity, CommandComposer composer, PeerMessenger messenger, CatalogSyncService catalogSync, CatalogPictureService pictures)
     {
         this.pictures = pictures;
         this.config = config;
         this.relay = relay;
         this.identity = identity;
         this.composer = composer;
-        this.sender = sender;
+        this.messenger = messenger;
         this.catalogSync = catalogSync;
 
         if (config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request") > 0)
@@ -118,8 +118,7 @@ public sealed class CatalogSyncRelayService
             config.PendingRelayOperations.Add(new PendingRelayOperationState { Kind = "catalog-request", OperationId = requestId, ExpiresAt = envelope.ExpiresAt });
             config.SaveNow();
 
-            var tell = composer.ComposeCatalogRequestNotice(pairing.PeerName!, pairing.PeerWorld!, requestId);
-            sender.Send(tell);
+            messenger.SendNotice(pairing, composer.ComposeCatalogRequestNotice(requestId));
             SetError(null);
 
             SetPhase("Waiting for Sub upload");
@@ -304,15 +303,11 @@ public sealed class CatalogSyncRelayService
     // ---- Sub side ----
 
     /// Fails closed silently, except for "permission not enabled", which gets its own notice tell.
-    public async Task HandleCatalogRequestTellAsync(string requestId, string senderName, string senderWorld, CancellationToken ct)
+    /// `pairing` is the Sub-side pairing whose Owner's frame carried the request id.
+    public async Task HandleCatalogRequestAsync(string requestId, PairingState pairing, CancellationToken ct)
     {
-        // Only the Sub-side pairing with this sender is a valid source for a catalog request.
-        var pairing = config.FindPairing(senderName, senderWorld, PairingDirection.SubSide);
-        if (pairing is null)
-        {
-            Plugin.Log.Warning($"Catalog request from {senderName}@{senderWorld} ignored: no Sub-side pairing with that sender.");
+        if (pairing is not { IsPaired: true, Direction: PairingDirection.SubSide })
             return;
-        }
 
         CatalogRequestEnvelope request;
         try
@@ -349,7 +344,7 @@ public sealed class CatalogSyncRelayService
 
         if (!config.Permissions.RelayCatalogSync)
         {
-            sender.Send(composer.ComposeCatalogPermissionDenied(senderName, senderWorld, requestId));
+            messenger.SendNotice(pairing, composer.ComposeCatalogPermissionDenied(requestId));
             return;
         }
 
@@ -418,7 +413,7 @@ public sealed class CatalogSyncRelayService
             Plugin.NotificationManager.AddNotification(new Notification
             {
                 Title = "Oathbound",
-                Content = $"Sent an updated catalog to {senderName}.",
+                Content = $"Sent an updated catalog to {pairing.PeerName}.",
                 Type = NotificationType.Success,
                 InitialDuration = TimeSpan.FromSeconds(5),
             });
@@ -433,7 +428,7 @@ public sealed class CatalogSyncRelayService
         }
     }
 
-    public void HandlePermissionDeniedTell(string requestId)
+    public void HandlePermissionDenied(string requestId)
     {
         if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();
         deniedRequestIds.Add(requestId);

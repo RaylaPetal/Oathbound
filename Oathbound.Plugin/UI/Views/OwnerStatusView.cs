@@ -45,7 +45,7 @@ public static class OwnerStatusView
         {
             Layout.TextWithActions($"{what} (comes off in {Commands.RestraintLock.Format(end - DateTime.UtcNow)})", Layout.ActionsWidth("End now"));
             if (ImGui.Button($"End now##ownerEnd_{id}"))
-                plugin.ChatSender.Send(plugin.ChatComposer.Compose(command));
+                plugin.SendCommand(command);
         }
         if (estimate.LastTitle is { } title && estimate.TitleEndsAtUtc is { } titleEnd)
             Row($"Title \"{title}\"", titleEnd, "title clear", "title");
@@ -67,7 +67,7 @@ public static class OwnerStatusView
                 lockText += ", key";
             Layout.TextWithActions($"{restraint.Reference} ({lockText})", Layout.ActionsWidth("Unlock"));
             if (ImGui.Button($"Unlock##ownerUnlock_{restraint.Reference}"))
-                plugin.ChatSender.Send(plugin.ChatComposer.Compose($"restraint unlock {restraint.Reference}"));
+                plugin.SendCommand($"restraint unlock {restraint.Reference}");
         }
     }
 }

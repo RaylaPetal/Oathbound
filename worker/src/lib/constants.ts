@@ -37,6 +37,15 @@ interface ProtocolConstants {
     pictureFetchBatchMax: number;
     pairCharactersCiphertextMaxBytes: number;
   };
+  socketAuth: { authTimeoutSeconds: number };
+  peerMessage: {
+    maxFrameBytes: number;
+    maxAgeSeconds: number;
+    heldFramesMax: number;
+    deviceBurstFrames: number;
+    deviceBurstWindowSeconds: number;
+    deviceHourlyFrames: number;
+  };
 }
 
 export const PROTOCOL = raw as unknown as ProtocolConstants;
@@ -79,3 +88,11 @@ export const PICTURE_UNREFERENCED_GRACE_SECONDS = PROTOCOL.sizeAndExpiryLimits.p
 export const PICTURE_IDLE_EXPIRY_SECONDS = PROTOCOL.sizeAndExpiryLimits.pictureIdleExpirySeconds;
 export const PICTURE_FETCH_BATCH_MAX = PROTOCOL.sizeAndExpiryLimits.pictureFetchBatchMax;
 export const PAIR_CHARACTERS_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.pairCharactersCiphertextMaxBytes;
+
+export const SOCKET_AUTH_TIMEOUT_SECONDS = PROTOCOL.socketAuth.authTimeoutSeconds;
+export const PEER_FRAME_MAX_BYTES = PROTOCOL.peerMessage.maxFrameBytes;
+export const PEER_FRAME_MAX_AGE_SECONDS = PROTOCOL.peerMessage.maxAgeSeconds;
+export const HELD_FRAMES_MAX = PROTOCOL.peerMessage.heldFramesMax;
+export const DEVICE_BURST_FRAMES = PROTOCOL.peerMessage.deviceBurstFrames;
+export const DEVICE_BURST_WINDOW_SECONDS = PROTOCOL.peerMessage.deviceBurstWindowSeconds;
+export const DEVICE_HOURLY_FRAMES = PROTOCOL.peerMessage.deviceHourlyFrames;

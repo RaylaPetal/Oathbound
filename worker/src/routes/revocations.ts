@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { notifyPeer } from "../lib/hints";
 import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "../lib/auth";
 import { verifyEcdsaSignature, type EcPublicKeyJwk } from "../lib/crypto";
 import { toCanonicalJson } from "../lib/json";
@@ -100,6 +101,9 @@ export async function publishRevocation(request: Request, env: Env): Promise<Res
     ).bind(nowSeconds(), envelope.pairIdHash, envelope.pairEpoch),
   ]);
 
+  await notifyPeer(env, pair, deviceKeyId, true);
+  // The revoking device's own hub may hold the pair as active; it must stop forwarding now too.
+  await env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(deviceKeyId)).forgetPair(pair.pair_id_hash).catch(() => undefined);
   return Response.json(envelope);
 }
 

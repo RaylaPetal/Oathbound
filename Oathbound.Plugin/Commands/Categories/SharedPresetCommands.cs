@@ -8,10 +8,7 @@ namespace Oathbound.Plugin.Commands;
 /// original changes. Copies carry Owner force semantics. Attached moodles travel separately as the Owner's moodle pick.
 public static class SharedPresetCommands
 {
-    /// Room for the /tell target and trigger phrase.
-    private const int ComposeMargin = 64;
-
-    public static bool FitsInOneMessage(string command) => command.Length + ComposeMargin <= CommandSelector.MaxCommandLength;
+    public static bool FitsInOneMessage(string command) => CommandSelector.Fits(command);
 
     /// Null when there's none or it contains a double quote.
     public static string? MoodleName(AttachedMoodleRef? moodle)
@@ -54,9 +51,7 @@ public static class SharedPresetCommands
     public static string RulesOnlyRestraint(RestraintDeviceDefinition device) =>
         RestraintCommand.BuildWearCommand(device.Slot, device.ItemId, device.Name, device.Rules);
 
-    /// Oversized bundles go out one message per action, so only each action must fit.
-    private static bool BundleFits(string command) =>
-        FitsInOneMessage(command) || CustomTriggerCommand.SplitCastCommand(command) is { Count: > 1 } parts && parts.All(FitsInOneMessage);
+    private static bool BundleFits(string command) => FitsInOneMessage(command);
 
     /// Null when it can't be self-contained, or one action alone won't fit.
     public static string? CustomTrigger(CustomTriggerDefinition trigger, PluginConfig config)
