@@ -66,9 +66,6 @@ public sealed class ChatCommandListener : IDisposable
     private readonly LeashOffNotifier leashOffNotifier;
     private readonly OwnerStatusEstimateTracker estimates;
 
-    /// A local test uses the active pairing as sender, but must never send it a notice.
-    private bool isLocalTest;
-
     private readonly Dictionary<Guid, PeerUnpairedNotice> peerUnpairedNotices = new();
     public IReadOnlyDictionary<Guid, PeerUnpairedNotice> PeerUnpairedNotices => peerUnpairedNotices;
     public event Action? PeerUnpairedNoticeChanged;
@@ -177,38 +174,6 @@ public sealed class ChatCommandListener : IDisposable
     {
         var trimmed = text.TrimEnd();
         return trimmed.EndsWith('.') || trimmed.EndsWith('!') || trimmed.EndsWith('?') ? trimmed : trimmed + ".";
-    }
-
-    /// Runs the same dispatch as a received command. Never sends anything and never requires pairing. A leading trigger
-    /// phrase, as commands used to have, is ignored.
-    public LocalTestResult TestIncomingCommand(string rawText)
-    {
-        // Running a command on yourself is the Sub changing themselves, which a cage closes.
-        if (Cage?.IsCaged == true)
-            return LocalTestResult.Fail(CageService.CagedNote);
-        var command = rawText.Trim();
-        var trigger = config.TriggerPhrase.Trim();
-        if (trigger.Length > 0 && command.Length > trigger.Length && command.StartsWith(trigger + " ", StringComparison.OrdinalIgnoreCase))
-            command = command[trigger.Length..].Trim();
-        if (command.Length == 0)
-            return LocalTestResult.Fail("No command text.");
-
-        try
-        {
-            isLocalTest = true;
-            messenger.Suppressed = true;
-            return Resolve(command, config.GetActivePairing());
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Error(ex, $"Local command test for \"{command}\" threw an exception.");
-            return LocalTestResult.Fail($"Threw an exception: {ex.Message}");
-        }
-        finally
-        {
-            isLocalTest = false;
-            messenger.Suppressed = false;
-        }
     }
 
     /// CatalogSyncRelayService re-verifies the request's signature against the Owner's device key.
@@ -446,7 +411,7 @@ public sealed class ChatCommandListener : IDisposable
                     return HandleLeashTravel(SplitFirstToken(rest).Remainder, sourcePairing);
                 if (follow.LeashedPairingId != sourcePairing?.Id)
                     NotifyNotLeashed(sourcePairing);
-                else if (!isLocalTest && sourcePairing is not null)
+                else if (sourcePairing is not null)
                     follow.ReportTravelRefused(sourcePairing.Id, TeleportRefusal.Permission);
                 return LocalTestResult.Fail("Follow permission is not enabled.", "tried to pull you along on the leash - Follow is turned off");
             case "teleport":
@@ -851,8 +816,8 @@ public sealed class ChatCommandListener : IDisposable
         if (!TeleportTarget.TryParse(rest, out var destination))
             return NotUnderstood($"Unrecognized \"teleport\" payload \"{rest}\" - expected \"world:\\\"<name>\\\" terr:<id> inst:<n> ward:<n> sub:<0|1> pos:<x>,<y>,<z>\" (your Owner may be on an older Oathbound build).");
 
-        var (success, reason, code) = teleport.Apply(destination, sourcePairing, isLocalTest ? JourneyOrigin.Local : JourneyOrigin.Owner);
-        if (!success && !isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+        var (success, reason, code) = teleport.Apply(destination, sourcePairing, JourneyOrigin.Owner);
+        if (!success && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
             leashOffNotifier.NotifyTeleportRefused(sourcePairing, code);
         return success
             ? LocalTestResult.Ok($"On the way to your Owner on \"{destination.World}\".", $"is bringing you to them on {destination.World}")
@@ -866,7 +831,7 @@ public sealed class ChatCommandListener : IDisposable
             return NotUnderstood($"Unrecognized \"leash travel\" payload \"{payload}\".");
 
         var wasLeashedToSender = sourcePairing is not null && follow.LeashedPairingId == sourcePairing.Id;
-        var (success, reason) = follow.TravelTo(destination, sourcePairing, reportable: !isLocalTest);
+        var (success, reason) = follow.TravelTo(destination, sourcePairing);
         // The sender's client still thinks this Sub is leashed to them. A leash that did belong to them already sent its own notice.
         if (!success && !wasLeashedToSender)
             NotifyNotLeashed(sourcePairing);
@@ -877,13 +842,13 @@ public sealed class ChatCommandListener : IDisposable
 
     private void NotifyLeashRefused(PairingState? sourcePairing)
     {
-        if (!isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+        if (sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
             leashOffNotifier.NotifyRefused(sourcePairing);
     }
 
     private void NotifyNotLeashed(PairingState? sourcePairing)
     {
-        if (!isLocalTest && sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+        if (sourcePairing is { IsPaired: true, Direction: PairingDirection.SubSide })
             leashOffNotifier.NotifyNotLeashed(sourcePairing);
     }
 

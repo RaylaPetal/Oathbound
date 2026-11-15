@@ -56,9 +56,6 @@ public sealed class PeerMessenger
         socket.StateChanged += OnStateChanged;
     }
 
-    /// While set, nothing is sent: a local test runs the real dispatch but must never reach the peer.
-    public bool Suppressed { get; set; }
-
     /// A frame accepted from a pairing's peer, with the confirmed-or-not character it names.
     public event Action<PairingState, PeerMessagePlaintext>? FrameAccepted;
 
@@ -77,7 +74,6 @@ public sealed class PeerMessenger
     /// The safeword ping: retried until accepted or too old to matter, and never held back by send limits.
     public void SendSafetyNotice(PairingState pairing, string text)
     {
-        if (Suppressed) return;
         if (Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: true) == PeerDelivery.RelayUnreachable)
             safetyRetries.Add(new SafetyRetry(pairing.Id, text, DateTime.UtcNow.AddSeconds(PeerMessageCrypto.MaxAgeSeconds)));
     }
@@ -85,7 +81,6 @@ public sealed class PeerMessenger
     /// Null when the frame went out and its result will follow through SendResult; otherwise why it couldn't.
     private PeerDelivery? Send(PairingState pairing, string kind, string text, bool safety)
     {
-        if (Suppressed) return null;
         if (!pairing.IsPaired || pairing.PairIdHash is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
             return Report(pairing, kind, text, PeerDelivery.NotReady);
         if (!Connected)

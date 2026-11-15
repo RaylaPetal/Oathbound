@@ -9,6 +9,9 @@ Titles · Outfits · Animations · Moodles · Restraints · Leash · Collar · T
 [![Latest release](https://img.shields.io/github/v/release/RaylaPetal/Oathbound?label=release&color=8a5cf6)](https://github.com/RaylaPetal/Oathbound/releases/latest)
 ![Dalamud API](https://img.shields.io/badge/Dalamud%20API-15-6c63ff)
 ![Consent first](https://img.shields.io/badge/consent-first-e05d8c)
+[![Discord](https://img.shields.io/badge/Discord-join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/87eMbV4FU9)
+
+**[Join the Oathbound Discord](https://discord.gg/87eMbV4FU9)** for updates and help.
 
 </div>
 
@@ -165,8 +168,6 @@ Sync tab shows whether it's up to date.
   commands are ignored until you confirm it, and you can remove it again at any time in **Settings > Characters**
   (even while caged - it releases nothing). Your Owner can't see which of your characters you're on unless you've
   linked it, and logging into a character you haven't linked tells them nothing.
-- **Test before you pair.** Settings' **Test Commands** tab lets a Sub try any command
-  on themselves without sending anything.
 
 ---
 
@@ -235,8 +236,7 @@ further, and you should decide for yourself before turning them on:
   until your Owner stops the animation or sends revert all, or you use your safeword. Stopping a looping emote
   makes your character take one tiny step, because moving is the only way the game ends one. Your Owner can
   also send an animation with a set time: it holds you for exactly that long, then stops by itself. A greeting
-  oath's **Perform** button plays its gesture or modded animation at your Owner and holds you the same way. To
-  try one on yourself from Settings' Test Commands tab, type `gesture stop` there to release it again.
+  oath's **Perform** button plays its gesture or modded animation at your Owner and holds you the same way.
 - **Leash and some restraint rules** hold your movement or block your actions while they're active.
   When your Owner walks farther away than the leash length, the leash steers your character after them
   (or uses the game's own follow if that gets stuck), with your own movement ignored until you're back in range.

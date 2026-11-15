@@ -272,7 +272,7 @@ that sync services carry to synced players; `SharedStatusReader` reads it from n
 local except a locked collar - the collar only comes off via the owning Owner's `collar unlock` or unpairing.
 
 A cage (`CageService`) closes the Sub's own escapes while it holds them; every Sub-side escape (permission toggles,
-struggle, keys, Take off, local test commands, stopping a toy/animation, rulebook accept/decline) checks
+struggle, keys, Take off, stopping a toy/animation, rulebook accept/decline) checks
 `CageService.IsCaged`. Panic and unpairing must always open it - never add a cage check to either.
 
 Games (`Games/`) are the one two-way feature: both clients run the same rules from roll lines they read themselves

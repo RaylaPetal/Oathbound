@@ -14,7 +14,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-public enum SettingsTab { Identity, Characters, Permissions, Tos, Test }
+public enum SettingsTab { Identity, Characters, Permissions, Tos }
 
 /// Role, pairing, trigger phrase, permissions and acknowledgements. Visible regardless of Role.
 public class SettingsWindow : Window, IDisposable
@@ -26,11 +26,8 @@ public class SettingsWindow : Window, IDisposable
     private Guid? confirmingUnpairId;
     private bool charactersTabWasOpen;
     private string triggerPhraseInput = "";
-    private string testCommandInput = "";
-    private int testCustomTriggerIndex;
 
     /// Session-only test feedback; each entry auto-clears shortly after being shown.
-    private readonly Dictionary<string, (LocalTestResult Result, long ShownAtTicks)> testResults = new();
 
     private const long TestResultDisplayMs = 4_000;
 
@@ -186,83 +183,9 @@ public class SettingsWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
-        if (ImGui.BeginTabItem("Test Commands", TabFlags(requested, SettingsTab.Test)))
-        {
-            using (Section.Begin("testCommandCard"))
-                DrawTestCommandCard(config);
-            ImGui.EndTabItem();
-        }
-
         ImGui.EndTabBar();
     }
 
-    /// Runs raw Owner-style text through the real dispatch path (trigger phrase, permissions, parsing). Nothing is sent.
-    private void DrawTestCommandCard(PluginConfig config)
-    {
-        IconGlyph.Text(FontAwesomeIcon.FlaskVial, "Test an Owner command");
-        ImGui.Separator();
-        IconGlyph.WrappedDisabled("Type a command as your Owner would send it and run it on yourself. Nothing is sent.");
-
-        var aliases = config.Aliases;
-        var savedTriggers = new List<(string Label, string Command)>
-        {
-            ("Title · Clear", ControlWords.ClearTitle),
-            ("Outfit · Unlock", ControlWords.Unlock),
-            ("Follow · Engage", ControlWords.Leash),
-            ("Follow · Release", ControlWords.Unleash),
-            ("Moodle · Clear", ControlWords.ClearMoodle),
-            ("Collar · Lock", "collar lock"),
-            ("Collar · Unlock", "collar unlock"),
-            ("Restraints · Unlock all", "restraint unlock"),
-            ("Custom Triggers · Revert", "customtrigger revert"),
-            ("Everything · Revert all (keeps collar)", "revert all"),
-        };
-        savedTriggers.AddRange(aliases.Titles.Select(a => ($"Title · {a.Alias}", a.Alias)));
-        savedTriggers.AddRange(aliases.Outfits.Select(a => ($"Outfit · {a.Alias}", a.Alias)));
-        savedTriggers.AddRange(aliases.Gestures.Select(a => ($"Animation · {a.Alias}", a.Alias)));
-        savedTriggers.AddRange(aliases.Moodles.Select(a => ($"Moodle · {a.Alias}", a.Alias)));
-        savedTriggers.AddRange(config.RestraintMapping.Devices.Values.Where(d => d.Name.Trim().Length > 0).Select(d => ($"Restraint · {d.Name} (toggle)", d.Name.Trim())));
-        savedTriggers.AddRange(config.RestraintMapping.ConfiguredMods.Where(m => m.Alias.Trim().Length > 0).Select(m => ($"Restraint · {m.Alias} (toggle)", m.Alias.Trim())));
-        savedTriggers.AddRange(aliases.CustomTriggers.Select(a => ($"Custom Trigger · {a.Alias}", a.Alias)));
-        savedTriggers.AddRange(config.RestraintMapping.ConfiguredMods
-            .Where(x => x.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)x.ItemId.Value) is not null && x.Rules.Count > 0 &&
-                        config.RestraintMapping.LocalCatalog.ContainsKey(x.CatalogId))
-            .Select(x => ($"Restraint · {x.Name}", RestraintCommand.BuildCatalogLockCommand(
-                x.CatalogId, x.Name, x.ItemId!.Value, x.Rules))));
-
-        ImGui.TextUnformatted("Choose one of your triggers");
-        testCustomTriggerIndex = Math.Clamp(testCustomTriggerIndex, 0, savedTriggers.Count - 1);
-        var triggerNames = savedTriggers.Select(t => t.Label).ToArray();
-        ImGui.SetNextItemWidth(-1);
-        ImGui.Combo("##testSavedTrigger", ref testCustomTriggerIndex, triggerNames, triggerNames.Length);
-        var selectedCommand = $"{config.TriggerPhrase.Trim()} {savedTriggers[testCustomTriggerIndex].Command}".Trim();
-        if (ImGui.Button("Put in test box"))
-            testCommandInput = selectedCommand;
-        ImGui.SameLine();
-        DrawTestButton("testSelectedTrigger", "Run selected trigger", () => plugin.ChatCommandListener.TestIncomingCommand(selectedCommand));
-        IconGlyph.WrappedDisabled($"What the Owner sends: {selectedCommand}");
-        ImGui.Spacing();
-
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
-        ImGui.InputTextWithHint("##testCommandInput", "e.g. ray outfit lock kagome", ref testCommandInput, 500);
-        if (ImGui.Button("Paste"))
-        {
-            var clipboard = ImGui.GetClipboardText() ?? "";
-            testCommandInput = clipboard[..Math.Min(clipboard.Length, 500)];
-        }
-        ImGui.SameLine();
-        using (ImRaii.Disabled(testCommandInput.Length == 0))
-        {
-            if (ImGui.Button("Copy"))
-                ImGui.SetClipboardText(testCommandInput);
-            ImGui.SameLine();
-            if (ImGui.Button("Clear"))
-                testCommandInput = "";
-        }
-        DrawTestButton("testOwnerCommand", "Run test", () => plugin.ChatCommandListener.TestIncomingCommand(testCommandInput));
-    }
-
-    /// Role and trigger phrase are read-only while this device holds any Sub-side pairing; enforced in the UI only.
     private void DrawIdentityCard(PluginConfig config)
     {
         var subLocked = config.HasActiveSubSidePairing;
@@ -622,25 +545,6 @@ public class SettingsWindow : Window, IDisposable
         if (ImGui.Button("Rerun Tutorial"))
             plugin.Tutorial.StartOverview(config.ResolveActiveDirection());
         IconGlyph.HelpMarker("Doesn't affect the other direction's own first-time tutorial.");
-    }
-
-    private void DrawTestButton(string key, string label, Func<LocalTestResult> run)
-    {
-        if (ImGui.Button($"{label}##{key}"))
-            testResults[key] = (run(), Environment.TickCount64);
-
-        if (testResults.TryGetValue(key, out var last))
-        {
-            if (Environment.TickCount64 - last.ShownAtTicks >= TestResultDisplayMs)
-            {
-                testResults.Remove(key);
-            }
-            else
-            {
-                ImGui.SameLine();
-                IconGlyph.WrappedColored(last.Result.Success ? Theme.Success : Theme.Danger, last.Result.Message);
-            }
-        }
     }
 
     private void DrawTosCard(PluginConfig config)

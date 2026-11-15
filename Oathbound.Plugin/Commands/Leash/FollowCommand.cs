@@ -78,8 +78,6 @@ public sealed class FollowCommand
     private bool pauseNotified;
     /// Codes the Owner was already sent during this pause; cleared on re-attach and release.
     private readonly HashSet<TeleportRefusal> pauseCodesSent = [];
-    /// False for a trip from a local test, which never reports to the Owner; its kept trip inherits this.
-    private bool tripReportable = true;
     private int requestedLength = LengthOption.DefaultYalms;
     /// From the Owner's `duty:pause`: while the Sub is in a duty the leash waits, even with the Owner right there.
     private bool pauseInDuties;
@@ -150,7 +148,7 @@ public sealed class FollowCommand
 
     private void ReportPause(TeleportRefusal code)
     {
-        if (state == LeashState.Released || !tripReportable || !pauseCodesSent.Add(code))
+        if (state == LeashState.Released || !pauseCodesSent.Add(code))
             return;
         LeashPaused?.Invoke(ownerPairingId, code);
     }
@@ -160,7 +158,6 @@ public sealed class FollowCommand
     {
         if (state == LeashState.Released || pairingId != ownerPairingId)
             return;
-        tripReportable = true;
         ReportPause(code);
     }
 
@@ -269,7 +266,7 @@ public sealed class FollowCommand
     }
 
     /// Only for the Owner this Sub is leashed to. A journey that can't start pauses the leash and keeps the trip.
-    public (bool Success, string? Reason) TravelTo(TeleportTarget destination, PairingState? source, bool reportable)
+    public (bool Success, string? Reason) TravelTo(TeleportTarget destination, PairingState? source)
     {
         if (state == LeashState.Released)
             return (false, "Not leashed - leash travel ignored.");
@@ -277,7 +274,6 @@ public sealed class FollowCommand
             return (false, "Not leashed to the sender - leash travel ignored.");
 
         keptTrip = (destination, source.Id);
-        tripReportable = reportable;
         if (FindOwner() is { } owner && Plugin.ObjectTable.LocalPlayer is { } player &&
             Vector2.Distance(Ground(player.Position), Ground(owner.Position)) <= ReattachReach)
         {

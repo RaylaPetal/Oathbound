@@ -17,7 +17,7 @@ public enum TeleportRefusal
 }
 
 /// Which journeys report their end to the Owner: only Owner and Leash ones do.
-public enum JourneyOrigin { Owner, Leash, Cage, Local }
+public enum JourneyOrigin { Owner, Leash, Cage }
 
 public static class TeleportRefusalExtensions
 {

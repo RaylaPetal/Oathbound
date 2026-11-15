@@ -78,5 +78,10 @@ public sealed class ChangelogWindow : Window, IDisposable
 
         if (ImGui.Button("Got it"))
             IsOpen = false;
+        ImGui.SameLine();
+        if (ImGui.Button("Join the Oathbound Discord"))
+            Dalamud.Utility.Util.OpenLink(SupportLinks.DiscordUrl);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Updates and help\ndiscord.gg/87eMbV4FU9");
     }
 }

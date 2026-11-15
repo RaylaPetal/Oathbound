@@ -11,6 +11,17 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.3.0.2", "2026-11-15", "Discord, and no more test commands",
+        [
+            new("New",
+            [
+                "Oathbound has a Discord for updates and help: the new button next to Ko-fi and Patreon in the main window, or \"Join the Oathbound Discord\" below.",
+            ]),
+            new("Changed",
+            [
+                "The Test Commands tab in Settings is gone. It let you run your Owner's commands on yourself, which was a way around their locks. Locks now only come off by their timer, their key, struggling, your Owner, your safeword or unpairing.",
+            ]),
+        ]),
         new("0.3.0.1", "2026-11-14", "Commands no longer use tells",
         [
             new("Important",
