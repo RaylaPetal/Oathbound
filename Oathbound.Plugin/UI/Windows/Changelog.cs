@@ -11,6 +11,17 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.3.1.1", "2026-11-17", "Hitching posts and the ladder",
+        [
+            new("New",
+            [
+                "Hitching posts, the escalation ladder and Reactions to facial expressions - see 0.3.1.0 below for everything in this update.",
+            ]),
+            new("Changed",
+            [
+                "Were you on the 0.3.1.0 testing build? This update moves you back to the regular Oathbound server and your regular pairings.",
+            ]),
+        ]),
         new("0.3.1.0", "2026-11-17", "Hitching posts and the ladder",
         [
             new("Important",
