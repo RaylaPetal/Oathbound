@@ -61,6 +61,10 @@ public static partial class ConsequenceText
                 return "revert everything the Owner can command";
             case ConsequenceValidator.DeckWord:
                 return CardPiles.TryParseDraw(rest, out var pile) ? $"draw a {CardPiles.Word(pile)} card" : text;
+            case ConsequenceValidator.LadderWord:
+                return LadderCommand.TryParse(rest, allowSet: true, out var step, out var setTo)
+                    ? setTo is { } n ? $"set the ladder to stage {n}" : step > 0 ? "tighten the ladder a stage" : "loosen the ladder a stage"
+                    : text;
             case ConsequenceValidator.LedgerWord:
                 return LedgerCommand.TryParse(rest, out var delta, out var reason)
                     ? $"{(delta > 0 ? "+" : "")}{delta} ledger" + (reason.Length > 0 ? $" ({reason})" : "")
@@ -354,6 +358,25 @@ public static class RuleText
         ("Cooldown", i.CooldownSeconds == 0 ? "None" : RestraintLock.Format(TimeSpan.FromSeconds(i.CooldownSeconds))),
     ];
 
+    public static List<(string Label, string Text)> Ladder(Ladder ladder)
+    {
+        var lines = new List<(string, string)>();
+        for (var i = 0; i < ladder.Stages.Count; i++)
+        {
+            var stage = ladder.Stages[i];
+            lines.Add(($"Stage {i + 1}", $"{(stage.Name.Length > 0 ? stage.Name + ": " : "")}{Cap(ConsequenceText.Describe(stage.Command))}, " +
+                (stage.Struggle == StruggleLevel.None ? "no struggling" : $"{RestraintStruggle.LevelNames[(int)stage.Struggle]} struggle - escaping loosens a stage, failing tightens one")));
+        }
+        lines.Add(("Locked", "Each stage stays on until the ladder moves. Your safeword takes it off and keeps your stage until you resume."));
+        if (ladder.FailedStruggles > 0)
+            lines.Add(("Struggling", ladder.FailedStruggles == 1
+                ? "Every failed struggle against your Owner's other locks tightens it a stage"
+                : $"Every {ladder.FailedStruggles} failed struggles against your Owner's other locks tighten it a stage"));
+        if (ladder.DecayHours > 0)
+            lines.Add(("Decay", $"Loosens a stage every {ladder.DecayHours} hour{(ladder.DecayHours == 1 ? "" : "s")} with nothing tightening it"));
+        return lines;
+    }
+
     private static readonly DayOfWeek[] Week =
         [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
 
@@ -379,6 +402,8 @@ public static class RuleText
         foreach (var t in doc.Times) Add(t.Id, "Time rule", Name(t.Name, "Time rule"), Time(t));
         foreach (var i in doc.Shop) Add(i.Id, "Shop item", Name(i.Name, "Shop item"), Shop(i));
         Add(DrawOnSettings.RuleId, "Deck", "Deck draws on events", DrawOn(doc.DrawOn));
+        if (doc.Ladder is { Stages.Count: > 0 } ladder)
+            Add(Rulebook.Ladder.RuleId, "Ladder", $"Ladder ({ladder.Stages.Count} stage{(ladder.Stages.Count == 1 ? "" : "s")})", Ladder(ladder));
         return list;
     }
 

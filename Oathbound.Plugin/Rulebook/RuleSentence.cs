@@ -31,6 +31,8 @@ public static class RuleSentence
         foreach (var t in doc.Thresholds) map[t.Id] = For(t);
         foreach (var t in doc.Times) map[t.Id] = For(t);
         foreach (var i in doc.Shop) map[i.Id] = For(i);
+        if (doc.Ladder is { Stages.Count: > 0 } ladder)
+            map[Ladder.RuleId] = $"{ladder.Stages.Count} stage{(ladder.Stages.Count == 1 ? "" : "s")} of restraints that tighten and loosen a stage at a time.";
         return map;
     }
 

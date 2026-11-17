@@ -531,6 +531,14 @@ public sealed class RestraintCommand
     public StruggleSetting PendingStruggle { get; set; }
     public Guid? PendingLockPairingId { get; set; }
 
+    /// The restraint the last applied lock went on, so the ladder can find the stage it just put on.
+    public string? LastLockedRuntimeId { get; set; }
+
+    /// (pairing that set the lock) after a failed struggle against a lock that isn't a ladder stage.
+    public event Action<Guid?>? StruggleFailed;
+    /// (pairing, escaped, next try) after a struggle against a ladder stage; the ladder moves, not this restraint.
+    public event Action<Guid?, bool, DateTime>? LadderStruggled;
+
     /// (pairing that set the lock, restraint name) after the Sub struggled free of it.
     public event Action<Guid?, string>? StruggledFree;
     /// (pairing that set the lock, restraint name) after the Sub unlocked it with its key.
@@ -542,6 +550,7 @@ public sealed class RestraintCommand
     {
         if (FindWorn(runtimeId) is not { } worn)
             return;
+        LastLockedRuntimeId = runtimeId;
         worn.Lock = new WornRestraintLock
         {
             ByPairingId = PendingLockPairingId,
@@ -573,6 +582,8 @@ public sealed class RestraintCommand
             return LocalTestResult.Fail("That restraint can't be struggled against.");
         if (StruggleWait(worn) is { } wait)
             return LocalTestResult.Fail($"You can try again in {RestraintLock.Format(wait)}.");
+        if (restraintLock.Ladder)
+            return StruggleLadderStage(worn, restraintLock, setting);
         if (Random.Shared.NextDouble() < RestraintStruggle.Chance(setting.Level))
         {
             Plugin.Log.Information("Struggled free of a restraint.");
@@ -591,7 +602,31 @@ public sealed class RestraintCommand
             penalty = $" The lock tightened: +{setting.PenaltyMinutes}m.";
         }
         config.Save();
+        StruggleFailed?.Invoke(restraintLock.ByPairingId);
         return LocalTestResult.Fail($"{worn.Reference} holds.{penalty} Try again in {RestraintLock.Format(RestraintStruggle.Wait(setting.Level))}.");
+    }
+
+    /// Double or nothing: an escape loosens the ladder a stage, a failure tightens it. Either way the wait starts.
+    private LocalTestResult StruggleLadderStage(WornRestraint worn, WornRestraintLock restraintLock, StruggleSetting setting)
+    {
+        var escaped = Random.Shared.NextDouble() < RestraintStruggle.Chance(setting.Level);
+        var next = DateTime.UtcNow + RestraintStruggle.Wait(setting.Level);
+        restraintLock.StruggleNextTryUtc = next;
+        config.Save();
+        LadderStruggled?.Invoke(restraintLock.ByPairingId, escaped, next);
+        if (escaped)
+        {
+            StruggleWon?.Invoke(setting.Level);
+            return LocalTestResult.Ok($"You struggled free of {worn.Reference} - the ladder loosens a stage.");
+        }
+        return LocalTestResult.Fail($"{worn.Reference} holds, and the ladder tightens a stage. Try again in {RestraintLock.Format(RestraintStruggle.Wait(setting.Level))}.");
+    }
+
+    /// The ladder taking its own stage off. Nothing is reported to the Owner.
+    public void ReleaseLadderStage(string runtimeId)
+    {
+        if (FindWorn(runtimeId) is not null)
+            ReleaseDevice(runtimeId);
     }
 
     /// The Sub's own click only. A wrong guess starts a wait, so the key can't be found by rapid retries in-game.

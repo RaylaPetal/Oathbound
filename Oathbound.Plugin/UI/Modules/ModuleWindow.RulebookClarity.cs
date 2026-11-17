@@ -86,6 +86,10 @@ public sealed partial class ModuleWindow
                 affordable == 0 ? "- nothing in the shop yet" : $"- {affordable} shop item{(affordable == 1 ? "" : "s")} you can afford");
         }
 
+        if (accepted.Ladder is { Stages.Count: > 0 } ladder)
+            ImGui.TextColored(pairing.Rulebook.Ladder.Stage > 0 ? Theme.Warning : Theme.TextMuted,
+                pairing.Rulebook.Ladder.Stage == 0 ? "Ladder: free" : $"Ladder: stage {pairing.Rulebook.Ladder.Stage} of {ladder.Stages.Count}, {RulebookService.LadderStageName(ladder, pairing.Rulebook.Ladder.Stage)}");
+
         if (today.Empty && today.DoneToday.Count == 0)
         {
             IconGlyph.WrappedDisabled("Nothing due and nothing at risk right now.");

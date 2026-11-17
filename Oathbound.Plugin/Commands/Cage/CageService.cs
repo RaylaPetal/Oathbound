@@ -28,6 +28,8 @@ public sealed class CageService
     public const string OpenWord = "open";
     public const string CloseWord = "close";
     public const string PinWord = "pin";
+    /// `post:<yalms>`: a hitching post, round, in place of `r:` or `pin`. Older Subs don't parse it and refuse the cage.
+    public const string PostToken = "post:";
     /// Travels the Sub to an armed cage with Teleport, then the cage closes on arrival as usual.
     public const string BringWord = "bring";
 
@@ -104,6 +106,7 @@ public sealed class CageService
     private float centerHeight;
     private Vector2 playerGround;
     private Vector2 half;
+    private bool round;
 
     private readonly MoodlesCommand moodles;
     private long nextMoodleTryTicks;
@@ -148,7 +151,7 @@ public sealed class CageService
     /// Only the cage's own Mount Roulette on the way in gets past the caged mount block.
     public bool IsMountingIn => walking && navigator.IsMounting;
 
-    /// `cage [lockfor:<s>] [armfor:<s>] [bring] close <place> pos:<x>,<y>,<z> <r:<x>[x<z>]|pin> "<name>"` or `cage open`.
+    /// `cage [lockfor:<s>] [armfor:<s>] [bring] close <place> pos:<x>,<y>,<z> <r:<x>[x<z>]|pin|post:<n>> "<name>"` or `cage open`.
     public LocalTestResult Handle(string rest, PairingState? source)
     {
         rest = LockTimerOption.StripSeconds(rest, out var lockSeconds);
@@ -167,7 +170,7 @@ public sealed class CageService
 
         if (!config.Permissions.Cage || !config.CageAcknowledged)
             return LocalTestResult.Fail("Cage permission is not enabled.", "tried to cage you - Cage is turned off");
-        if (!TryParseClose(args, out var place, out var position, out var cageRadius, out var cageRadiusZ, out var name))
+        if (!TryParseClose(args, out var place, out var position, out var cageRadius, out var cageRadiusZ, out var post, out var name))
             return LocalTestResult.Fail($"Unrecognized \"cage close\" arguments \"{args}\".");
         if (!CanEnforce(cageRadius))
             return LocalTestResult.Fail("Refused: a cage can't be enforced on this game version.", "tried to cage you, but your game version can't hold a cage");
@@ -184,8 +187,10 @@ public sealed class CageService
         cage.Name = name;
         cage.Place = place;
         cage.Position = position;
-        cage.Radius = cageRadius;
+        // A post never gives more rope than the Sub's own longest accepted leash.
+        cage.Radius = post ? Math.Min(cageRadius, Math.Clamp(config.Aliases.Follow.MaxLeashLengthYalms, LengthOption.MinYalms, LengthOption.MaxYalms)) : cageRadius;
         cage.RadiusZ = cageRadiusZ;
+        cage.Post = post;
         cage.LockSeconds = lockDuration is { } d ? (int)d.TotalSeconds : null;
         cage.ArmExpiresAtUtc = now + TimeSpan.FromSeconds(CageLimits.ClampArmSeconds(armSeconds ?? CageLimits.DefaultArmSeconds));
         if (cage.HasClosed)
@@ -669,9 +674,19 @@ public sealed class CageService
     }
 
     /// At an edge of the rectangle, the part of the wish that crosses it is removed, so the Sub slides along it.
+    /// At a post's circle, the part pointing away from the post is removed, as at the end of a leash.
     private Vector2 ConfineWish(Vector2 wish)
     {
         var offset = playerGround - center;
+        if (round)
+        {
+            var distance = offset.Length();
+            if (distance < half.X || distance < 1e-4f)
+                return wish;
+            var outward = offset / distance;
+            var away = Vector2.Dot(wish, outward);
+            return away > 0f ? wish - outward * away : wish;
+        }
         if ((offset.X >= half.X && wish.X > 0f) || (offset.X <= -half.X && wish.X < 0f))
             wish.X = 0f;
         if ((offset.Y >= half.Y && wish.Y > 0f) || (offset.Y <= -half.Y && wish.Y < 0f))
@@ -685,11 +700,14 @@ public sealed class CageService
         centerHeight = cage.Position.Y;
         playerGround = new Vector2(playerPosition.X, playerPosition.Z);
         half = cage.HalfExtents;
+        round = cage.Post;
     }
 
     /// How far a point is outside the rectangle along the ground; 0 inside.
     private float OutsideBy(Vector3 position)
     {
+        if (round)
+            return MathF.Max(Vector2.Distance(new Vector2(position.X, position.Z), center) - half.X, 0f);
         var offset = Vector2.Abs(new Vector2(position.X, position.Z) - center) - half;
         return Vector2.Max(offset, Vector2.Zero).Length();
     }
@@ -728,12 +746,13 @@ public sealed class CageService
         return trimmed[(end + 1)..].TrimStart();
     }
 
-    private static bool TryParseClose(string args, out CagePlace place, out Vector3 position, out float cageRadius, out float? cageRadiusZ, out string name)
+    private static bool TryParseClose(string args, out CagePlace place, out Vector3 position, out float cageRadius, out float? cageRadiusZ, out bool post, out string name)
     {
         place = null!;
         position = default;
         cageRadius = 0;
         cageRadiusZ = null;
+        post = false;
         name = "";
 
         var quote = args.IndexOf('"');
@@ -761,6 +780,15 @@ public sealed class CageService
 
         if (tokens[2].Equals(PinWord, StringComparison.OrdinalIgnoreCase))
             return true;
+        if (tokens[2].StartsWith(PostToken, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!int.TryParse(tokens[2][PostToken.Length..], NumberStyles.None, CultureInfo.InvariantCulture, out var postRadius)
+                || postRadius is < CageLimits.MinPostRadius or > CageLimits.MaxPostRadius)
+                return false;
+            cageRadius = postRadius;
+            post = true;
+            return true;
+        }
         if (!tokens[2].StartsWith("r:", StringComparison.OrdinalIgnoreCase))
             return false;
         var sizes = tokens[2][2..].Split('x');
@@ -781,6 +809,8 @@ public sealed class CageService
     /// `r:<x>` for a square, `r:<x>x<z>` otherwise.
     private static string ComposeSize(SavedCage cage)
     {
+        if (cage.Post)
+            return string.Create(CultureInfo.InvariantCulture, $"{PostToken}{Math.Clamp((int)MathF.Round(cage.Radius), CageLimits.MinPostRadius, CageLimits.MaxPostRadius)}");
         if (cage.Radius <= 0)
             return PinWord;
         var half = CageLimits.HalfExtents(cage.Radius, cage.RadiusZ);

@@ -114,6 +114,56 @@ public sealed partial class ModuleWindow
             }));
     }
 
+    private bool tieOffTimed;
+    private int tieOffMinutes = 10;
+
+    /// Tie off sends a round cage at the Owner's spot; the leash stays engaged under it and pulls again on Untie.
+    private void DrawHitchingPostSection(bool canSend)
+    {
+        if (plugin.Configuration.ActivePairing is not { Direction: PairingDirection.OwnerSide } pairing)
+            return;
+        using var box = Section.Begin("leashPost", "Hitching post");
+        var name = pairing.PeerName ?? "your Sub";
+        if (plugin.OwnerCageStatus.HoldingPost(pairing) is { } post)
+        {
+            IconGlyph.WrappedDisabled($"You tied {name} to a post at {post.PlaceLabel} ({post.Radius:0} yalms of rope).");
+            using (ImRaii.Disabled(!canSend))
+            {
+                if (ImGui.Button("Untie"))
+                    ReportCageSend(CageSendAction.TryOpen(plugin));
+            }
+            IconGlyph.HelpMarker("Opens the post. If they're still on your leash, it picks them up and pulls them after you again.");
+            return;
+        }
+
+        if (plugin.OwnerStatusEstimates.For(pairing) is not { Leashed: true } estimate)
+        {
+            IconGlyph.WrappedDisabled($"Leash {name} first, then tie them off here.");
+            return;
+        }
+
+        IconGlyph.WrappedDisabled($"Ties {name} to a post where you stand, with {estimate.LeashLength:0} yalms of rope. It works like a cage: they can't leave or change their permissions until you untie them. Needs their Cage permission. Panic always frees them.");
+        Layout.ItemWidth(120);
+        var mode = tieOffTimed ? 1 : 0;
+        if (ImGui.Combo("##tieOffLock", ref mode, TieOffLockModes, TieOffLockModes.Length))
+            tieOffTimed = mode == 1;
+        if (tieOffTimed)
+        {
+            ImGui.SameLine();
+            Layout.ItemWidth(80);
+            if (ImGui.InputInt("min##tieOffMinutes", ref tieOffMinutes, 5, 60))
+                tieOffMinutes = Math.Clamp(tieOffMinutes, 1, 7 * 24 * 60);
+        }
+        ImGui.SameLine();
+        using (ImRaii.Disabled(!canSend))
+        {
+            if (ImGui.Button("Tie off here"))
+                ReportCageSend(CageSendAction.TryTieOff(plugin, (int)MathF.Round(estimate.LeashLength), tieOffTimed ? tieOffMinutes * 60 : null));
+        }
+    }
+
+    private static readonly string[] TieOffLockModes = ["Until untied", "Timed"];
+
     private void DrawFollowQuickSectionBody(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Follow;
@@ -160,6 +210,8 @@ public sealed partial class ModuleWindow
                     }
                 }));
         }
+
+        DrawHitchingPostSection(canSend);
 
         if (quick.Count == 0)
             return;

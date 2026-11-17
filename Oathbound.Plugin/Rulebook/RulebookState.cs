@@ -74,6 +74,25 @@ public sealed class RulebookPairingState
     public Dictionary<string, long> ShopLastBought { get; set; } = new();
     /// The outfit this pairing's Owner last applied; what a Keep it on oath holds the Sub to.
     public OwnerOutfitSnapshot? OwnerOutfit { get; set; }
+    public LadderState Ladder { get; set; } = new();
+}
+
+/// The Sub's place on the ladder. The stage survives panic and the permission going off; its restraint doesn't.
+[Serializable]
+public sealed class LadderState
+{
+    public int Stage { get; set; }
+    /// The worn restraint the current stage put on; null while nothing from the ladder is worn.
+    public string? RuntimeId { get; set; }
+    /// The stage's restraint was taken off outside the ladder (the Owner's unlock, revert all), so it stays off until
+    /// the ladder next moves.
+    public bool Released { get; set; }
+    public int FailedStruggles { get; set; }
+    /// Struggling waits per ladder, not per stage, so a move never hands out a fresh try.
+    public DateTime? StruggleNextTryUtc { get; set; }
+    /// Decay: seconds counted toward the next loosening, and when they were last counted.
+    public long DecaySeconds { get; set; }
+    public long DecayCheckedUnixSeconds { get; set; }
 }
 
 [Serializable]
@@ -187,6 +206,9 @@ public sealed class RulebookReport
     public bool PermissionOn { get; set; }
     public bool Suspended { get; set; }
     public int LedgerScore { get; set; }
+    /// Null without a ladder. An older Owner ignores these.
+    public int? LadderStage { get; set; }
+    public string? LadderStageName { get; set; }
     public List<string> DisabledRuleIds { get; set; } = new();
     public List<ReportedOath> Oaths { get; set; } = new();
     public List<RulebookEvent> Events { get; set; } = new();

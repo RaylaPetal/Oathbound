@@ -19,6 +19,7 @@ public interface IRulebookCommandSink
 {
     LocalTestResult DeckDraw(string rest, PairingState? sourcePairing);
     LocalTestResult Ledger(string rest, PairingState? sourcePairing);
+    LocalTestResult Ladder(string rest, PairingState? sourcePairing);
 }
 
 /// Runs what a paired peer sends over the live relay channel (collar/relay-messaging): commands from an Owner go
@@ -427,6 +428,8 @@ public sealed class ChatCommandListener : IDisposable
                 return RulebookSink is { } deckSink ? deckSink.DeckDraw(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.", "sent a rulebook command, but rulebooks aren't available");
             case Rulebook.ConsequenceValidator.LedgerWord:
                 return RulebookSink is { } ledgerSink ? ledgerSink.Ledger(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.", "sent a rulebook command, but rulebooks aren't available");
+            case Rulebook.ConsequenceValidator.LadderWord:
+                return RulebookSink is { } ladderSink ? ladderSink.Ladder(rest, sourcePairing) : LocalTestResult.Fail("Rulebooks aren't available.", "sent a rulebook command, but rulebooks aren't available");
         }
 
         return ResolveAlias(commandText, sourcePairing);

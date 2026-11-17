@@ -161,6 +161,7 @@ public static class TutorialCatalog
         [
             Help("follow", "Put your Sub on a leash."),
             new("Commands", "Leash with a length, or unleash. A leashed Sub moves freely inside the length and is pulled along when you walk further. It stays on through teleports and houses until you unleash.", S("followQuickCommands"), n => n.Module("follow")),
+            new("Hitching post", "Tie your leashed Sub to a post where you stand and come back for them. It holds them like a cage until you untie them.", S("leashPost"), n => n.Module("follow")),
             new("Leash line", "How the leash looks on your screen. Hiding it doesn't release the leash.", S("leashAppearance"), n => n.Module("follow")),
             Star(),
         ],
@@ -199,6 +200,7 @@ public static class TutorialCatalog
             new("Automatic draws", "Pick what draws a card: bad things draw a punishment, a kept oath draws a reward.", S("rbDeckDraws"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
             new("Cards", "Your punishments and rewards. Each shows its chance of coming up.", S("rbDeck"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
             new("Shop", "Things they can buy with their points when they choose - a reward card, or something you set.", S("rbShop"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
+            new("Ladder", "Restraints that tighten and loosen a stage at a time - from any outcome, failed struggles, or your own buttons.", S("rbLadder"), n => n.RulebookTab(ModuleWindow.RulebookRewardsTab)),
         ],
         ["sync"] =
         [
@@ -308,6 +310,7 @@ public static class TutorialCatalog
             new("New version", "When your Owner publishes, review what changed here and accept or decline it.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
             new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
             new("Today", "What's due now, what's about to break, and what you've already done today, with your balance.", S("rbSubToday"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Your ladder", "Where you are on your Owner's ladder of restraints, and what moves it.", S("rbSubLadder"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook with a ladder."),
             new("Points", "How you earn and lose points, what you can buy with them, and the milestones ahead.", S("rbSubPoints"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've accepted a rulebook."),
             new("Card draws", "The cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've drawn a card."),

@@ -329,7 +329,7 @@ public sealed partial class ModuleWindow
             IconGlyph.WrappedDisabled(cage.EndsAtUtc is { } end ? $"{RestraintLock.Format(end - DateTime.UtcNow)} left." : "Until they open it.");
         else if (!cage.HasClosed)
             IconGlyph.WrappedDisabled($"It waits {RestraintLock.Format(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more for you to arrive. Turning your Cage permission off calls it off.");
-        IconGlyph.WrappedDisabled(cage.IsPinned ? "Pinned: you can't move while it's closed." : CageLimits.HalfExtents(cage.Radius, cage.RadiusZ) is var half && half.X == half.Y
+        IconGlyph.WrappedDisabled(cage.Post ? $"You're tied to a post: you can move within {cage.Radius:0} yalms of it." : cage.IsPinned ? "Pinned: you can't move while it's closed." : CageLimits.HalfExtents(cage.Radius, cage.RadiusZ) is var half && half.X == half.Y
             ? $"You can move within {half.X:0.#} yalms of its spot."
             : $"You can move within {half.X:0.#} yalms of its spot along X (east-west) and {half.Y:0.#} along Z (north-south).");
         IconGlyph.WrappedDisabled("While caged you can't leave, change your permissions, struggle, use keys or take restraints off. Panic always opens it.");

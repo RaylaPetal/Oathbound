@@ -1,3 +1,4 @@
+using System;
 using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
@@ -9,6 +10,24 @@ public static class CageSendAction
     /// `bring` also travels the Sub there when they're elsewhere.
     public static (bool Success, string? Error) TrySend(Plugin plugin, SavedCage cage, bool bring = false) =>
         Send(plugin, CageService.ComposeClose(cage, bring), cage, open: false);
+
+    /// Ties the leashed Sub to a hitching post where the Owner stands, with the leash's length as its radius.
+    public static (bool Success, string? Error) TryTieOff(Plugin plugin, int radius, int? lockSeconds)
+    {
+        if (CagePlaces.Capture(out var label, out var error) is not { } here || Plugin.ObjectTable.LocalPlayer is not { } me)
+            return (false, error ?? "Your location can't be read right now.");
+        var post = new SavedCage
+        {
+            Name = CageLimits.PostName,
+            PlaceLabel = label,
+            Place = here,
+            Position = me.Position,
+            Radius = Math.Clamp(radius, CageLimits.MinPostRadius, CageLimits.MaxPostRadius),
+            LockSeconds = lockSeconds,
+            Post = true,
+        };
+        return Send(plugin, CageService.ComposeClose(post), post, open: false);
+    }
 
     public static (bool Success, string? Error) TryOpen(Plugin plugin) =>
         Send(plugin, CageService.ComposeOpen(), null, open: true);

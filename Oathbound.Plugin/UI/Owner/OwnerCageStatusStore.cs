@@ -11,7 +11,8 @@ namespace Oathbound.Plugin.UI;
 public sealed class OwnerCageStatusStore
 {
     public sealed record Status(string State, DateTimeOffset StateAt, DateTimeOffset? EndsAt);
-    public sealed record Sent(Guid? CageId, string Name, DateTimeOffset At, bool Open);
+    /// `Post` is the unsaved hitching post this was, or the one an open opens; posts have no saved id.
+    public sealed record Sent(Guid? CageId, string Name, DateTimeOffset At, bool Open, SavedCage? Post = null);
 
     private static readonly TimeSpan FastInterval = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan RefreshThrottle = TimeSpan.FromMinutes(1);
@@ -62,9 +63,23 @@ public sealed class OwnerCageStatusStore
     public void MarkSent(PairingState pairing, SavedCage? cage, bool open)
     {
         // An open keeps the cage it opens, so its bounds stop drawing once the Sub reports it gone.
-        var cageId = cage?.Id ?? sent.GetValueOrDefault(pairing.Id)?.CageId;
-        sent[pairing.Id] = new Sent(cageId, cage?.Name ?? "", DateTimeOffset.UtcNow, open);
+        var previous = sent.GetValueOrDefault(pairing.Id);
+        var post = cage is null ? previous?.Post : cage.Post ? cage : null;
+        var cageId = cage is { Post: false } ? cage.Id : cage is null ? previous?.CageId : null;
+        sent[pairing.Id] = new Sent(cageId, cage?.Name ?? previous?.Name ?? "", DateTimeOffset.UtcNow, open, post);
         refreshRequested = true;
+    }
+
+    /// The hitching post this Owner tied the Sub to, while it hasn't been opened or reported gone since.
+    public SavedCage? HoldingPost(PairingState pairing)
+    {
+        if (LastSent(pairing) is not { Open: false, Post: { } post } s)
+            return null;
+        var status = For(pairing);
+        if (status is null || status.State != CageStatusReporter.None)
+            return post;
+        // A refused post is never reported, so an older `none` only counts as "not yet" for a short while.
+        return status.StateAt < s.At.AddSeconds(-5) && DateTimeOffset.UtcNow - s.At < FastInterval ? post : null;
     }
 
     /// The Owner opened that Sub's view.

@@ -48,7 +48,16 @@ public sealed class CageRenderer
                 }
 
                 if (plugin.CageService.Cage is { Phase: CagePhase.Caged } own && own.Place.SameAs(here) && Ready(out var subBatch))
-                    DrawCage(subBatch, own.Position, own.HalfExtents, 1f);
+                {
+                    if (own.Post)
+                        DrawPost(subBatch, own.Position);
+                    else
+                        DrawCage(subBatch, own.Position, own.HalfExtents, 1f);
+                }
+
+                if (config.ActivePairing is { Direction: PairingDirection.OwnerSide } postPairing
+                    && plugin.OwnerCageStatus.HoldingPost(postPairing) is { } sentPost && sentPost.Place.SameAs(here) && Ready(out var postBatch))
+                    DrawPost(postBatch, sentPost.Position);
 
                 var sentId = config.ActivePairing is { Direction: PairingDirection.OwnerSide } pairing && SentIsHolding(pairing)
                     ? plugin.OwnerCageStatus.LastSent(pairing)?.CageId
@@ -78,6 +87,14 @@ public sealed class CageRenderer
 
     private bool SentIsHolding(PairingState pairing) =>
         plugin.OwnerCageStatus.LastSent(pairing) is { Open: false } && plugin.OwnerCageStatus.For(pairing)?.State is not CageStatusReporter.None;
+
+    /// A hitching post: one post, no rectangle. The rope to it is the leash line's job.
+    private void DrawPost(WorldStrokeRenderer.Batch batch, Vector3 ground)
+    {
+        post[0] = ground with { Y = ground.Y + GroundLift };
+        post[1] = ground with { Y = ground.Y + PostHeight };
+        batch.Stroke(post, WorldStrokeRenderer.Color(CageColor, 1f, 1f), WorldStrokeRenderer.Thickness(ground, 24f, 2.5f, 8f));
+    }
 
     private void DrawCage(WorldStrokeRenderer.Batch batch, Vector3 center, Vector2 half, float opacity)
     {

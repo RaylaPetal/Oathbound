@@ -34,6 +34,8 @@ public sealed partial class ModuleWindow
         if (Starts(t, ConsequenceValidator.LedgerWord)) return ConsequenceKind.Ledger;
         if (Starts(t, ConsequenceValidator.DeckWord)) return ConsequenceKind.DeckDraw;
         if (Starts(t, "revert")) return ConsequenceKind.RevertAll;
+        if (t.Equals(LadderCommand.UpCommand, StringComparison.OrdinalIgnoreCase)) return ConsequenceKind.Tighten;
+        if (t.Equals(LadderCommand.DownCommand, StringComparison.OrdinalIgnoreCase)) return ConsequenceKind.Loosen;
         return ConsequenceKind.Typed;
     }
 
@@ -107,6 +109,8 @@ public sealed partial class ModuleWindow
         ConsequenceKind.UnlockRestraints => "restraint unlock",
         ConsequenceKind.UnlockOutfit => "outfit unlock",
         ConsequenceKind.RevertAll => "revert all",
+        ConsequenceKind.Tighten => LadderCommand.UpCommand,
+        ConsequenceKind.Loosen => LadderCommand.DownCommand,
         _ => null,
     };
 
@@ -140,13 +144,30 @@ public sealed partial class ModuleWindow
             commands.Add(CardPiles.DrawCommand(CardPile.Punishment));
             changed = true;
         }
+        // Right after points and draws, and only once the rulebook has a ladder to move.
+        var hasLadder = plugin.Configuration.GetActivePairing()?.Rulebook.Draft.Ladder is { Stages.Count: > 0 };
+        if (hasLadder)
+        {
+            ContinueRowOrWrap(ButtonWidth("+ Tighten"));
+            if (ImGui.Button("+ Tighten"))
+            {
+                commands.Add(LadderCommand.UpCommand);
+                changed = true;
+            }
+            ContinueRowOrWrap(ButtonWidth("+ Loosen"));
+            if (ImGui.Button("+ Loosen"))
+            {
+                commands.Add(LadderCommand.DownCommand);
+                changed = true;
+            }
+        }
         ContinueRowOrWrap(Scaled(140));
         ItemWidth(140);
         // Opened after EndCombo: a popup opened from inside the combo would get the combo's id and never show.
         ConsequenceKind? more = null;
         if (ImGui.BeginCombo("##more", "+ More..."))
         {
-            foreach (var (kind, label) in ConsequenceKinds.Where(k => k.Kind is not (ConsequenceKind.Ledger or ConsequenceKind.DeckDraw)))
+            foreach (var (kind, label) in ConsequenceKinds.Where(k => k.Kind is not (ConsequenceKind.Ledger or ConsequenceKind.DeckDraw or ConsequenceKind.Tighten or ConsequenceKind.Loosen)))
             {
                 if (ImGui.Selectable($"{label}##more{kind}"))
                     more = kind;
@@ -175,7 +196,7 @@ public sealed partial class ModuleWindow
             var canChange = FixedCommand(kind) is null;
             var timed = TakesDuration(commands[i]);
             var actions = (timed ? DurationComboWidth + style.ItemSpacing.X : 0) + (canChange ? ButtonWidth("Change") + style.ItemSpacing.X : 0) + ButtonWidth("x");
-            TextWithActions(kind is ConsequenceKind.Ledger or ConsequenceKind.DeckDraw
+            TextWithActions(kind is ConsequenceKind.Ledger or ConsequenceKind.DeckDraw or ConsequenceKind.Tighten or ConsequenceKind.Loosen
                 ? RuleText.Cap(RuleSentence.Describe(commands[i]))
                 : $"{label}: {RuleText.Cap(ConsequenceText.Describe(commands[i]))}", actions, t => ImGui.TextColored(Theme.TextMuted, t));
             if (ImGui.IsItemHovered())

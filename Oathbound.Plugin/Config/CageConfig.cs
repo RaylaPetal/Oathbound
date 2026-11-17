@@ -94,9 +94,11 @@ public sealed class SubCageState
     public CagePhase Phase { get; set; }
     /// Once closed, leaving re-arms the cage and its lock alone decides when it ends.
     public bool HasClosed { get; set; }
+    /// A hitching post: a circle of `Radius` around the post instead of a rectangle.
+    public bool Post { get; set; }
 
-    public bool IsPinned => Radius <= 0;
-    public Vector2 HalfExtents => CageLimits.HalfExtents(Radius, RadiusZ);
+    public bool IsPinned => !Post && Radius <= 0;
+    public Vector2 HalfExtents => Post ? new Vector2(Radius) : CageLimits.HalfExtents(Radius, RadiusZ);
 }
 
 /// An Owner's saved cage. Owner config only; its numbers travel in the `cage` command.
@@ -116,6 +118,8 @@ public sealed class SavedCage
     /// Null = until opened.
     public int? LockSeconds { get; set; }
     public int ArmSeconds { get; set; } = CageLimits.DefaultArmSeconds;
+    /// A hitching post with a whole-yalm `Radius`. Never saved: Tie off builds one on the spot.
+    public bool Post { get; set; }
 }
 
 public static class CageLimits
@@ -126,6 +130,11 @@ public static class CageLimits
     public const int MinArmSeconds = 3600;
     public const int MaxArmSeconds = 7 * 86400;
     public const int DefaultArmSeconds = 3 * 86400;
+    public const int MinPostRadius = 1;
+    public const int MaxPostRadius = 15;
+    public const string PostName = "Hitching post";
+    /// How high the rope is tied on the post, above its ground position.
+    public const float PostTieHeight = 1.2f;
 
     /// A pinned cage still gets a 2-yalm square, the walk-in's stopping distance.
     public const float PinnedHalfSide = 1f;

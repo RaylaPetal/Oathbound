@@ -272,7 +272,7 @@ public sealed class Plugin : IDalamudPlugin
         sharedStatusReader = new SharedStatusReader(SimpleHeelsIpc);
         StatusIndicators.Shared = sharedStatusReader;
         worldStrokes = new WorldStrokeRenderer();
-        leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes);
+        leashRenderer = new LeashRenderer(Configuration, StatusIndicators, FollowCommand, worldStrokes) { Posts = TiedPosts };
         restraintRenderer = new RestraintRenderer(Configuration, StatusIndicators, worldStrokes);
         cageRenderer = new CageRenderer(this, worldStrokes);
         statusIconRenderer = new StatusIconRenderer(StatusIndicators, BlindfoldService);
@@ -316,6 +316,7 @@ public sealed class Plugin : IDalamudPlugin
 
         RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
         RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, CommandComposer, PeerMessenger, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
+        RulebookService.AttachRestraints(RestraintCommand);
         Achievements = new Achievements.AchievementService(Configuration, FollowCommand, CageService, RestraintCommand, RestrictionRuleManager,
             RuntimeState, OwnerStatusEstimates, ChatCommandListener, OutfitCommand, GestureCommand, TeleportCommand, ChatGagService,
             RulebookService, ReactionService, CustomTriggerCommand);
@@ -469,6 +470,7 @@ public sealed class Plugin : IDalamudPlugin
         TeleportCommand.Stop("plugin unloading");
         GestureCommand.Stop();
         DependencyStatus.Dispose();
+        EmoteWatcher.Dispose();
         sharedStatusPublisher.Dispose();
         SimpleHeelsIpc.Dispose();
         TitleCommand.Dispose();
@@ -518,6 +520,7 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched -= CharacterRecords.OnPairStatus;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
         RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
+        RulebookService.DetachRestraints();
         RulebookService.Dispose();
         OwnerStatusEstimates.Dispose();
         leashOffNotifier.Dispose();
@@ -810,4 +813,19 @@ public sealed class Plugin : IDalamudPlugin
             if (t.Exception is { } ex)
                 Log.Error(ex, "Unhandled error in a collar command.");
         }, TaskScheduler.Default);
+
+    /// The Sub's own hitching post, and the post this Owner tied each of their Subs to, while the viewer is there.
+    private IEnumerable<LeashRenderer.PostLine> TiedPosts()
+    {
+        if (CagePlaces.Current() is not { } here)
+            yield break;
+        if (CageService.Cage is { Phase: CagePhase.Caged, Post: true } own && own.Place.SameAs(here) && ObjectTable.LocalPlayer is { } me)
+            yield return new LeashRenderer.PostLine(own.PairingId ?? Guid.Empty, me, own.Position with { Y = own.Position.Y + CageLimits.PostTieHeight }, own.Radius);
+        foreach (var pairing in Configuration.Pairings)
+        {
+            if (pairing.Direction != PairingDirection.OwnerSide || !pairing.IsPaired) continue;
+            if (OwnerCageStatus.HoldingPost(pairing) is not { } post || !post.Place.SameAs(here)) continue;
+            yield return new LeashRenderer.PostLine(pairing.Id, StatusIndicatorState.FindSub(pairing), post.Position with { Y = post.Position.Y + CageLimits.PostTieHeight }, post.Radius);
+        }
+    }
 }

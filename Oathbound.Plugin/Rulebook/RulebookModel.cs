@@ -12,15 +12,16 @@ namespace Oathbound.Plugin.Rulebook;
 [Serializable]
 public sealed class RulebookDocument
 {
-    /// 2 adds time rules, the shop and the newer oath options; 3 adds timed titles, outfits and moodles. A document
-    /// is published as the lowest version that can hold it, so a Sub from before still accepts it; one that needs more
-    /// is refused by that Sub instead of half-read.
-    public const int CurrentSchemaVersion = 3;
+    /// 2 adds time rules, the shop and the newer oath options; 3 adds timed titles, outfits and moodles; 4 adds the
+    /// escalation ladder. A document is published as the lowest version that can hold it, so a Sub from before still
+    /// accepts it; one that needs more is refused by that Sub instead of half-read.
+    public const int CurrentSchemaVersion = 4;
     public const int MinSchemaVersion = 1;
 
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public int RequiredSchemaVersion =>
-        ConsequenceValidator.AllConsequences(this).Any(c => c.Any(ConsequenceValidator.IsTimedOwnerLock)) ? 3
+        Ladder is { Stages.Count: > 0 } || ConsequenceValidator.AllConsequences(this).Any(c => c.Any(ConsequenceValidator.IsLadderMove)) ? 4
+        : ConsequenceValidator.AllConsequences(this).Any(c => c.Any(ConsequenceValidator.IsTimedOwnerLock)) ? 3
         : Times.Count > 0 || Shop.Count > 0 || Oaths.Any(o => o.NeedsNewSub) ? 2 : 1;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -36,6 +37,8 @@ public sealed class RulebookDocument
     public DrawOnSettings DrawOn { get; set; } = new();
     public List<TimeRule> Times { get; set; } = new();
     public List<ShopItem> Shop { get; set; } = new();
+    /// Null or no stages: no ladder.
+    public Ladder? Ladder { get; set; }
 
     public IEnumerable<(string Id, string Name)> AllRules()
     {
@@ -47,6 +50,8 @@ public sealed class RulebookDocument
         foreach (var t in Times) yield return (t.Id, t.Name);
         foreach (var i in Shop) yield return (i.Id, i.Name);
         yield return (DrawOnSettings.RuleId, "Deck draws on events");
+        if (Ladder is { Stages.Count: > 0 })
+            yield return (Ladder.RuleId, "Ladder");
     }
 
     public RulebookDocument Clone() => RulebookJson.Deserialize(RulebookJson.Serialize(this))!;
@@ -338,6 +343,65 @@ public sealed class ShopItem
     public List<string> Consequence { get; set; } = new();
 }
 
+/// Restraints that tighten and loosen a stage at a time. Stage 0 applies nothing; stage n wears Stages[n - 1].
+[Serializable]
+public sealed class Ladder
+{
+    public const string RuleId = "ladder";
+
+    public List<LadderStage> Stages { get; set; } = new();
+    /// 0 = off. Loosens one stage every this many hours with nothing tightening it.
+    public int DecayHours { get; set; }
+    /// 0 = off. Every this many failed struggles against this Owner's other locks tightens one stage.
+    public int FailedStruggles { get; set; } = 1;
+}
+
+[Serializable]
+public sealed class LadderStage
+{
+    public string Id { get; set; } = RuleIds.New();
+    public string Name { get; set; } = "";
+    /// A restraint command that puts something on. Its lock is the ladder's: no timer, no key.
+    public string Command { get; set; } = "";
+    public Commands.StruggleLevel Struggle { get; set; }
+}
+
+public static class LadderCommand
+{
+    public const string Up = "up";
+    public const string Down = "down";
+    public const string Set = "set";
+
+    public static string UpCommand => $"{ConsequenceValidator.LadderWord} {Up}";
+    public static string DownCommand => $"{ConsequenceValidator.LadderWord} {Down}";
+
+    /// `up`, `down` or `set <n>`; `set` only when allowed (the Owner's own command, never a consequence).
+    public static bool TryParse(string rest, bool allowSet, out int delta, out int? setTo)
+    {
+        delta = 0;
+        setTo = null;
+        var parts = rest.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1 && parts[0].Equals(Up, StringComparison.OrdinalIgnoreCase))
+        {
+            delta = 1;
+            return true;
+        }
+        if (parts.Length == 1 && parts[0].Equals(Down, StringComparison.OrdinalIgnoreCase))
+        {
+            delta = -1;
+            return true;
+        }
+        if (allowSet && parts.Length == 2 && parts[0].Equals(Set, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n)
+            && n is >= 0 and <= RulebookLimits.MaxLadderStages)
+        {
+            setTo = n;
+            return true;
+        }
+        return false;
+    }
+}
+
 public static class CardPiles
 {
     /// The word after `deck draw`.
@@ -397,6 +461,9 @@ public static class RulebookLimits
     /// An AtTime rule still fires when the Sub logs in up to this long after its time.
     public const int TimeRuleWindowMinutes = 30;
     public const int MaxShopItems = 20;
+    public const int MaxLadderStages = 5;
+    public const int MaxLadderDecayHours = 168;
+    public const int MaxLadderFailedStruggles = 9;
     public const int MinPrice = 1;
     public const int MaxPrice = 999;
     /// Room to spare under the relay's 64 KiB ciphertext cap even before gzip.

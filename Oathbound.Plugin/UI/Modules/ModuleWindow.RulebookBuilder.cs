@@ -141,6 +141,7 @@ public sealed partial class ModuleWindow
         DrawSimpleAdvancedToggle();
         DrawDeckTab(draft);
         DrawShopTab(draft);
+        DrawLadderSection(draft);
     }
 
     // ---- Templates ----

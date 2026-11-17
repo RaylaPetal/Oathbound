@@ -67,7 +67,7 @@ public sealed partial class ModuleWindow
     private static readonly string[] ThresholdDirectionNames = ["At or above", "At or below"];
     private static readonly string[] CardPileNames = ["Punishment", "Reward"];
 
-    private enum ConsequenceKind { Title, Outfit, Animation, Moodle, Restraint, CustomTrigger, Toy, Ledger, DeckDraw, RestraintTimer, UnlockRestraints, UnlockOutfit, RevertAll, Typed }
+    private enum ConsequenceKind { Title, Outfit, Animation, Moodle, Restraint, CustomTrigger, Toy, Ledger, DeckDraw, RestraintTimer, UnlockRestraints, UnlockOutfit, RevertAll, Typed, Tighten, Loosen }
 
     private static readonly (ConsequenceKind Kind, string Label)[] ConsequenceKinds =
     [
@@ -76,6 +76,7 @@ public sealed partial class ModuleWindow
         (ConsequenceKind.Toy, "Toy pattern"), (ConsequenceKind.Ledger, "Ledger"), (ConsequenceKind.DeckDraw, "Draw a card"),
         (ConsequenceKind.RestraintTimer, "Restraint timer"), (ConsequenceKind.UnlockRestraints, "Unlock restraints"), (ConsequenceKind.UnlockOutfit, "Unlock outfit"),
         (ConsequenceKind.RevertAll, "Revert everything"), (ConsequenceKind.Typed, "Typed command"),
+        (ConsequenceKind.Tighten, "Tighten the ladder"), (ConsequenceKind.Loosen, "Loosen the ladder"),
     ];
 
     private static readonly string[] DeckPileNames = ["Punishment", "Reward"];
@@ -229,6 +230,8 @@ public sealed partial class ModuleWindow
             ImGui.TextUnformatted($"Ledger: {report.LedgerScore}");
             ImGui.SameLine();
             ImGui.TextDisabled(report.AcceptedVersion == 0 ? "- no version accepted yet" : $"- running version {report.AcceptedVersion}");
+            if (report.LadderStage is { } stage)
+                IconGlyph.WrappedDisabled(stage == 0 ? "Ladder: free." : $"Ladder: stage {stage}, \"{report.LadderStageName}\".");
             if (report.PendingVersion is { } pending)
                 IconGlyph.WrappedDisabled($"Version {pending} is waiting for them to review it.");
             if (report.DeclinedVersion is { } declined && declined > report.AcceptedVersion)
@@ -273,6 +276,19 @@ public sealed partial class ModuleWindow
                     plugin.RulebookService.SendOwnerCommand(LedgerCommandText(rbLedgerAward, rbLedgerReason));
             }
             IconGlyph.HelpMarker("Changes their ledger score. Thresholds you set in the Ledger tab fire when it crosses them.");
+
+            if (state.PublishedDocument?.Ladder is { Stages.Count: > 0 })
+            {
+                if (ImGui.Button("Tighten##rbLadderUp"))
+                    plugin.RulebookService.SendOwnerCommand(LadderCommand.UpCommand);
+                ImGui.SameLine();
+                if (ImGui.Button("Loosen##rbLadderDown"))
+                    plugin.RulebookService.SendOwnerCommand(LadderCommand.DownCommand);
+                ImGui.SameLine();
+                if (ImGui.Button("Free##rbLadderFree"))
+                    plugin.RulebookService.SendOwnerCommand($"{ConsequenceValidator.LadderWord} {LadderCommand.Set} 0");
+                IconGlyph.HelpMarker("Moves their ladder a stage, or takes them off it. Each stage's restraint still needs their Restraints permission.");
+            }
 
             // The words their client knows are the ones in the version it has, not the draft.
             if ((state.PublishedDocument?.Oaths ?? []).Any(o => o.Condition == OathCondition.AskBeforeLogoff))

@@ -14,7 +14,7 @@ namespace Oathbound.Plugin.Rulebook;
 /// Runs accepted rulebooks on the Sub's own client and drives the Owner's publish/report side. Everything that
 /// fires goes through the ConsequenceQueue and then the normal command dispatch, so every permission still applies.
 /// Framework thread only, except where noted.
-public sealed class RulebookService : IRulebookCommandSink, IDisposable
+public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
 {
     public static readonly TimeSpan OfferLifetime = TimeSpan.FromDays(7);
     private const int MaxActivity = 100;
@@ -172,6 +172,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         foreach (var pairing in SubPairings())
         {
             TrackRunningState(pairing);
+            TickLadder(pairing);
             var state = pairing.Rulebook;
             if (state.Accepted is not null)
             {
@@ -331,6 +332,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         state.AcceptedUnixSeconds = Now();
         state.RemovedOnceCards.Clear();
         state.ThresholdsMet.RemoveWhere(id => doc.Thresholds.All(t => t.Id != id));
+        ReconcileLadder(pairing, previous, doc);
         ReconcileOaths(pairing, previous, doc);
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"Version {doc.Version} accepted.");
         config.SaveNow();
@@ -349,6 +351,7 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
         state.RemovedOnceCards.Clear();
         state.Activity.Clear();
         state.ShopLastBought.Clear();
+        ResetLadder(pairing);
         state.AppliedResetCount = resetCount;
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"{pairing.PeerName} started the rulebook over: oaths, ledger and history cleared.");
     }
@@ -1542,6 +1545,8 @@ public sealed class RulebookService : IRulebookCommandSink, IDisposable
             PermissionOn = config.Permissions.Rulebook && config.RulebookAcknowledged,
             Suspended = config.RulebookSuspended,
             LedgerScore = state.LedgerScore,
+            LadderStage = state.Accepted?.Ladder is { Stages.Count: > 0 } ? state.Ladder.Stage : null,
+            LadderStageName = state.Accepted?.Ladder is { Stages.Count: > 0 } reportedLadder ? LadderStageName(reportedLadder, state.Ladder.Stage) : null,
             DisabledRuleIds = state.DisabledRuleIds.OrderBy(x => x, StringComparer.Ordinal).ToList(),
             Oaths = state.Oaths.Select(kv => new ReportedOath
             {

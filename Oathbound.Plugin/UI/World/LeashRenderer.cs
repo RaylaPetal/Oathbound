@@ -37,6 +37,15 @@ public sealed class LeashRenderer : IDisposable
     /// A tapered capsule: radius goes from RadiusA at A to RadiusB at B. A sphere when A == B.
     private readonly record struct Capsule(Vector3 A, Vector3 B, float RadiusA, float RadiusB);
 
+    /// A Sub tied to a hitching post: their rope runs to the post instead of the Owner's hand.
+    public readonly record struct PostLine(Guid PairingId, ICharacter? Sub, Vector3 Top, float Radius);
+
+    /// Set by the plugin; read every frame.
+    public Func<IEnumerable<PostLine>>? Posts { get; set; }
+
+    private readonly List<PostLine> posts = new();
+    private readonly HashSet<Guid> tiedPairings = new();
+
     private sealed class Entry
     {
         /// Linear 0..1; eased when drawn.
@@ -90,13 +99,25 @@ public sealed class LeashRenderer : IDisposable
             // No local player while loading, so no leash would read as on; treat it as a gap instead.
             if (Plugin.ObjectTable.LocalPlayer is null) return;
             Update();
-            if (!config.ShowLeashLine || entries.Count == 0) return;
+            posts.Clear();
+            tiedPairings.Clear();
+            if (Posts?.Invoke() is { } tied)
+                foreach (var line in tied)
+                {
+                    posts.Add(line);
+                    tiedPairings.Add(line.PairingId);
+                }
+            if (!config.ShowLeashLine || (entries.Count == 0 && posts.Count == 0)) return;
             lineColor = WorldStrokeRenderer.Color(config.LeashColor, config.LeashBrightness, config.LeashOpacity);
-            foreach (var entry in entries.Values)
+            foreach (var (id, entry) in entries)
             {
-                if (entry.Sub is not null && entry.Owner is not null)
+                // Tracked as usual while tied, so untying shows the line again without a draw-out.
+                if (entry.Sub is not null && entry.Owner is not null && !tiedPairings.Contains(id))
                     DrawPair(entry.Sub, entry.Owner, entry.Length, Ease(entry.Progress));
             }
+            foreach (var line in posts)
+                if (line.Sub is not null)
+                    DrawToPost(line.Sub, line.Top, line.Radius);
         }
         catch (Exception ex)
         {
@@ -204,6 +225,31 @@ public sealed class LeashRenderer : IDisposable
         if (strokes.Begin() is not { } batch) return;
         using (batch)
             batch.Stroke(visible.AsSpan(0, count), lineColor, WorldStrokeRenderer.Thickness((neck + hand) / 2f, 24f, 1.5f, 6f));
+    }
+
+    private void DrawToPost(ICharacter sub, Vector3 top, float length)
+    {
+        if (!BoneLocator.TryGetPose(sub, out var subPose) || !subPose.TryGetWorld(BoneLocator.Neck, out var neck))
+        {
+            if (warnedPairs.Add((sub.GameObjectId, 0)))
+                Plugin.Log.Warning("Leash line: couldn't find the neck bone for a tied Sub - not drawing the rope.");
+            return;
+        }
+
+        capsuleCount = 0;
+        var subTorso = AddBody(subPose);
+        var toPost = new Vector3(top.X - neck.X, 0f, top.Z - neck.Z);
+        if (subTorso > 0f && toPost.LengthSquared() > 1e-6f)
+            neck += Vector3.Normalize(toPost) * (subTorso * NeckRadius);
+
+        var groundY = MathF.Min(sub.Position.Y, top.Y - CageLimits.PostTieHeight);
+        WorldStrokeRenderer.SagCurve(samples, neck, top, length, groundY, MinClearance);
+        KeepClearOfBodies(top - neck, groundY);
+        var count = VisibleFromHand(1f);
+
+        if (strokes.Begin() is not { } batch) return;
+        using (batch)
+            batch.Stroke(visible.AsSpan(0, count), lineColor, WorldStrokeRenderer.Thickness((neck + top) / 2f, 24f, 1.5f, 6f));
     }
 
     /// Adds the character's body volumes and returns its torso length, or 0 when the torso can't be measured, in which

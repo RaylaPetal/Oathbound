@@ -11,6 +11,23 @@ public static class Changelog
 {
     public static readonly IReadOnlyList<ChangelogEntry> Entries =
     [
+        new("0.3.1.0", "2026-11-17", "Hitching posts and the ladder",
+        [
+            new("Important",
+            [
+                "You and your partner both need this version for these. An older Sub refuses a hitching post and a rulebook with a ladder.",
+            ]),
+            new("New",
+            [
+                "Hitching post: while your Sub is on your leash, \"Tie off here\" in Follow / Leash ties them to a post where you stand, with the leash's length as rope, and \"Untie\" lets the leash pick them up again. A post is a cage, so it needs their Cage permission and holds them the same way. Panic always frees them.",
+                "Escalation ladder: up to five restraint stages in a rulebook that tighten and loosen a stage at a time - from any outcome, from failed struggles, by itself over time, or from your buttons. Struggling against a stage is double or nothing. Panic takes its restraint off and keeps the stage until the Sub resumes.",
+            ]),
+            new("Fixed",
+            [
+                "Reactions now notice facial expressions (like /sneer or /smile) used on you, and the same emote used twice in a row.",
+                "A greeting oath now counts a facial expression you use on your Owner.",
+            ]),
+        ]),
         new("0.3.0.2", "2026-11-15", "Discord, and no more test commands",
         [
             new("New",

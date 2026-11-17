@@ -128,7 +128,7 @@ public sealed class StatusIndicatorState
     }
 
     /// The send target if it's here, else any other confirmed character of the Sub that is.
-    private static IPlayerCharacter? FindSub(PairingState pairing) =>
+    internal static IPlayerCharacter? FindSub(PairingState pairing) =>
         FindPlayer(pairing.PeerName!, pairing.PeerWorld!) ??
         pairing.ConfirmedCharacters.Select(c => FindPlayer(c.Name, c.World)).FirstOrDefault(pc => pc is not null);
 

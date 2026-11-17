@@ -13,10 +13,11 @@ public static class ConsequenceValidator
 {
     public const string DeckWord = "deck";
     public const string LedgerWord = "ledger";
+    public const string LadderWord = "ladder";
 
     private static readonly HashSet<string> AllowedWords = new(StringComparer.OrdinalIgnoreCase)
     {
-        "title", "outfit", "gesture", "moodle", "restraint", "toy", "revert", "customtrigger", DeckWord, LedgerWord,
+        "title", "outfit", "gesture", "moodle", "restraint", "toy", "revert", "customtrigger", DeckWord, LedgerWord, LadderWord,
     };
 
     /// Null when allowed, else why not, in words the editor can show.
@@ -37,7 +38,7 @@ public static class ConsequenceValidator
                 "teleport" => "Teleport can't be a rulebook consequence.",
                 "leash" or "follow" or ControlWords.Unleash => "Follow and leash can't be rulebook consequences.",
                 "collar" => "The collar can't be a rulebook consequence.",
-                _ => $"\"{word}\" isn't allowed in a rulebook. Use title, outfit, gesture, moodle, restraint, toy, revert all, deck draw reward/punishment or ledger.",
+                _ => $"\"{word}\" isn't allowed in a rulebook. Use title, outfit, gesture, moodle, restraint, toy, revert all, deck draw reward/punishment, ledger or ladder up/down.",
             };
 
         switch (word.ToLowerInvariant())
@@ -48,6 +49,8 @@ public static class ConsequenceValidator
                 return CardPiles.TryParseDraw(rest, out _) ? null : "Use \"deck draw reward\" or \"deck draw punishment\".";
             case LedgerWord:
                 return LedgerCommand.TryParse(rest, out _, out _) ? null : "Use \"ledger +n\" or \"ledger -n\" with n from 1 to 99.";
+            case LadderWord:
+                return LadderCommand.TryParse(rest, allowSet: false, out _, out _) ? null : "Use \"ladder up\" or \"ladder down\".";
             case "customtrigger":
                 return CheckCustomTrigger(rest);
             default:
@@ -72,7 +75,44 @@ public static class ConsequenceValidator
 
     /// Every consequence in a document, for the Sub's whole-version check.
     public static string? CheckDocument(RulebookDocument doc) =>
-        AllConsequences(doc).Select(CheckAll).FirstOrDefault(e => e is not null);
+        AllConsequences(doc).Select(CheckAll).FirstOrDefault(e => e is not null) ?? CheckLadder(doc.Ladder);
+
+    /// Each stage puts one restraint on, locked only by the ladder: no unlock or timer form, no lockfor:, no key.
+    public static string? CheckLadder(Ladder? ladder)
+    {
+        if (ladder is null || ladder.Stages.Count == 0)
+            return null;
+        if (ladder.Stages.Count > RulebookLimits.MaxLadderStages)
+            return $"A ladder has at most {RulebookLimits.MaxLadderStages} stages.";
+        if (ladder.DecayHours is < 0 or > RulebookLimits.MaxLadderDecayHours || ladder.FailedStruggles is < 0 or > RulebookLimits.MaxLadderFailedStruggles)
+            return "The ladder's decay or failed-struggle setting is out of range.";
+        foreach (var stage in ladder.Stages)
+        {
+            if (stage.Struggle is < StruggleLevel.None or > StruggleLevel.Hard)
+                return $"Stage \"{stage.Name}\" has an unknown struggle setting.";
+            if (CheckStageCommand(stage.Command) is { } problem)
+                return $"Stage \"{stage.Name}\": {problem}";
+        }
+        return null;
+    }
+
+    public static string? CheckStageCommand(string command)
+    {
+        var text = command.Trim();
+        if (!text.StartsWith("restraint ", StringComparison.OrdinalIgnoreCase))
+            return "a stage must be a restraint.";
+        if (Check(text) is { } refused)
+            return refused;
+        var rest = LockTimerOption.Strip(text["restraint ".Length..], out var restraintLock).Trim();
+        if (restraintLock.IsTimed || restraintLock.Key is not null)
+            return "the ladder is the lock, so a stage can't have a timer or a key.";
+        if (rest.StartsWith("unlock", StringComparison.OrdinalIgnoreCase) || rest.StartsWith("timer", StringComparison.OrdinalIgnoreCase))
+            return "a stage must put a restraint on.";
+        return null;
+    }
+
+    public static bool IsLadderMove(string command) =>
+        command.TrimStart().StartsWith(LadderWord + " ", StringComparison.OrdinalIgnoreCase);
 
     public static IEnumerable<List<string>> AllConsequences(RulebookDocument doc)
     {

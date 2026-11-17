@@ -25,6 +25,13 @@ public static class RulebookValidation
         foreach (var o in doc.Oaths)
             if (CheckOath(o) is { } e) return $"Oath \"{Label(o.Name)}\": {e}";
 
+        if (ConsequenceValidator.CheckLadder(doc.Ladder) is { } ladderError)
+            return $"Ladder: {ladderError}";
+        if (doc.Ladder?.Stages.Any(st => st.Name.Length > RulebookLimits.MaxNameLength) == true)
+            return $"A ladder stage has a name longer than {RulebookLimits.MaxNameLength} characters.";
+        if (doc.Ladder is not { Stages.Count: > 0 } && ConsequenceValidator.AllConsequences(doc).Any(c => c.Any(ConsequenceValidator.IsLadderMove)))
+            return "Tighten and Loosen need a ladder with at least one stage.";
+
         if (doc.Deck.Count > RulebookLimits.MaxDeckCards)
             return $"The deck holds more than {RulebookLimits.MaxDeckCards} cards.";
         foreach (var c in doc.Deck)

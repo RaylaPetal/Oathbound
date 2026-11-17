@@ -578,6 +578,8 @@ public class WornRestraintLock
     /// `salt.hash` of the Owner's password, never the password itself.
     public string? Key { get; set; }
     public DateTime? KeyNextTryUtc { get; set; }
+    /// Held by an escalation ladder's stage: struggling moves the ladder instead of only this restraint.
+    public bool Ladder { get; set; }
 
     public Commands.StruggleSetting Struggle => new(StruggleLevel, StrugglePenaltyMinutes);
 }

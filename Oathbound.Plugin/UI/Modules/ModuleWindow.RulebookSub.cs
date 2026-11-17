@@ -95,6 +95,7 @@ public sealed partial class ModuleWindow
 
         DrawToday(pairing, accepted);
         DrawPointsPanel("rbSubPoints", PointsSummary.From(accepted, pairing.PeerName ?? "your Owner"), state.LedgerScore, sub: true);
+        DrawSubLadder(pairing, accepted);
         if (ImGui.CollapsingHeader("Your oaths, all rules, the shop and activity###rbSubAll"))
             TwoColumns("rbSubColumns", () => DrawSubRulebookOaths(pairing, state, accepted), () => DrawSubRulebookRules(pairing, state, accepted, service));
     }
