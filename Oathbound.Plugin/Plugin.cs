@@ -185,6 +185,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Configuration = PluginInterface.GetPluginConfig() as PluginConfig ?? new PluginConfig();
         CatalogStore.LoadOrMigrate(Configuration);
+        Configuration.CatalogScans.AdoptStoredCatalogs(Configuration);
         MigrateConfiguration();
 
         RuntimeState = new SubRuntimeState(Configuration);
@@ -295,6 +296,7 @@ public sealed class Plugin : IDalamudPlugin
         CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
+        PairingService.PairingCompleted += CatalogAutoSync.OnPairingCompleted;
         ChatCommandListener = new ChatCommandListener(Configuration, PeerMessenger, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
         ChatCommandListener.Cage = CageService;
         legacyTellDetector = new LegacyTellDetector(Configuration, PeerMessenger);
@@ -519,6 +521,7 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairStatusFetched -= RelayActivity.Update;
         RevocationService.PairStatusFetched -= CharacterRecords.OnPairStatus;
         RevocationService.PairStatusFetched -= CatalogAutoSync.OnPairStatus;
+        PairingService.PairingCompleted -= CatalogAutoSync.OnPairingCompleted;
         RevocationService.PairStatusFetched -= RulebookService.OnPairStatus;
         RulebookService.DetachRestraints();
         RulebookService.Dispose();

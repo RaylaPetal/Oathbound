@@ -219,6 +219,7 @@ public sealed class OutfitCommand
 
         var entries = matched.Select(d => new WardrobeDesignEntry { DesignId = d.Id, Name = d.DisplayName });
         config.WardrobeMapping.LocalDesigns = entries.ToDictionary(e => e.DesignId);
+        config.CatalogScans.Wardrobe = true;
         config.Save();
     }
 

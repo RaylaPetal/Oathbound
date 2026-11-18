@@ -93,12 +93,6 @@ public sealed partial class ModuleWindow
         ImGui.Unindent();
 
         group.Dispose();
-        group = Section.Begin("permCatalog", "Catalog sync");
-        if (ImGuiCheckbox("Catalog sync", permissions.RelayCatalogSync, out var newRelayCatalogSync))
-            SavePermission(() => permissions.RelayCatalogSync = newRelayCatalogSync);
-        IconGlyph.HelpMarker("Shares your catalog with your Owner automatically when it changes. Off by default.");
-
-        group.Dispose();
         group = Section.Begin("permCustomChat", "Custom chat (own acknowledgement)");
         if (!config.CustomChatAcknowledged)
             IconGlyph.WrappedColored(Theme.Warning, "Needs its own acknowledgement on the ToS tab first.");

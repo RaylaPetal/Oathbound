@@ -63,9 +63,6 @@ public sealed class CatalogMailboxService
         if (pairing is not { Direction: PairingDirection.SubSide, IsPaired: true, PairIdHash: { Length: > 0 } pairIdHash } ||
             pairing.PeerDeviceKeyId is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
             return new(MailboxPublishOutcome.Failed, Error: "This pairing has no Owner device key on file - pair again to sync automatically.");
-        if (!config.Permissions.RelayCatalogSync)
-            return new(MailboxPublishOutcome.NotReady);
-
         lock (gate)
             if (!publishesInFlight.Add(pairing.Id))
                 return new(MailboxPublishOutcome.NotReady);

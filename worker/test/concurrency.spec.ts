@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { acceptInvitation, b64url, createInvitation, deviceKeyId, genSigningKeyPair, signEnvelope, signedFetch } from "./helpers";
 
@@ -22,7 +23,7 @@ describe("concurrency guarantees", () => {
     expect(successes).toHaveLength(1);
   });
 
-  it("concurrent catalog-request creation for the same pair collapses to exactly one accepted request", async () => {
+  it("concurrent catalog-request creation for the same pair leaves exactly one answerable request", async () => {
     const inviter = await genSigningKeyPair();
     const receiver = await genSigningKeyPair();
     const inviterId = await deviceKeyId(inviter.publicKeyJwk);
@@ -54,7 +55,10 @@ describe("concurrency guarantees", () => {
     }
 
     const results = await Promise.all([buildRequest(), buildRequest(), buildRequest()]);
-    const successes = results.filter((r) => r.status === 200);
-    expect(successes).toHaveLength(1);
+    expect(results.some((r) => r.status === 200)).toBe(true);
+    const pending = await env.RELAY_DB.prepare(`SELECT COUNT(*) AS n FROM catalog_requests WHERE pair_id_hash = ?1 AND pair_epoch = 0 AND status = 'pending'`)
+      .bind(pairIdHash)
+      .first<{ n: number }>();
+    expect(pending?.n).toBe(1);
   });
 });

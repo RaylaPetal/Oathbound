@@ -25,7 +25,6 @@ public sealed class CommandComposer
     public const string CatalogRequestKeyword = "collarcatalogreq";
 
     /// Tells the Owner the Sub hasn't opted in, without any catalog content ever existing.
-    public string ComposeCatalogPermissionDenied(string requestId) => $"collarcatalogdenied {requestId}";
 
     /// Carries only the keyword and one reason word.
     public string ComposeLeashOffNotice(LeashEnd reason) => $"{LeashOffNoticeKeyword} {LeashOffWord} {reason.ToNoticeWord()}";

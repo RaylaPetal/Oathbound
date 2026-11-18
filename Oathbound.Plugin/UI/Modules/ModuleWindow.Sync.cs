@@ -149,12 +149,6 @@ public sealed partial class ModuleWindow
         }
         IconGlyph.HelpMarker("Rescans at login and every 15 minutes, so new additions reach your Owner on their own.");
 
-        if (!config.Permissions.RelayCatalogSync)
-        {
-            IconGlyph.WrappedColored(Theme.Warning, "\"Catalog sync\" is off in Permissions, so nothing is shared.");
-            return;
-        }
-
         foreach (var pairing in config.Pairings.Where(p => p is { Direction: PairingDirection.SubSide, IsPaired: true }))
         {
             var name = pairing.PeerName ?? "your Owner";
@@ -559,12 +553,13 @@ public sealed partial class ModuleWindow
         IconGlyph.HelpMarker("Checks for a newer catalog from your Sub now.");
 
         ImGui.SameLine();
-        using (ImRaii.Disabled(relayService.RequestInFlight))
+        using (ImRaii.Disabled(relayService.RequestCreating))
         {
-            if (ImGui.Button(relayService.RequestInFlight ? "Requesting..." : "Request refresh"))
+            var label = relayService.RequestCreating ? "Requesting..." : relayService.RequestInFlight ? "Request again" : "Request refresh";
+            if (ImGui.Button($"{label}###requestRefresh"))
                 Plugin.FireAndForget(relayService.RequestRefreshAsync(pairing, System.Threading.CancellationToken.None));
         }
-        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog now. They need to be online.");
+        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog now. They need to be online. Asking again replaces a request that's still waiting.");
 
         if (pairing.SubLastPublishedUnixSeconds is { } published)
             IconGlyph.WrappedDisabled($"Your Sub last shared changes: {DateTimeOffset.FromUnixTimeSeconds(published).LocalDateTime:g}.");
@@ -597,8 +592,9 @@ public sealed partial class ModuleWindow
         var sinceOk = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(lastOk);
         if (sinceOk > TimeSpan.FromHours(2))
             return (Theme.Warning, $"Out of date: couldn't check for updates since {DateTimeOffset.FromUnixTimeSeconds(lastOk).LocalDateTime:g}.");
-        if (pairing.SubLastPublishedUnixSeconds is null)
-            return (Theme.Warning, "No updates from your Sub yet - their \"Catalog sync\" permission may be off.");
+        // A key replacement clears the relay's upload time, so a past import also counts as having heard from them.
+        if (pairing.SubLastPublishedUnixSeconds is null && pairing.LastAcceptedCatalogSyncUnixSeconds == 0)
+            return (Theme.Warning, "No catalog from your Sub yet - it arrives on its own once their plugin has scanned. Request refresh to ask now.");
         return (Theme.Success, "Up to date.");
     }
 }

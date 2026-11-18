@@ -303,9 +303,18 @@ public sealed class CatalogSyncService
         return sb.ToString();
     }
 
-    public bool TryBuildBoundedExport(out string export, out string? error)
+    /// `nothingToShare`: nothing scanned yet and no entries at all - a fresh install's empty catalog, which must not go
+    /// out (it would start the upload interval and clear the Owner's lists). A scanned-but-empty catalog still goes.
+    public bool TryBuildBoundedExport(out string export, out string? error, out bool nothingToShare)
     {
         export = BuildExport(PictureMode.Reference);
+        nothingToShare = !config.CatalogScans.Any && export.Split('\n').All(line => line.Length == 0 || KnownHeaders.Contains(line));
+        if (nothingToShare)
+        {
+            export = "";
+            error = null;
+            return false;
+        }
         if (FitsPlaintextLimit(export))
         {
             error = null;

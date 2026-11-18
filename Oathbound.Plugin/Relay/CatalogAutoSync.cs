@@ -33,6 +33,8 @@ public sealed class CatalogAutoSync
 
     private DateTime nextRescanUtc;
     private int rescanStage = -1;
+    // Set from whichever thread completed a pairing, consumed on the framework thread.
+    private int rescanRequested;
     private DateTime? startupDigestCheckUtc;
 
     // Written from the thread pool, read on the framework thread.
@@ -139,12 +141,25 @@ public sealed class CatalogAutoSync
             subRetry.TryRemove(pairing.Id, out _);
     }
 
+    /// A new Sub may never have scanned anything; scanning now means its first upload carries the real catalog
+    /// (publishing already waits for a running rescan). Runs even with periodic rescans turned off.
+    public void OnPairingCompleted(PairingState pairing)
+    {
+        if (pairing.Direction == PairingDirection.SubSide)
+            Interlocked.Exchange(ref rescanRequested, 1);
+    }
+
     // ---- Sub: periodic rescan ----
 
     private bool HasSubPairing => config.Pairings.Any(p => p is { Direction: PairingDirection.SubSide, IsPaired: true });
 
     private void TickRescan(DateTime now)
     {
+        if (rescanStage < 0 && Interlocked.Exchange(ref rescanRequested, 0) == 1)
+        {
+            rescanStage = 0;
+            nextRescanUtc = now + RescanInterval + Jitter();
+        }
         if (rescanStage < 0)
         {
             if (now < nextRescanUtc) return;
@@ -209,16 +224,18 @@ public sealed class CatalogAutoSync
             (pendingRedelivery.ContainsKey(p.Id) || (pendingChange.ContainsKey(p.Id) && UploadWindowOpen(p, now)))).ToList();
         if (due.Count == 0) return;
 
-        // Turning it back on saves the config, which marks the catalog dirty.
-        if (!config.Permissions.RelayCatalogSync)
+        if (!catalogSync.TryBuildBoundedExport(out var exportText, out var exportError, out var nothingToShare))
         {
-            pendingChange.Clear();
-            pendingRedelivery.Clear();
-            return;
-        }
-
-        if (!catalogSync.TryBuildBoundedExport(out var exportText, out var exportError))
-        {
+            // Not an error and not retried every second: the first scan saves the catalog, which marks it dirty again.
+            if (nothingToShare)
+            {
+                foreach (var pairing in due)
+                {
+                    pendingChange.TryRemove(pairing.Id, out _);
+                    pendingRedelivery.TryRemove(pairing.Id, out _);
+                }
+                return;
+            }
             Plugin.Log.Warning(exportError ?? "Catalog export exceeded a local size limit; not published.");
             foreach (var pairing in due)
             {

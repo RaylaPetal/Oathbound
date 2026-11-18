@@ -85,11 +85,12 @@ describe("end-to-end relay flow", () => {
     expect(pair2.pairEpoch).toBe(1);
     expect(pair2.pairIdHash).toBe(pairIdHash);
 
-    // 4. catalog sync: create -> collapse -> fetch -> upload -> consume, with round-trip decryption
+    // 4. catalog sync: create -> replace -> fetch -> upload -> consume, with round-trip decryption
     const ownerEphemeral = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
     const ownerEphemeralJwkRaw = (await crypto.subtle.exportKey("jwk", ownerEphemeral.publicKey)) as JsonWebKey;
     const ownerEphemeralJwk: Jwk = { kty: "EC", crv: "P-256", x: ownerEphemeralJwkRaw.x!, y: ownerEphemeralJwkRaw.y! };
 
+    const replacedRequestId = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const requestId = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const now = Math.floor(Date.now() / 1000);
     const catalogRequestUnsigned = {
@@ -97,7 +98,7 @@ describe("end-to-end relay flow", () => {
       schemaVersion: 1,
       pairIdHash,
       pairEpoch: 1,
-      requestId,
+      requestId: replacedRequestId,
       requesterDeviceKeyId: inviterId,
       ownerEphemeralPublicKey: ownerEphemeralJwk,
       createdAt: now,
@@ -107,12 +108,14 @@ describe("end-to-end relay flow", () => {
     r = await signedFetch("/v1/catalog/requests", "POST", { ...catalogRequestUnsigned, signature: catalogReqSig }, inviter.privateKey, inviterId);
     expect(r.status).toBe(200);
 
-    const dupRequestId = b64url(crypto.getRandomValues(new Uint8Array(32)));
-    const dupUnsigned = { ...catalogRequestUnsigned, requestId: dupRequestId };
+    const dupUnsigned = { ...catalogRequestUnsigned, requestId };
     const dupSig = await signEnvelope(inviter.privateKey, dupUnsigned);
     r = await signedFetch("/v1/catalog/requests", "POST", { ...dupUnsigned, signature: dupSig }, inviter.privateKey, inviterId);
-    expect(r.status).toBe(429);
+    expect(r.status).toBe(200);
 
+    // The Owner's second request replaced the first, which can no longer be answered.
+    const replacedResponse = await SELF.fetch(BASE + `/v1/catalog/requests/${replacedRequestId}`);
+    expect(((await replacedResponse.json()) as any).status).toBe("expired");
     const fetchResponse = await SELF.fetch(BASE + `/v1/catalog/requests/${requestId}`);
     expect(((await fetchResponse.json()) as any).status).toBe("pending");
 

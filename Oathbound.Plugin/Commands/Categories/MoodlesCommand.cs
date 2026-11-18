@@ -44,6 +44,11 @@ public sealed class MoodlesCommand
             .Select(s => new MoodlesStatusEntry { StatusId = s.Id.ToString(), Name = s.Name })
             .ToDictionary(e => e.StatusId);
         catalogStore.Save(config);
+        if (!config.CatalogScans.Moodles)
+        {
+            config.CatalogScans.Moodles = true;
+            config.Save();
+        }
     }
 
     /// Case-insensitive; the Owner only knows status names. The Owner's moodle stays locked: put back if removed,

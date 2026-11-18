@@ -631,7 +631,8 @@ public class PermissionSet
     /// Lets a Custom Trigger send arbitrary chat, so it has its own opt-in (see CustomChatAcknowledged).
     public bool CustomChatMessages { get; set; }
 
-    /// Off by default; a denied request builds and uploads nothing.
+    /// No longer read: catalog sync is always on. Kept so older configs still load cleanly.
+    [Obsolete("Catalog sync is always on.")]
     public bool RelayCatalogSync { get; set; }
 
     public bool Teleport { get; set; }
@@ -1065,6 +1066,7 @@ public class PluginConfig : IPluginConfiguration
     public WardrobeMapping WardrobeMapping { get; set; } = new();
     public RestraintMapping RestraintMapping { get; set; } = new();
     public MoodlesMapping MoodlesMapping { get; set; } = new();
+    public CatalogScanState CatalogScans { get; set; } = new();
 
     public CollarState Collar { get; set; } = new();
 

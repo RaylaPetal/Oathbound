@@ -121,22 +121,22 @@ export async function createCatalogRequest(request: Request, env: Env): Promise<
     .bind(envelope.pairIdHash, envelope.pairEpoch)
     .run();
 
-  // The active-request slot is free either when nothing occupies it, or when the request that does has
-  // already passed its own expiry - self-heals a slot an unresponsive Sub left behind without waiting on
-  // the scheduled cleanup (worker/src/scheduled.ts) to get around to clearing it.
+  // A new request from the same device replaces its own earlier one (denied by an older Sub, lost to a restart,
+  // or just impatience), so only another device's still-valid request blocks the slot. An expired one never does,
+  // without waiting on the scheduled cleanup (worker/src/scheduled.ts).
   const claim = await env.RELAY_DB.prepare(
     `UPDATE pair_cooldowns SET active_request_id_hash = ?1
      WHERE pair_id_hash = ?2 AND pair_epoch = ?3
        AND NOT EXISTS (
          SELECT 1 FROM catalog_requests
-         WHERE request_id_hash = pair_cooldowns.active_request_id_hash AND expires_at > ?4
+         WHERE request_id_hash = pair_cooldowns.active_request_id_hash AND expires_at > ?4 AND requester_device_key_id != ?5
        )`,
   )
-    .bind(requestIdHash, envelope.pairIdHash, envelope.pairEpoch, now)
+    .bind(requestIdHash, envelope.pairIdHash, envelope.pairEpoch, now, deviceKeyId)
     .run();
 
   if ((claim.meta.changes ?? 0) === 0) {
-    // Only an unanswered, still-valid request can block the claim: report the wait until its own expiry.
+    // Unreachable for a valid Owner, since only the pair's Owner device may create requests; kept as a guard.
     // `cooldown_active` is kept as the code because shipped plugins already map it to a message.
     const activeRequest = await env.RELAY_DB.prepare(
       `SELECT r.expires_at FROM pair_cooldowns c JOIN catalog_requests r ON r.request_id_hash = c.active_request_id_hash
@@ -163,6 +163,22 @@ export async function createCatalogRequest(request: Request, env: Env): Promise<
       envelope.signature,
     )
     .run();
+
+  // Every other pending request of ours that doesn't hold the slot is superseded, so a late Sub answer to one can't
+  // land (upload requires 'pending'). Running after our own insert means of two racing requests only the slot's
+  // final holder stays pending; the other finds itself swept and is refused. A Sub answering an older request clears
+  // the slot to NULL, which must not sweep ours, so an empty slot counts as ours.
+  await env.RELAY_DB.prepare(
+    `UPDATE catalog_requests SET status = 'expired'
+     WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND requester_device_key_id = ?3 AND status = 'pending'
+       AND request_id_hash IS NOT COALESCE((SELECT active_request_id_hash FROM pair_cooldowns WHERE pair_id_hash = ?1 AND pair_epoch = ?2), ?4)`,
+  )
+    .bind(envelope.pairIdHash, envelope.pairEpoch, deviceKeyId, requestIdHash)
+    .run();
+  const own = await env.RELAY_DB.prepare(`SELECT status FROM catalog_requests WHERE request_id_hash = ?1`)
+    .bind(requestIdHash)
+    .first<{ status: string }>();
+  if (own?.status !== "pending") throw new RelayError("cooldown_active", 1);
 
   await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);

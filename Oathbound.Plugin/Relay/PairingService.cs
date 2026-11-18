@@ -18,6 +18,8 @@ public sealed class PairingService
 
     /// Clears ChatCommandListener's stale "your peer unpaired" notice.
     public event Action? PairingActivated;
+    /// Only for a pairing this install just completed (new or re-paired), not for other pairing changes.
+    public event Action<PairingState>? PairingCompleted;
     public event Action? PairingEnded;
 
     /// Runs before the identity is replaced, while the old key can still sign, so the old backup can be deleted.
@@ -71,6 +73,7 @@ public sealed class PairingService
         config.PendingRelayOperations.RemoveAll(o => o.Kind is "pair-invite" or "pair-accept");
         config.SaveNow();
         PairingActivated?.Invoke();
+        PairingCompleted?.Invoke(pairing);
         return true;
     }
 

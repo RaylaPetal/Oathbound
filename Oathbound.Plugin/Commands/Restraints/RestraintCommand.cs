@@ -76,6 +76,11 @@ public sealed class RestraintCommand
             GroupSelections = e.SavedSelections, ModEnabled = e.ModEnabled, ChangedItemIds = e.ChangedItemIds.ToList(),
         });
         catalogStore.Save(config);
+        if (!config.CatalogScans.Restraints)
+        {
+            config.CatalogScans.Restraints = true;
+            config.Save();
+        }
     }
 
     public string ExportCatalog() => string.Join("\n", config.RestraintMapping.LocalCatalog.Values

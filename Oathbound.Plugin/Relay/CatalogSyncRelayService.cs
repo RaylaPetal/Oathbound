@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -22,15 +23,22 @@ public sealed class CatalogSyncRelayService
     private readonly CatalogPictureService pictures;
 
     /// Memory-only by design; an interrupted request is cleared on startup rather than persisted or resumed.
-    private readonly Dictionary<string, RelayEcKeyPair> pendingOwnerRequests = new();
+    /// Keyed by request id; a superseded request's poll still owns its key until it notices and exits.
+    private readonly ConcurrentDictionary<string, RelayEcKeyPair> pendingOwnerRequests = new();
 
     /// So the poll loop stops instead of overwriting the denial with a timeout error.
-    private readonly HashSet<string> deniedRequestIds = new();
+    private readonly ConcurrentDictionary<string, byte> deniedRequestIds = new();
+
+    /// The newest request; an older one's poll exits quietly, since the relay already stopped it being answered.
+    private string? currentRequestId;
+    private volatile bool creating;
 
     public string? LastError { get; private set; }
     public event Action? LastErrorChanged;
 
     public bool RequestInFlight { get; private set; }
+    /// Only while a new request is being created; a request waiting on the Sub can be replaced by asking again.
+    public bool RequestCreating => creating;
     public event Action? RequestInFlightChanged;
     public string Phase { get; private set; } = "Idle";
 
@@ -73,7 +81,9 @@ public sealed class CatalogSyncRelayService
         RequestInFlightChanged?.Invoke();
     }
 
-    /// The manual fallback to automatic mailbox sync. The Worker's one-active-request slot is the only gate.
+    private bool IsCurrent(string requestId) => Volatile.Read(ref currentRequestId) == requestId;
+
+    /// The manual fallback to automatic mailbox sync. Asking again replaces our own earlier request on the relay.
     public async Task<bool> RequestRefreshAsync(PairingState pairing, CancellationToken ct)
     {
         if (!pairing.IsPaired)
@@ -81,12 +91,10 @@ public sealed class CatalogSyncRelayService
             SetError("Not paired.");
             return false;
         }
-        if (RequestInFlight)
-        {
-            SetError("A request is already in flight.");
+        if (creating)
             return false;
-        }
 
+        creating = true;
         SetInFlight(true);
         SetPhase("Creating secure request");
         var pollStarted = false;
@@ -114,6 +122,7 @@ public sealed class CatalogSyncRelayService
             // Ownership moves into the map; disposed wherever it's later removed.
             pendingOwnerRequests[requestId] = ownerEphemeral;
             unownedEphemeral = null;
+            Volatile.Write(ref currentRequestId, requestId);
             config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request");
             config.PendingRelayOperations.Add(new PendingRelayOperationState { Kind = "catalog-request", OperationId = requestId, ExpiresAt = envelope.ExpiresAt });
             config.SaveNow();
@@ -133,13 +142,30 @@ public sealed class CatalogSyncRelayService
         }
         finally
         {
+            creating = false;
             unownedEphemeral?.Dispose();
             if (!pollStarted)
             {
-                SetPhase("Idle");
-                SetInFlight(false);
+                // A failed re-request leaves the earlier request still waiting on the Sub.
+                if (Volatile.Read(ref currentRequestId) is null)
+                {
+                    SetPhase("Idle");
+                    SetInFlight(false);
+                }
+                else
+                {
+                    SetPhase("Waiting for Sub upload");
+                }
             }
         }
+    }
+
+    /// The prior imported snapshot is untouched unless every check passes.
+    /// A superseded request's outcome is no longer what the Owner is waiting on, so it isn't shown.
+    private void Fail(string requestId, string? message)
+    {
+        if (IsCurrent(requestId))
+            SetError(message);
     }
 
     /// The prior imported snapshot is untouched unless every check passes.
@@ -151,10 +177,10 @@ public sealed class CatalogSyncRelayService
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
-                if (deniedRequestIds.Remove(requestId)) return;
+                if (deniedRequestIds.TryRemove(requestId, out _) || !IsCurrent(requestId)) return;
                 if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= requestExpiresAt)
                 {
-                    SetError("Timed out waiting for your Sub to respond.");
+                    Fail(requestId, "Timed out waiting for your Sub to respond.");
                     return;
                 }
 
@@ -171,18 +197,18 @@ public sealed class CatalogSyncRelayService
                 }
                 catch (RelayException ex)
                 {
-                    SetError(DescribeError(ex));
+                    Fail(requestId, DescribeError(ex));
                     return;
                 }
 
                 if (status.Status == "uploaded") break;
-                if (status.Status is "consumed" or "expired") { SetError("The request expired or was already consumed."); return; }
+                if (status.Status is "consumed" or "expired") { Fail(requestId, "The request expired or was already consumed."); return; }
                 await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
             }
 
             if (!pendingOwnerRequests.TryGetValue(requestId, out var ownerEphemeral))
             {
-                SetError("Lost track of this request's key material (plugin restarted mid-request?) - request again.");
+                Fail(requestId, "Lost track of this request's key material (plugin restarted mid-request?) - request again.");
                 return;
             }
 
@@ -192,7 +218,7 @@ public sealed class CatalogSyncRelayService
 
             if (!ImportSnapshot(envelope, ciphertext, ownerEphemeral, pairing, out var result, out var error))
             {
-                SetError(error);
+                Fail(requestId, error);
                 LastImportResult = new CatalogSnapshotResult(0, 0, 0, 0, error);
                 return;
             }
@@ -201,24 +227,30 @@ public sealed class CatalogSyncRelayService
             pairing.LastImportedSnapshotId = envelope.SnapshotId;
             config.SaveNow();
             LastImportResult = result;
-            SetPhase("Complete");
-            SetError(null);
+            if (IsCurrent(requestId))
+            {
+                SetPhase("Complete");
+                SetError(null);
+            }
             Plugin.FireAndForget(pictures.FetchMissingAsync(pairing, ct));
         }
         catch (RelayException ex)
         {
-            SetError(DescribeError(ex));
+            Fail(requestId, DescribeError(ex));
         }
         catch (OperationCanceledException)
         {
         }
         finally
         {
-            if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();
+            if (pendingOwnerRequests.TryRemove(requestId, out var key)) key.Dispose();
             if (config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request" && o.OperationId == requestId) > 0)
                 config.SaveNow();
-            SetInFlight(false);
-            if (Phase != "Complete") SetPhase("Idle");
+            if (Interlocked.CompareExchange(ref currentRequestId, null, requestId) == requestId)
+            {
+                SetInFlight(false);
+                if (Phase != "Complete") SetPhase("Idle");
+            }
         }
     }
 
@@ -342,17 +374,16 @@ public sealed class CatalogSyncRelayService
             return;
         }
 
-        if (!config.Permissions.RelayCatalogSync)
-        {
-            messenger.SendNotice(pairing, composer.ComposeCatalogPermissionDenied(requestId));
-            return;
-        }
-
         try
         {
             identity.EnsureIdentity();
-            if (!catalogSync.TryBuildBoundedExport(out var exportText, out var exportError))
+            if (!catalogSync.TryBuildBoundedExport(out var exportText, out var exportError, out var nothingToShare))
             {
+                if (nothingToShare)
+                {
+                    Plugin.Log.Information($"Catalog request {requestId} not answered: nothing has been scanned yet.");
+                    return;
+                }
                 Plugin.Log.Warning(exportError ?? "Catalog snapshot exceeded a local size limit.");
                 return;
             }
@@ -430,11 +461,12 @@ public sealed class CatalogSyncRelayService
 
     public void HandlePermissionDenied(string requestId)
     {
-        if (pendingOwnerRequests.Remove(requestId, out var key)) key.Dispose();
-        deniedRequestIds.Add(requestId);
+        deniedRequestIds[requestId] = 0;
         config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request" && o.OperationId == requestId);
         config.SaveNow();
-        SetError("Your Sub has not enabled catalog synchronization.");
+        if (!IsCurrent(requestId))
+            return;
+        SetError("Your Sub's plugin is out of date - once they update, their catalog syncs on its own.");
         SetPhase("Idle");
         SetInFlight(false);
     }

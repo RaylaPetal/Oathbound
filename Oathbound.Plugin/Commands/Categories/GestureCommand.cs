@@ -213,6 +213,7 @@ public sealed class GestureCommand
         config.GestureMapping.LocalCatalog = catalog;
         catalogStore.Save(config);
         MigrateAliases();
+        config.CatalogScans.Gestures = true;
         config.Save();
     }
 

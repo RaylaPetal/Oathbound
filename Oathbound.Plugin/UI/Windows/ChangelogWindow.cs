@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -8,7 +7,7 @@ using Dalamud.Interface.Windowing;
 
 namespace Oathbound.Plugin.UI;
 
-/// What changed, newest first. Opens by itself once per update to a version with notes.
+/// What changed in the current release. Opens by itself once per update to a version with notes.
 public sealed class ChangelogWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
@@ -34,7 +33,7 @@ public sealed class ChangelogWindow : Window, IDisposable
         var isUpdate = config.HasCompletedWelcome;
         config.LastSeenChangelog = current;
         config.Save();
-        if (isUpdate && Changelog.Entries.Any(e => e.Version == current))
+        if (isUpdate && Changelog.Latest.Version == current)
             IsOpen = true;
     }
 
@@ -53,25 +52,17 @@ public sealed class ChangelogWindow : Window, IDisposable
         {
             if (list)
             {
-                var first = true;
-                foreach (var entry in Changelog.Entries)
+                var entry = Changelog.Latest;
+                ImGui.TextColored(Theme.AccentHover, $"{entry.Version}  -  {entry.Title}  ({entry.Date})");
+                foreach (var section in entry.Sections)
                 {
-                    if (first)
-                        ImGui.SetNextItemOpen(true, ImGuiCond.Appearing);
-                    first = false;
-                    if (!ImGui.CollapsingHeader($"{entry.Version}  -  {entry.Title}  ({entry.Date})##changelog{entry.Version}"))
-                        continue;
-                    foreach (var section in entry.Sections)
+                    Section.SubHeading(section.Heading);
+                    foreach (var item in section.Items)
                     {
-                        Section.SubHeading(section.Heading);
-                        foreach (var item in section.Items)
-                        {
-                            ImGui.Bullet();
-                            ImGui.SameLine();
-                            ImGui.TextWrapped(item);
-                        }
+                        ImGui.Bullet();
+                        ImGui.SameLine();
+                        ImGui.TextWrapped(item);
                     }
-                    ImGui.Spacing();
                 }
             }
         }
