@@ -64,12 +64,11 @@ public sealed class PairingService
         pairing.Paired = true;
         pairing.RecordPairedFrom = true;
         config.LinkCurrentCharacterRequested = true;
-        // The first pairing becomes active by default.
         if (existing is null)
-        {
             config.Pairings.Add(pairing);
-            config.ActivePairingId ??= pairing.Id;
-        }
+        // Becomes active unless another live pairing already is; an id left on an ended pairing doesn't count.
+        if (config.ActivePairingId is not { } activeId || config.FindPairingById(activeId) is not { IsPaired: true })
+            config.ActivePairingId = pairing.Id;
         config.PendingRelayOperations.RemoveAll(o => o.Kind is "pair-invite" or "pair-accept");
         config.SaveNow();
         PairingActivated?.Invoke();

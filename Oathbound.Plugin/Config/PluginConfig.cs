@@ -1217,9 +1217,20 @@ public class PluginConfig : IPluginConfiguration
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
     public Action? SaveOverride { get; set; }
 
-    /// Never returns a pairing that has since become unpaired.
+    /// Never returns a pairing that has since become unpaired. Unpairing leaves ActivePairingId on the dead pairing,
+    /// so that falls back to a live one (the Role's direction first) instead of leaving no pairing active.
     [JsonIgnore, Newtonsoft.Json.JsonIgnore]
-    public PairingState? ActivePairing => ActivePairingId is { } id ? FindPairingById(id) is { IsPaired: true } p ? p : null : null;
+    public PairingState? ActivePairing =>
+        ActivePairingId is { } id && FindPairingById(id) is { IsPaired: true } chosen
+            ? chosen
+            : Pairings.Where(p => p.IsPaired).OrderByDescending(p => p.Direction == RoleDirection).FirstOrDefault();
+
+    private PairingDirection RoleDirection => Role switch
+    {
+        PluginRole.Owner => PairingDirection.OwnerSide,
+        PluginRole.Sub => PairingDirection.SubSide,
+        _ => SwitchLastUsedOwnerView ? PairingDirection.OwnerSide : PairingDirection.SubSide,
+    };
 
     public PairingState? GetActivePairing() => ActivePairing;
 

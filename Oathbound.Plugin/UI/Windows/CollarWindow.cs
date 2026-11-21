@@ -259,7 +259,7 @@ public class CollarWindow : Window, IDisposable
 
         if (pairedEntries.Count > 1)
         {
-            var activeIndex = Math.Max(0, pairedEntries.FindIndex(p => p.Id == config.ActivePairingId));
+            var activeIndex = Math.Max(0, pairedEntries.FindIndex(p => p.Id == config.ActivePairing?.Id));
             var labels = pairedEntries.Select(PairingLabel).ToArray();
             Layout.ItemWidth(320);
             if (ImGui.Combo("Active pairing", ref activeIndex, labels, labels.Length))

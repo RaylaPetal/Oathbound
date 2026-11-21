@@ -9,19 +9,17 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.1.2", "2026-11-18", "Smoother catalog sync",
+        new("0.3.1.3", "2026-11-21", "Pairing fix",
         [
-            new("Changed",
-            [
-                "Catalog sync is always on: the \"Catalog sync\" permission is gone. Your catalog is only the names of what your Owner can pick from - your designs, emotes, moodles and shared restraints. Sharing it never puts anything on you.",
-                "Right after you pair as a Sub, Oathbound scans your designs, emotes, moodles and restraints and sends the catalog to your Owner on its own. No need to scan by hand first.",
-                "Owners: \"Request refresh\" is never stuck on \"already waiting\" any more. Press \"Request again\" to replace a request that's still waiting.",
-                "Owners: if your Sub's older version turns down a refresh, you're told they need to update.",
-            ]),
             new("Fixed",
             [
-                "A Sub who hadn't scanned anything yet could send an empty catalog, which cleared their Owner's lists and held back the real one for half an hour.",
-                "The Sync tab no longer says \"No updates from your Sub yet\" after their catalog has already arrived.",
+                "Paired again after an earlier pairing ended? Oathbound could keep pointing at the old pairing, so Sub Control said \"Not paired with a Sub yet\" and every Send stayed disabled even though you showed as paired. Your current pairing is picked up as soon as you update - nothing to redo.",
+            ]),
+            new("Also in this update",
+            [
+                "Catalog sync is always on: the \"Catalog sync\" permission is gone. Your catalog is only the names of what your Owner can pick from - sharing it never puts anything on you.",
+                "Right after you pair as a Sub, Oathbound scans and sends your catalog to your Owner on its own.",
+                "Owners: \"Request refresh\" is never stuck on \"already waiting\" - press \"Request again\" to replace a request that's still waiting.",
             ]),
         ]);
 }

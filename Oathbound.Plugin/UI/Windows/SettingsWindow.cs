@@ -243,7 +243,7 @@ public class SettingsWindow : Window, IDisposable
                     ImGui.TableNextColumn();
                     ImGui.TextWrapped($"{p.PeerName}@{p.PeerWorld}");
                     // Wrapping text after SameLine in a narrow cell breaks it one character per line.
-                    if (config.ActivePairingId == p.Id)
+                    if (config.ActivePairing?.Id == p.Id)
                     {
                         Layout.ContinueRowOrWrap(ImGui.CalcTextSize("(active)").X);
                         ImGui.TextDisabled("(active)");
