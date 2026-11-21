@@ -385,13 +385,20 @@ public class CollarWindow : Window, IDisposable
         ? $"Owns: {p.PeerName}@{p.PeerWorld}"
         : $"Owned by: {p.PeerName}@{p.PeerWorld}";
 
-    /// Owner-side only. Read lazily through `plugin` because SubControlWindow is constructed after this window.
+    /// Right-aligned: chat, then (Owner side) Revert all and the Sub Control toggle. Read lazily through `plugin`
+    /// because SubControlWindow is constructed after this window.
     private void DrawSubControlToggle()
     {
-        if (plugin.Configuration.ResolveActiveDirection() != PairingDirection.OwnerSide)
-            return;
-
         const float size = 24f;
+        var showChat = plugin.Configuration.Pairings.Any(p => p.IsPaired) || plugin.Chat.History.All.Any(c => c.Messages.Count > 0);
+        if (plugin.Configuration.ResolveActiveDirection() != PairingDirection.OwnerSide)
+        {
+            if (!showChat) return;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - size);
+            DrawChatIcon(size);
+            return;
+        }
+
         var isOpen = plugin.SubControlWindow.IsOpen;
         var icon = isOpen ? FontAwesomeIcon.ArrowLeft : FontAwesomeIcon.ArrowRight;
 
@@ -400,7 +407,14 @@ public class CollarWindow : Window, IDisposable
         var revertLabel = confirming ? "Click again to revert" : "Revert all";
         var revertWidth = ImGui.CalcTextSize(revertLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
         var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
-        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - size - ImGui.GetStyle().ItemSpacing.X - revertWidth);
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var chatWidth = showChat ? size + spacing : 0f;
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - size - spacing - revertWidth - chatWidth);
+        if (showChat)
+        {
+            DrawChatIcon(size);
+            ImGui.SameLine();
+        }
         using (ImRaii.Disabled(!canSend))
         using (ImRaii.PushColor(ImGuiCol.Button, Theme.Danger, confirming))
         {
@@ -429,6 +443,37 @@ public class CollarWindow : Window, IDisposable
         TutorialService.Anchor(TutorialAnchors.MainSubControl);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(isOpen ? "Close Sub Control" : "Open Sub Control - every configured command in one place");
+    }
+
+    /// Opens chat on a conversation with unread messages, else the active pairing's; a badge counts what's unread.
+    private void DrawChatIcon(float size)
+    {
+        var chat = plugin.Chat;
+        var unread = chat.TotalUnread;
+        if (IconGlyph.CenteredButton("openChat", FontAwesomeIcon.Comments, size, unread > 0 ? Theme.AccentHover : ImGui.GetStyle().Colors[(int)ImGuiCol.Text]))
+        {
+            var target = chat.Conversations().FirstOrDefault(c => c.Conversation.Unread > 0).Conversation?.PairingId
+                ?? plugin.Configuration.ActivePairing?.Id
+                ?? plugin.Configuration.Pairings.FirstOrDefault(p => p.IsPaired)?.Id;
+            if (target is { } id) chat.RequestOpen(id);
+            else plugin.ChatWindow.IsOpen = !plugin.ChatWindow.IsOpen;
+        }
+        var min = ImGui.GetItemRectMin();
+        var max = ImGui.GetItemRectMax();
+        if (unread > 0)
+        {
+            var text = unread > 99 ? "99+" : unread.ToString();
+            var textSize = ImGui.CalcTextSize(text);
+            var radius = MathF.Max(textSize.Y * 0.5f, textSize.X * 0.5f + Layout.Scaled(2f));
+            var center = new Vector2(max.X - Layout.Scaled(2f), min.Y + Layout.Scaled(2f));
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddCircleFilled(center, radius, ImGui.GetColorU32(Theme.StatusMissing));
+            draw.AddText(center - textSize / 2, ImGui.GetColorU32(new Vector4(1, 1, 1, 1)), text);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(unread > 0
+                ? $"Chat - {unread} unread message{(unread == 1 ? "" : "s")}"
+                : "Chat with your partner - works across worlds and data centers, and messages wait for them if they're offline.");
     }
 
     /// Shown while any journey runs, whatever the active pairing. No confirmation: it's the way out of a stuck navigation.

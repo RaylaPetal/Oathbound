@@ -58,6 +58,7 @@ everything instantly with their safeword.
 | 🎲 | **Games** | Play Deathroll, High Roll, Higher or Lower, Twenty-One or Truth or Dare with your partner, rolling with the game's own `/random`, or `/dice` in party chat. Either of you can lose: a lost round takes a piece of your own clothing off, gives you a forfeit the winner picks, or both - whatever you agreed to when the game started. A game ends when someone runs out of clothes, after a set number of lost rounds, or when you quit. An Owner's dares and forfeits can carry a command (a gag, cuffs, an outfit...), which still only applies within the Sub's permissions. Everything comes back when the game ends. |
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header takes off everything you put on; gear goes back to what your Sub was wearing before. The collar and your pairing stay. |
+| 💬 | **Chat** | Talk with your partner in Oathbound's own 1:1 chat - across worlds and data centers, where `/tell` can't reach. If they're offline, your message waits for them (up to 7 days) and you see when it's delivered. It's end-to-end encrypted, and a gagged Sub's messages come out gagged. |
 | ⭐ | **Favorites & Sub Control** | Star the commands you use most, open them from the server info bar, or see every command in one panel. |
 | ☁️ | **Automatic sync** | The Sub's list of outfits, animations, moodles and restraints reaches the Owner by itself, end-to-end encrypted. |
 | 🏆 | **Achievements** | About sixty milestones for Owners and Subs - your first leash, an hour in a cage, a month collared, a thousand commands - with Bronze, Silver and Gold tiers and a few secrets. A popup and a sound mark each one. They're private: kept on your own computer and never sent to anyone, your partner included. |
@@ -328,12 +329,16 @@ A Teleport command carries the Owner's world, zone, housing ward (if any) and po
 plugin knows where to go. Like every command, it's encrypted for your paired Sub and goes only to them. A cage
 command likewise carries where the cage is.
 
-Commands, notices, pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay
+Commands, notices, chat, pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay
 service. While you're logged in and paired, your plugin keeps one connection to it open, proven with your
 install's own key. Every command and notice is end-to-end encrypted for your pairing, and so are your catalog,
 the Owner's rulebook and the Sub's rulebook activity report: the relay never sees their contents or your
 character's name. It does see which anonymous pairing a message belongs to, when it was sent and how big it is,
-and it holds a message for at most two minutes if your partner's connection just dropped. If the relay is down,
+and it holds a message for at most two minutes if your partner's connection just dropped. Chat messages are
+end-to-end encrypted the same way, with their own key. One for a partner who's offline waits on the relay, still
+encrypted, for up to 7 days (at most 200 from you at a time), and is deleted once it's delivered, after 7 days, or
+when the pairing ends. Your chat history is kept only on your own computer, in Oathbound's configuration folder, as
+plain files like the rest of its settings; it isn't in your recovery backup. If the relay is down,
 commands can't reach your partner, but your safeword, unpairing and everything already applied keep working. A Sub's restraint pictures go to their Owner the same way, as
 separately encrypted small copies: the relay keeps one only while that Sub's catalog still uses it, and only sees how
 many there are, their sizes and when they change - never the pictures or which restraint they belong to. While a Sub has a rulebook, their plugin uploads that

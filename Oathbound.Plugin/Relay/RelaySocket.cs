@@ -167,7 +167,8 @@ public sealed class RelaySocket : IDisposable
             ServerOffsetSeconds = root.GetProperty("serverTime").GetInt64() - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
             var signature = RelayCrypto.SignRaw(signingKey(), $"oathbound-socket-v1\n{device}\n{nonce}");
-            var auth = JsonSerializer.Serialize(new { type = "auth", deviceKeyId = device, signature });
+            // "chat" tells the relay it may forward and store chat for this install.
+            var auth = JsonSerializer.Serialize(new { type = "auth", deviceKeyId = device, signature, features = new[] { "chat" } });
             await ws.SendAsync(Encoding.UTF8.GetBytes(auth), WebSocketMessageType.Text, true, authTimeout.Token).ConfigureAwait(false);
 
             using var answer = await ReceiveAsync(ws, authTimeout.Token).ConfigureAwait(false)

@@ -9,17 +9,18 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.1.3", "2026-11-21", "Pairing fix",
+        new("0.3.2.0", "2026-11-21", "Chat with your partner",
         [
-            new("Fixed",
+            new("New",
             [
-                "Paired again after an earlier pairing ended? Oathbound could keep pointing at the old pairing, so Sub Control said \"Not paired with a Sub yet\" and every Send stayed disabled even though you showed as paired. Your current pairing is picked up as soon as you update - nothing to redo.",
+                "Chat: talk with your Owner or Sub right inside Oathbound - across worlds and data centers, where /tell can't reach. Open it with the speech-bubble icon in the main window's header; a red badge shows unread messages.",
+                "If your partner is offline, your message waits for them on the relay for up to 7 days, and you see when it's delivered. Messages are end-to-end encrypted, and your chat history stays on your own computer.",
+                "If you're both Owner and Sub of the same person, it's one conversation.",
+                "A gagged Sub's messages come out gagged, just like their game chat.",
             ]),
-            new("Also in this update",
+            new("Testing build",
             [
-                "Catalog sync is always on: the \"Catalog sync\" permission is gone. Your catalog is only the names of what your Owner can pick from - sharing it never puts anything on you.",
-                "Right after you pair as a Sub, Oathbound scans and sends your catalog to your Owner on its own.",
-                "Owners: \"Request refresh\" is never stuck on \"already waiting\" - press \"Request again\" to replace a request that's still waiting.",
+                "This testing build uses Oathbound's testing relay, which has a copy of your pairings. Your partner needs this testing build too for commands and chat to reach each other.",
             ]),
         ]);
 }

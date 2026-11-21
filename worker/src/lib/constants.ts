@@ -46,6 +46,14 @@ interface ProtocolConstants {
     deviceBurstWindowSeconds: number;
     deviceHourlyFrames: number;
   };
+  peerChat: {
+    maxTextChars: number;
+    storedTtlSeconds: number;
+    storedPerSenderPerPairMax: number;
+    deviceBurstMessages: number;
+    deviceBurstWindowSeconds: number;
+    deviceHourlyMessages: number;
+  };
 }
 
 export const PROTOCOL = raw as unknown as ProtocolConstants;
@@ -96,3 +104,8 @@ export const HELD_FRAMES_MAX = PROTOCOL.peerMessage.heldFramesMax;
 export const DEVICE_BURST_FRAMES = PROTOCOL.peerMessage.deviceBurstFrames;
 export const DEVICE_BURST_WINDOW_SECONDS = PROTOCOL.peerMessage.deviceBurstWindowSeconds;
 export const DEVICE_HOURLY_FRAMES = PROTOCOL.peerMessage.deviceHourlyFrames;
+export const CHAT_STORED_TTL_SECONDS = PROTOCOL.peerChat.storedTtlSeconds;
+export const CHAT_STORED_PER_SENDER_PER_PAIR_MAX = PROTOCOL.peerChat.storedPerSenderPerPairMax;
+export const CHAT_DEVICE_BURST_MESSAGES = PROTOCOL.peerChat.deviceBurstMessages;
+export const CHAT_DEVICE_BURST_WINDOW_SECONDS = PROTOCOL.peerChat.deviceBurstWindowSeconds;
+export const CHAT_DEVICE_HOURLY_MESSAGES = PROTOCOL.peerChat.deviceHourlyMessages;

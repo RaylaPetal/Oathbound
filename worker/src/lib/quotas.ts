@@ -54,6 +54,8 @@ export const QUOTA_LIMITS = {
   globalDailySafety: { windowSeconds: 86400, maxCount: 200000 },
   // Live connection units (socket opens, forwarded frames, hints); sized by scripts/capacity-model.mjs.
   globalDailyLive: { windowSeconds: 86400, maxCount: 250000 },
+  // Chat messages, separate so chat can never spend what commands, hints and safety frames need.
+  globalDailyChat: { windowSeconds: 86400, maxCount: 100000 },
 } as const satisfies Record<string, QuotaLimit>;
 
 export type QuotaName = keyof typeof QUOTA_LIMITS;
@@ -151,10 +153,19 @@ const DEFAULT_LIVE_CHARGE_SAMPLING = 16;
  * so callers decide what an exhausted budget means for them.
  */
 export async function chargeLive(env: Env, units = 1, random = Math.random()): Promise<boolean> {
+  return chargeSampled(env, "globalDailyLive", units, random);
+}
+
+/** chargeLive against the separate chat budget. */
+export async function chargeChat(env: Env, units = 1, random = Math.random()): Promise<boolean> {
+  return chargeSampled(env, "globalDailyChat", units, random);
+}
+
+async function chargeSampled(env: Env, quota: "globalDailyLive" | "globalDailyChat", units: number, random: number): Promise<boolean> {
   const sampled = sampledUnits(units, Number(env.LIVE_CHARGE_SAMPLING ?? DEFAULT_LIVE_CHARGE_SAMPLING), random);
   try {
-    if (sampled > 0) await enforceQuota(env, "globalDailyLive", "all", 0, sampled);
-    else await assertQuotaRemaining(env, "globalDailyLive", "all", units);
+    if (sampled > 0) await enforceQuota(env, quota, "all", 0, sampled);
+    else await assertQuotaRemaining(env, quota, "all", units);
     return true;
   } catch (error) {
     if (error instanceof RelayError && error.code === "rate_limited") return false;

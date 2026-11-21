@@ -16,10 +16,12 @@
   "$defs": {
     "nonce22": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
     "side": { "enum": ["owner", "sub"] },
+    "channel": { "description": "live (peerMessage, the default when absent) or chat (peerChat).", "enum": ["live", "chat"] },
     "header": {
       "type": "object",
       "required": ["pairIdHash", "pairEpoch", "from", "seq", "sentAt", "nonce", "ciphertext"],
       "properties": {
+        "channel": { "$ref": "#/$defs/channel" },
         "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
         "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
         "from": { "$ref": "#/$defs/side" },
@@ -46,7 +48,8 @@
       "properties": {
         "type": { "const": "auth" },
         "deviceKeyId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+        "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" },
+        "features": { "description": "What this client supports; \"chat\" lets the relay forward and store chat for it.", "type": "array", "items": { "enum": ["chat"] }, "uniqueItems": true }
       }
     },
     "authOk": {
@@ -63,6 +66,7 @@
         "type": { "const": "send" },
         "id": { "description": "Client-chosen id echoed in acks.", "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
         "safety": { "type": "boolean" },
+        "channel": true,
         "pairIdHash": true, "pairEpoch": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
       }
     },
@@ -73,17 +77,18 @@
       "required": ["type", "pairIdHash", "pairEpoch", "from", "seq", "sentAt", "nonce", "ciphertext"],
       "properties": {
         "type": { "const": "frame" },
+        "channel": true,
         "pairIdHash": true, "pairEpoch": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
       }
     },
     "ack": {
-      "description": "relay -> client. held is followed later by a second ack for the same id with delivered or offline.",
+      "description": "relay -> client. held is followed later by a second ack for the same id with delivered or offline; stored (chat) by one with delivered or expired, kept for the sender until it reconnects.",
       "type": "object", "additionalProperties": false,
       "required": ["type", "id", "result"],
       "properties": {
         "type": { "const": "ack" },
         "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
-        "result": { "enum": ["delivered", "held", "offline", "needs_update", "over_limit", "over_budget", "refused"] }
+        "result": { "enum": ["delivered", "held", "offline", "stored", "mailbox_full", "expired", "needs_update", "over_limit", "over_budget", "refused"] }
       }
     },
     "hint": {
@@ -105,8 +110,18 @@
         "code": { "enum": ["unauthorized", "invalid_request", "replaced"] }
       }
     },
+    "chatPlaintext": {
+      "description": "The decrypted ciphertext of a chat-channel frame.",
+      "type": "object", "additionalProperties": false,
+      "required": ["v", "kind", "text"],
+      "properties": {
+        "v": { "const": 1 },
+        "kind": { "const": "chat" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
     "plaintext": {
-      "description": "The decrypted ciphertext.",
+      "description": "The decrypted ciphertext of a live-channel frame.",
       "type": "object", "additionalProperties": false,
       "required": ["v", "kind", "text", "character"],
       "properties": {

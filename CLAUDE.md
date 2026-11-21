@@ -153,6 +153,12 @@ Role only changes what a client does with incoming commands and what it declares
   claiming our own side (reflection), seq at or below `LastAcceptedFrameSeq` (replay) and frames older than 120s.
   Worker routes that change pair state call `notifyPeer` (`lib/hints.ts`), so the other member's client runs its
   pair status check at once; the 30-minute check stays as the offline backstop.
+- **Chat** rides the same socket as a `channel: "chat"` frame with its own key label, seq counter and no 120s age
+  limit: the recipient's hub stores it in `chat_mailbox` (7 days, 200 per sender per pair) and sends receipts back,
+  kept in the sender's `chat_receipts` if it's offline. A device only gets chat after declaring `features: ["chat"]`
+  at auth. Chat has its own rate limit and `globalDailyChat` budget. Plugin side: `ChatService` (gag rewrite, toasts,
+  unread) over `ChatHistoryStore` (one local file per pairing under `chat/`) and `ChatWindow`; a message is only ever
+  shown, never run.
 
 - **`CodePairingService.cs`** is the default pairing flow: a pairing code (`PairingCodes.cs`, 80-bit Crockford
   base32) derives both the invitation's lookup id and the AES key for each side's character name/world, so the

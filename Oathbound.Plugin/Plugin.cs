@@ -77,6 +77,7 @@ public sealed class Plugin : IDalamudPlugin
     public SnapshotOverlay Snapshot { get; }
     private QuickAccessMenuHost QuickAccessMenuHost { get; }
     private RecoveryCodeWindow RecoveryCodeWindow { get; }
+    public ChatWindow ChatWindow { get; }
 
     /// The only access point for QuickAccessMenu.
     private readonly IDtrBarEntry favoritesDtrEntry;
@@ -113,6 +114,7 @@ public sealed class Plugin : IDalamudPlugin
     public RelayClient RelayClient { get; }
     public RelaySocket RelaySocket { get; }
     public PeerMessenger PeerMessenger { get; }
+    public ChatService Chat { get; }
     public PairingService PairingService { get; }
     public CodePairingService CodePairingService { get; }
     public BackupService BackupService { get; }
@@ -224,6 +226,7 @@ public sealed class Plugin : IDalamudPlugin
         RelaySocket = new RelaySocket(RelayClient.RelayOrigin, () => DeviceIdentityService.DeviceKeyId, DeviceIdentityService.GetSigningKey,
             action => Framework.RunOnFrameworkThread(action), message => Log.Information(message));
         PeerMessenger = new PeerMessenger(Configuration, DeviceIdentityService, RelaySocket);
+        Chat = new ChatService(Configuration, PeerMessenger, ChatGagService);
 
         TitleCommand = new TitleCommand(Configuration, HonorificIpc, RuntimeState);
         // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.
@@ -343,6 +346,7 @@ public sealed class Plugin : IDalamudPlugin
         AchievementToastWindow = new AchievementToastWindow(this);
         QuickAccessMenuHost = new QuickAccessMenuHost(this);
         RecoveryCodeWindow = new RecoveryCodeWindow(this);
+        ChatWindow = new ChatWindow(this);
         Snapshot = new SnapshotOverlay(this);
 
         favoritesDtrEntry = DtrBar.Get("Oathbound Quick Access");
@@ -371,6 +375,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(AchievementToastWindow);
         WindowSystem.AddWindow(QuickAccessMenuHost);
         WindowSystem.AddWindow(RecoveryCodeWindow);
+        WindowSystem.AddWindow(ChatWindow);
 
         if (!Configuration.HasCompletedWelcome)
             WelcomeWindow.IsOpen = true;
@@ -542,6 +547,8 @@ public sealed class Plugin : IDalamudPlugin
         MovementLockService.Dispose();
         ActionBlockService.Dispose();
         cageExitGuard.Dispose();
+        ChatWindow.Dispose();
+        Chat.Dispose();
         ChatGagService.Dispose();
         IntifaceIpc.Dispose();
         ToyTriggerEvaluator.Dispose();
@@ -624,6 +631,7 @@ public sealed class Plugin : IDalamudPlugin
 
         RelaySocket.Wanted = ClientState.IsLoggedIn && Configuration.ActivePairings.Any(p => p.PairIdHash is not null);
         PeerMessenger.Tick();
+        Chat.Tick();
         if (hintedPairings.Count > 0)
         {
             foreach (var (id, due) in hintedPairings.Where(h => DateTime.UtcNow >= h.Value).ToList())

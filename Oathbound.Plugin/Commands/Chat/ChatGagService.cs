@@ -152,6 +152,20 @@ public sealed unsafe class ChatGagService : IRestrictionEnforcer, IDisposable
 
     public event Action? GaggedLineSent;
 
+    /// A relay chat message gets the same gag speech as game chat, before it's sealed, so the partner only ever sees
+    /// the gagged text.
+    public string RewriteRelayChat(string text)
+    {
+        if (!active || string.IsNullOrWhiteSpace(text)) return text;
+        var rewritten = Garble(text, LevelSource?.Invoke() ?? GagLevel.Heavy, SoundsSource?.Invoke());
+        if (rewritten.Length > Relay.PeerMessageCrypto.MaxChatChars)
+            rewritten = rewritten[..Relay.PeerMessageCrypto.MaxChatChars];
+        if (rewritten.Length == 0) return text;
+        if (!string.Equals(rewritten, text, StringComparison.Ordinal))
+            GaggedLineSent?.Invoke();
+        return rewritten;
+    }
+
     /// Rewrites speech in chat channels, keeping the slash command and a tell's recipient. Other slash commands
     /// pass through unchanged.
     internal static string RewriteOutgoingChat(string text, GagLevel level = GagLevel.Heavy, IReadOnlyList<string>? sounds = null)

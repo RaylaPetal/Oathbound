@@ -139,6 +139,16 @@ public class PairingState
         return OutgoingFrameSeq;
     }
 
+    /// Chat messages have their own sequence: stored chat can arrive after newer commands without looking replayed.
+    public long OutgoingChatSeq { get; set; }
+    public long LastAcceptedChatSeq { get; set; }
+
+    public long NextOutgoingChatSeq()
+    {
+        OutgoingChatSeq = Math.Max(OutgoingChatSeq + 1, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        return OutgoingChatSeq;
+    }
+
     /// What the relay last said about the peer's live connection; NeedsUpdate is kept across sessions for the badge.
     public PeerRelayState PeerRelayState { get; set; }
     public long PeerRelayStateAt { get; set; }

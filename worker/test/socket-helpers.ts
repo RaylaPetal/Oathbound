@@ -80,11 +80,12 @@ export async function newDevice(): Promise<Device> {
 }
 
 /** Opens and authenticates a device's live connection. */
-export async function connect(device: Device): Promise<TestSocket> {
+export async function connect(device: Device, features?: string[]): Promise<TestSocket> {
   const { socket } = await openSocket(device.id);
   if (!socket) throw new Error("no socket");
   const challenge = await socket.next();
-  socket.send({ type: "auth", deviceKeyId: device.id, signature: await signChallenge(device.key.privateKey, device.id, challenge.nonce as string) });
+  const signature = await signChallenge(device.key.privateKey, device.id, challenge.nonce as string);
+  socket.send({ type: "auth", deviceKeyId: device.id, signature, ...(features ? { features } : {}) });
   const ok = await socket.next();
   if (ok.type !== "auth-ok") throw new Error(`auth failed: ${JSON.stringify(ok)}`);
   return socket;
@@ -105,6 +106,11 @@ export function frame(pairIdHash: string, pairEpoch: number, from: "owner" | "su
     ciphertext: b64url(crypto.getRandomValues(new Uint8Array(40))),
     ...extra,
   };
+}
+
+/** A chat-channel frame; the relay never reads it either. */
+export function chat(pairIdHash: string, pairEpoch: number, from: "owner" | "sub", seq: number, extra: Record<string, unknown> = {}) {
+  return { ...frame(pairIdHash, pairEpoch, from, seq), id: `c${seq}`, channel: "chat", ...extra };
 }
 
 export async function revoke(pairIdHash: string, pairEpoch: number, by: Device, sequence = 1) {

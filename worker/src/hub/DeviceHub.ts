@@ -1,6 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
 import {
+  CHAT_DEVICE_BURST_MESSAGES,
+  CHAT_DEVICE_BURST_WINDOW_SECONDS,
+  CHAT_DEVICE_HOURLY_MESSAGES,
+  CHAT_STORED_PER_SENDER_PER_PAIR_MAX,
+  CHAT_STORED_TTL_SECONDS,
   DEVICE_BURST_FRAMES,
   DEVICE_BURST_WINDOW_SECONDS,
   DEVICE_HOURLY_FRAMES,
@@ -15,14 +20,19 @@ import { verifyEcdsaSignature } from "../lib/crypto";
 import { lookupDeviceKey } from "../lib/deviceKeys";
 import { logEvent } from "../lib/log";
 import { pairAtEpoch } from "../lib/pairs";
-import { chargeLive } from "../lib/quotas";
+import { chargeChat, chargeLive } from "../lib/quotas";
 import { newChallengeNonce, socketAuthBaseString } from "./socketAuth";
 
 /** collar/relay-messaging: delivery results reported to the sender. */
 export type DeliveryResult = "delivered" | "held" | "offline" | "needs_update" | "over_limit" | "over_budget" | "refused";
 
+/** Results for a chat message; "stored" is followed later by "delivered" or "expired". */
+export type ChatResult = "delivered" | "stored" | "mailbox_full" | "needs_update" | "over_limit" | "over_budget" | "refused";
+export type ChatReceipt = "delivered" | "expired";
+
 /** The fields the relay forwards; nonce and ciphertext are opaque to it. */
 export interface PeerFrame {
+  channel: "live" | "chat";
   pairIdHash: string;
   pairEpoch: number;
   from: "owner" | "sub";
@@ -60,6 +70,7 @@ export class DeviceHub extends DurableObject<Env> {
   private readonly sql: SqlStorage;
   // Per-device send limits live in memory: a hub that hibernated wasn't sending, so losing them is harmless.
   private sendTimes: number[] = [];
+  private chatTimes: number[] = [];
   // Messages are handled concurrently across awaits; chaining sends keeps one device's frames in order, which the
   // receiver's strictly-increasing seq check depends on.
   private sendChain: Promise<void> = Promise.resolve();
@@ -74,6 +85,13 @@ export class DeviceHub extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS held_frames (
       id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, message_id TEXT NOT NULL, pair_id_hash TEXT NOT NULL,
       frame TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
+    // Chat for this device while it's offline, and outcomes of this device's own chat while it was offline.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS chat_mailbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, message_id TEXT NOT NULL, pair_id_hash TEXT NOT NULL,
+      pair_epoch INTEGER NOT NULL, frame TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS chat_mailbox_sender ON chat_mailbox (sender, pair_id_hash)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS chat_receipts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, result TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
@@ -146,8 +164,11 @@ export class DeviceHub extends DurableObject<Env> {
     // A fresh challenge so the answer can't be replayed on this socket's attachment.
     ws.serializeAttachment({ state: "authed", challenge: newChallengeNonce(), openedAt: attachment.openedAt } satisfies Attachment);
     if (this.getMeta("everConnected") !== "1") this.setMeta("everConnected", "1");
+    if (Array.isArray(body.features) && body.features.includes("chat")) this.setMeta("chatCapable", "1");
     ws.send(JSON.stringify({ type: "auth-ok" }));
     await this.flushHeld(ws);
+    await this.flushChat(ws);
+    this.flushReceipts(ws);
   }
 
   private reject(ws: WebSocket, code: "unauthorized" | "invalid_request"): void {
@@ -169,6 +190,7 @@ export class DeviceHub extends DurableObject<Env> {
     const ack = (result: DeliveryResult) => ws.send(JSON.stringify({ type: "ack", id, result }));
 
     const frame = parseFrame(body);
+    if (frame?.channel === "chat") return this.sendChat(ws, id, frame);
     const now = nowSeconds();
     if (!frame || Math.abs(now - frame.sentAt) > PEER_FRAME_MAX_AGE_SECONDS + TIMESTAMP_TOLERANCE_SECONDS) return ack("refused");
     const self = this.getMeta("device")!;
@@ -185,6 +207,30 @@ export class DeviceHub extends DurableObject<Env> {
 
     const result = await this.hub(peer).deliver(frame, self, id);
     ack(result);
+  }
+
+  private async sendChat(ws: WebSocket, id: string, frame: PeerFrame): Promise<void> {
+    const ack = (result: ChatResult) => ws.send(JSON.stringify({ type: "ack", id, result }));
+    const now = nowSeconds();
+    if (frame.sentAt > now + TIMESTAMP_TOLERANCE_SECONDS || frame.sentAt < now - CHAT_STORED_TTL_SECONDS) return ack("refused");
+    const self = this.getMeta("device")!;
+
+    const pair = await this.pair(frame.pairIdHash, frame.pairEpoch);
+    const side = pair?.owner === self ? "owner" : pair?.sub === self ? "sub" : null;
+    if (!pair || pair.revoked || !side || side !== frame.from) return ack("refused");
+    const peer = side === "owner" ? pair.sub : pair.owner;
+
+    if (!this.withinChatLimits(now)) return ack("over_limit");
+    if (!(await chargeChat(this.env))) return ack("over_budget");
+    ack(await this.hub(peer).deliverChat(frame, self, id));
+  }
+
+  private withinChatLimits(now: number): boolean {
+    this.chatTimes = this.chatTimes.filter((t) => now - t < 3600);
+    const burst = this.chatTimes.filter((t) => now - t < CHAT_DEVICE_BURST_WINDOW_SECONDS).length;
+    if (this.chatTimes.length >= CHAT_DEVICE_HOURLY_MESSAGES || burst >= CHAT_DEVICE_BURST_MESSAGES) return false;
+    this.chatTimes.push(now);
+    return true;
   }
 
   private withinLimits(now: number, safety: boolean): boolean {
@@ -221,7 +267,11 @@ export class DeviceHub extends DurableObject<Env> {
 
   /** A frame for this hub's device from `sender`'s hub. */
   async deliver(frame: PeerFrame, sender: string, messageId: string): Promise<DeliveryResult> {
-    const wire = JSON.stringify({ type: "frame", ...frame });
+    // Live frames keep the wire shape older clients expect (no channel field).
+    const wire = JSON.stringify({
+      type: "frame", pairIdHash: frame.pairIdHash, pairEpoch: frame.pairEpoch, from: frame.from, seq: frame.seq,
+      sentAt: frame.sentAt, nonce: frame.nonce, ciphertext: frame.ciphertext,
+    });
     let sent = false;
     for (const s of this.authedSockets()) {
       // A socket that's closing throws; the frame is then held as if the device were away.
@@ -237,6 +287,49 @@ export class DeviceHub extends DurableObject<Env> {
       sender, messageId, frame.pairIdHash, wire, expiresAt);
     await this.scheduleAlarm(expiresAt);
     return "held";
+  }
+
+  /** A chat message for this hub's device from `sender`'s hub; stored while the device is away. */
+  async deliverChat(frame: PeerFrame, sender: string, messageId: string): Promise<ChatResult> {
+    if (this.getMeta("chatCapable") !== "1") return "needs_update";
+    const wire = JSON.stringify({ type: "frame", ...frame });
+    let sent = false;
+    for (const s of this.authedSockets()) {
+      try { s.send(wire); sent = true; } catch { /* closing */ }
+    }
+    if (sent) return "delivered";
+
+    const stored = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM chat_mailbox WHERE sender = ? AND pair_id_hash = ?`, sender, frame.pairIdHash).one().n;
+    if (stored >= CHAT_STORED_PER_SENDER_PER_PAIR_MAX) return "mailbox_full";
+    const expiresAt = nowSeconds() + CHAT_STORED_TTL_SECONDS;
+    this.sql.exec(`INSERT INTO chat_mailbox (sender, message_id, pair_id_hash, pair_epoch, frame, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      sender, messageId, frame.pairIdHash, frame.pairEpoch, wire, expiresAt);
+    await this.scheduleAlarm(expiresAt);
+    return "stored";
+  }
+
+  /** The final outcome of a stored chat message this hub's device sent; kept until it next connects if it's away. */
+  async chatReceipt(messageId: string, result: ChatReceipt): Promise<void> {
+    const wire = JSON.stringify({ type: "ack", id: messageId, result });
+    let sent = false;
+    for (const s of this.authedSockets()) {
+      try { s.send(wire); sent = true; } catch { /* closing */ }
+    }
+    if (sent) return;
+    const expiresAt = nowSeconds() + CHAT_STORED_TTL_SECONDS;
+    this.sql.exec(`INSERT INTO chat_receipts (message_id, result, expires_at) VALUES (?, ?, ?)`, messageId, result, expiresAt);
+    await this.scheduleAlarm(expiresAt);
+  }
+
+  /** The pairing ended: chat still waiting here for it is dropped, and its senders are told it expired. */
+  async purgeChat(pairIdHash: string): Promise<void> {
+    this.sql.exec(`DELETE FROM pair_cache WHERE pair_id_hash = ?`, pairIdHash);
+    const rows = this.sql
+      .exec<{ sender: string; message_id: string }>(`SELECT sender, message_id FROM chat_mailbox WHERE pair_id_hash = ?`, pairIdHash)
+      .toArray();
+    if (rows.length === 0) return;
+    this.sql.exec(`DELETE FROM chat_mailbox WHERE pair_id_hash = ?`, pairIdHash);
+    await Promise.all(rows.map((row) => this.hub(row.sender).chatReceipt(row.message_id, "expired").catch(() => undefined)));
   }
 
   /** The final result of a frame this hub's device sent that the peer's hub was holding. */
@@ -272,7 +365,39 @@ export class DeviceHub extends DurableObject<Env> {
     }
   }
 
-  // ---- alarm: auth timeouts and held-frame expiry ---------------------------------------------------------------
+  private async flushChat(ws: WebSocket): Promise<void> {
+    const rows = this.sql
+      .exec<{ id: number; sender: string; message_id: string; pair_id_hash: string; pair_epoch: number; frame: string }>(
+        `SELECT id, sender, message_id, pair_id_hash, pair_epoch, frame FROM chat_mailbox ORDER BY id`)
+      .toArray();
+    if (rows.length === 0) return;
+    const self = this.getMeta("device");
+    const live = new Map<string, boolean>();
+    for (const row of rows) {
+      const key = `${row.pair_id_hash}:${row.pair_epoch}`;
+      if (!live.has(key)) {
+        const pair = await this.pair(row.pair_id_hash, row.pair_epoch);
+        live.set(key, !!pair && !pair.revoked && (pair.owner === self || pair.sub === self) && (pair.owner === row.sender || pair.sub === row.sender));
+      }
+      let sent = false;
+      if (live.get(key)) {
+        try { ws.send(row.frame); sent = true; } catch { /* closing: kept for the next connect */ }
+        if (!sent) return;
+      }
+      this.sql.exec(`DELETE FROM chat_mailbox WHERE id = ?`, row.id);
+      this.ctx.waitUntil(this.hub(row.sender).chatReceipt(row.message_id, sent ? "delivered" : "expired").catch(() => undefined));
+    }
+  }
+
+  private flushReceipts(ws: WebSocket): void {
+    const rows = this.sql.exec<{ id: number; message_id: string; result: string }>(`SELECT id, message_id, result FROM chat_receipts ORDER BY id`).toArray();
+    for (const row of rows) {
+      try { ws.send(JSON.stringify({ type: "ack", id: row.message_id, result: row.result })); } catch { return; }
+      this.sql.exec(`DELETE FROM chat_receipts WHERE id = ?`, row.id);
+    }
+  }
+
+  // ---- alarm: auth timeouts, held-frame and chat expiry ---------------------------------------------------------
 
   override async alarm(): Promise<void> {
     const now = nowSeconds();
@@ -290,12 +415,24 @@ export class DeviceHub extends DurableObject<Env> {
       logEvent("held_frames_expired", { count: expired.length });
     }
 
+    const expiredChat = this.sql
+      .exec<{ sender: string; message_id: string }>(`SELECT sender, message_id FROM chat_mailbox WHERE expires_at <= ?`, now)
+      .toArray();
+    if (expiredChat.length > 0) {
+      this.sql.exec(`DELETE FROM chat_mailbox WHERE expires_at <= ?`, now);
+      await Promise.all(expiredChat.map((row) => this.hub(row.sender).chatReceipt(row.message_id, "expired").catch(() => undefined)));
+      logEvent("chat_expired", { count: expiredChat.length });
+    }
+    this.sql.exec(`DELETE FROM chat_receipts WHERE expires_at <= ?`, now);
+
     const nextHeld = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM held_frames`).one().t;
+    const nextChat = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM chat_mailbox`).one().t;
+    const nextReceipt = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM chat_receipts`).one().t;
     const nextAuth = this.ctx.getWebSockets()
       .map((s) => s.deserializeAttachment() as Attachment | null)
       .filter((a): a is Attachment => a?.state === "pending")
       .map((a) => a.openedAt + SOCKET_AUTH_TIMEOUT_SECONDS);
-    const next = [nextHeld, ...nextAuth].filter((t): t is number => typeof t === "number");
+    const next = [nextHeld, nextChat, nextReceipt, ...nextAuth].filter((t): t is number => typeof t === "number");
     if (next.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...next), now + 1) * 1000);
   }
 
@@ -316,6 +453,8 @@ export class DeviceHub extends DurableObject<Env> {
 
 function parseFrame(body: Record<string, unknown>): PeerFrame | null {
   const { pairIdHash, pairEpoch, from, seq, sentAt, nonce, ciphertext } = body;
+  const channel = body.channel === undefined ? "live" : body.channel;
+  if (channel !== "live" && channel !== "chat") return null;
   if (typeof pairIdHash !== "string" || !HEX64.test(pairIdHash)) return null;
   if (!Number.isSafeInteger(pairEpoch) || (pairEpoch as number) < 0) return null;
   if (from !== "owner" && from !== "sub") return null;
@@ -323,5 +462,5 @@ function parseFrame(body: Record<string, unknown>): PeerFrame | null {
   if (!Number.isSafeInteger(sentAt) || (sentAt as number) < 0) return null;
   if (typeof nonce !== "string" || !AEAD_NONCE.test(nonce)) return null;
   if (typeof ciphertext !== "string" || !CIPHERTEXT.test(ciphertext)) return null;
-  return { pairIdHash, pairEpoch: pairEpoch as number, from, seq: seq as number, sentAt: sentAt as number, nonce, ciphertext };
+  return { channel, pairIdHash, pairEpoch: pairEpoch as number, from, seq: seq as number, sentAt: sentAt as number, nonce, ciphertext };
 }

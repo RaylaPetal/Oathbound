@@ -24,6 +24,23 @@ public enum PeerDelivery
 
 public readonly record struct PeerSendResult(Guid PairingId, string Kind, string Text, PeerDelivery Delivery);
 
+/// What happened to one chat message. Stored is followed later by Delivered or Expired, possibly sessions later.
+public enum ChatDelivery
+{
+    Delivered,
+    Stored,
+    Expired,
+    MailboxFull,
+    NeedsUpdate,
+    OverLimit,
+    OverBudget,
+    Refused,
+    RelayUnreachable,
+}
+
+/// A chat message accepted from a pairing's peer; SentAt is the sender's clock, in unix seconds.
+public readonly record struct ChatReceived(PairingState Pairing, string Text, long SentAt);
+
 /// The one way anything reaches a paired peer (collar/relay-messaging). Commands and notices are sealed for the pairing
 /// and sent on the live connection; nothing here touches game chat. Main thread only.
 public sealed class PeerMessenger
@@ -38,6 +55,10 @@ public sealed class PeerMessenger
     private readonly Dictionary<string, Pending> pending = new();
     private readonly List<SafetyRetry> safetyRetries = new();
     private readonly Dictionary<(Guid, int), byte[]> keys = new();
+    private readonly Dictionary<(Guid, int), byte[]> chatKeys = new();
+    /// Chat sends still waiting for their first ack; ids are random so a receipt sessions later can't be confused.
+    private readonly Dictionary<string, DateTime> chatPending = new();
+    private const string ChatIdPrefix = "c";
     private int nextId;
 
     private sealed record Pending(Guid PairingId, string Kind, string Text, DateTime SentUtc)
@@ -65,6 +86,12 @@ public sealed class PeerMessenger
     /// Every final (and held) result of a frame this install sent.
     public event Action<PeerSendResult>? SendResult;
 
+    /// A chat message from a pairing's peer.
+    public event Action<ChatReceived>? ChatReceived;
+
+    /// Every result of a chat message this install sent, by the message id SendChat returned.
+    public event Action<string, ChatDelivery>? ChatResult;
+
     public bool Connected => socket.State == RelaySocketState.Connected;
 
     public PeerDelivery? SendCommand(PairingState pairing, string text) => Send(pairing, PeerMessagePlaintext.CommandKind, text, safety: false);
@@ -76,6 +103,59 @@ public sealed class PeerMessenger
     {
         if (Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: true) == PeerDelivery.RelayUnreachable)
             safetyRetries.Add(new SafetyRetry(pairing.Id, text, DateTime.UtcNow.AddSeconds(PeerMessageCrypto.MaxAgeSeconds)));
+    }
+
+    /// Sends one chat message. Returns its message id (results follow through ChatResult), or null and the reason it
+    /// couldn't go out at all.
+    public (string? MessageId, ChatDelivery? Failure) SendChat(PairingState pairing, string text)
+    {
+        if (!pairing.IsPaired || pairing.PairIdHash is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
+            return (null, ChatDelivery.Refused);
+        if (!Connected)
+            return (null, ChatDelivery.RelayUnreachable);
+
+        var header = new PeerFrameHeader(pairing.PairIdHash, pairing.PairEpoch, SideOf(pairing.Direction), pairing.NextOutgoingChatSeq(),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds() + socket.ServerOffsetSeconds);
+        config.Save();
+        string nonce, ciphertext;
+        try
+        {
+            (nonce, ciphertext) = PeerMessageCrypto.SealChat(text, ChatKeyFor(pairing), header);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or DeviceIdentityUnavailableException)
+        {
+            Plugin.Log.Warning($"Chat not sent: {ex.Message}");
+            return (null, ChatDelivery.Refused);
+        }
+
+        var id = ChatIdPrefix + RelayCrypto.Base64UrlEncode(RelayCrypto.RandomBytes(12));
+        chatPending[id] = DateTime.UtcNow;
+        var wire = JsonSerializer.Serialize(new
+        {
+            type = "send",
+            id,
+            safety = false,
+            channel = "chat",
+            pairIdHash = header.PairIdHash,
+            pairEpoch = header.PairEpoch,
+            from = header.From,
+            seq = header.Seq,
+            sentAt = header.SentAt,
+            nonce,
+            ciphertext,
+        });
+        _ = socket.SendAsync(wire).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully && task.Result) return;
+            Plugin.Framework.RunOnFrameworkThread(() => ResolveChat(id, ChatDelivery.RelayUnreachable));
+        });
+        return (id, null);
+    }
+
+    private void ResolveChat(string id, ChatDelivery delivery)
+    {
+        chatPending.Remove(id);
+        ChatResult?.Invoke(id, delivery);
     }
 
     /// Null when the frame went out and its result will follow through SendResult; otherwise why it couldn't.
@@ -147,6 +227,8 @@ public sealed class PeerMessenger
         foreach (var (id, _) in pending.Where(kv => kv.Value.Held && now - kv.Value.SentUtc > TimeSpan.FromSeconds(PeerMessageCrypto.MaxAgeSeconds + 30)).ToList())
             Resolve(id, PeerDelivery.Offline);
         safetyRetries.RemoveAll(r => r.GiveUpUtc < now);
+        foreach (var (id, _) in chatPending.Where(kv => now - kv.Value > AckTimeout).ToList())
+            ResolveChat(id, ChatDelivery.RelayUnreachable);
     }
 
     private void OnStateChanged(RelaySocketState next)
@@ -182,6 +264,21 @@ public sealed class PeerMessenger
         var id = message.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
         var result = message.TryGetProperty("result", out var r) ? r.GetString() : null;
         if (id is null) return;
+        if (id.StartsWith(ChatIdPrefix, StringComparison.Ordinal))
+        {
+            ResolveChat(id, result switch
+            {
+                "delivered" => ChatDelivery.Delivered,
+                "stored" => ChatDelivery.Stored,
+                "expired" => ChatDelivery.Expired,
+                "mailbox_full" => ChatDelivery.MailboxFull,
+                "needs_update" => ChatDelivery.NeedsUpdate,
+                "over_limit" => ChatDelivery.OverLimit,
+                "over_budget" => ChatDelivery.OverBudget,
+                _ => ChatDelivery.Refused,
+            });
+            return;
+        }
         var delivery = result switch
         {
             "delivered" => PeerDelivery.Delivered,
@@ -234,6 +331,11 @@ public sealed class PeerMessenger
     {
         if (!TryHeader(frame, out var header, out var nonce, out var ciphertext))
             return;
+        if (frame.TryGetProperty("channel", out var channel) && channel.GetString() == "chat")
+        {
+            OnChatFrame(header, nonce, ciphertext);
+            return;
+        }
         var pairing = FindPairing(header.PairIdHash, header.PairEpoch);
         if (pairing is null)
         {
@@ -284,6 +386,46 @@ public sealed class PeerMessenger
         FrameAccepted?.Invoke(pairing, message);
     }
 
+    /// Chat has no age limit (it may have waited days on the relay), but the same pairing, side and replay checks.
+    private void OnChatFrame(PeerFrameHeader header, string nonce, string ciphertext)
+    {
+        var pairing = FindPairing(header.PairIdHash, header.PairEpoch);
+        if (pairing is null)
+        {
+            Plugin.Log.Information("Chat ignored: no active pairing for it.");
+            return;
+        }
+        if (header.From != SideOf(pairing.Direction == PairingDirection.OwnerSide ? PairingDirection.SubSide : PairingDirection.OwnerSide))
+        {
+            Plugin.Log.Warning("Chat ignored: it claims this install's own side.");
+            return;
+        }
+        if (header.Seq <= pairing.LastAcceptedChatSeq)
+        {
+            Plugin.Log.Warning("Chat ignored: replayed or out of order.");
+            return;
+        }
+
+        ChatPlaintext? message;
+        try
+        {
+            message = PeerMessageCrypto.OpenChat(ChatKeyFor(pairing), header, nonce, ciphertext);
+        }
+        catch (DeviceIdentityUnavailableException)
+        {
+            return;
+        }
+        if (message is null)
+        {
+            Plugin.Log.Warning("Chat ignored: it doesn't decrypt for this pairing.");
+            return;
+        }
+
+        pairing.LastAcceptedChatSeq = header.Seq;
+        config.Save();
+        ChatReceived?.Invoke(new ChatReceived(pairing, message.Text, header.SentAt));
+    }
+
     private static bool TryHeader(JsonElement frame, out PeerFrameHeader header, out string nonce, out string ciphertext)
     {
         header = default;
@@ -321,13 +463,23 @@ public sealed class PeerMessenger
         return key;
     }
 
+    private byte[] ChatKeyFor(PairingState pairing)
+    {
+        if (chatKeys.TryGetValue((pairing.Id, pairing.PairEpoch), out var key)) return key;
+        var peer = new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = pairing.PeerPublicKeyX!, Y = pairing.PeerPublicKeyY! };
+        key = PeerMessageCrypto.DeriveChatKey(identity.GetSigningKey(), peer, pairing.PairIdHash!, pairing.PairEpoch);
+        chatKeys[(pairing.Id, pairing.PairEpoch)] = key;
+        return key;
+    }
+
     /// Ends every derived key for a pairing that ended or changed epoch.
     public void Forget(PairingState pairing)
     {
-        foreach (var k in keys.Keys.Where(k => k.Item1 == pairing.Id).ToList())
-        {
-            Array.Clear(keys[k]);
-            keys.Remove(k);
-        }
+        foreach (var cache in new[] { keys, chatKeys })
+            foreach (var k in cache.Keys.Where(k => k.Item1 == pairing.Id).ToList())
+            {
+                Array.Clear(cache[k]);
+                cache.Remove(k);
+            }
     }
 }

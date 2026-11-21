@@ -253,4 +253,27 @@ describe("cross-runtime crypto vectors", () => {
     );
     expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
   });
+
+  it("derives the chat key separately from the message key and decrypts the sample chat", async () => {
+    const v = vectors.peerChat;
+    const enc = new TextEncoder();
+    expect(v.sharedSecretHex).toBe(vectors.peerMessage.sharedSecretHex);
+    expect(v.infoUtf8).toBe("oathbound-relay-chat-v1" + v.pairIdHash + v.pairEpoch);
+    const salt = await crypto.subtle.digest("SHA-256", enc.encode(v.pairIdHash + "|" + v.pairEpoch));
+    expect(Buffer.from(salt).toString("hex")).toBe(v.saltSha256Hex);
+    const hk = await crypto.subtle.importKey("raw", Buffer.from(v.sharedSecretHex, "hex"), "HKDF", false, ["deriveBits"]);
+    const keyBits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: enc.encode(v.infoUtf8) }, hk, 256);
+    expect(Buffer.from(keyBits).toString("hex")).toBe(v.derivedAesKeyHex);
+    expect(v.derivedAesKeyHex).not.toBe(vectors.peerMessage.derivedAesKeyHex);
+
+    const aad = toCanonicalJson({ channel: "chat", pairIdHash: v.pairIdHash, pairEpoch: v.pairEpoch, from: v.from, seq: v.seq, sentAt: v.sentAt });
+    expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
+    const params = { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 };
+    const ciphertext = Buffer.from(v.ciphertextWithTagBase64Url, "base64url");
+    const key = await crypto.subtle.importKey("raw", keyBits, "AES-GCM", false, ["decrypt"]);
+    expect(new TextDecoder().decode(await crypto.subtle.decrypt(params, key, ciphertext))).toBe(v.plaintextUtf8);
+
+    const messageKey = await crypto.subtle.importKey("raw", Buffer.from(vectors.peerMessage.derivedAesKeyHex, "hex"), "AES-GCM", false, ["decrypt"]);
+    await expect(crypto.subtle.decrypt(params, messageKey, ciphertext)).rejects.toThrow();
+  });
 });

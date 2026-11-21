@@ -42,6 +42,22 @@
     "deviceBurstWindowSeconds": 10,
     "deviceHourlyFrames": 600
   },
+  "peerChat": {
+    "description": "collar/relay-chat: a chat message between the two devices of a pairing (channel \"chat\" in a send). Same transport, routing and static ECDH secret as peerMessage, but its own HKDF info, its own seq space, no 2-minute age limit, and stored by the recipient's hub while it is offline. A frame without channel is \"live\" (a peerMessage).",
+    "kdfInfo": "\"oathbound-relay-chat-v1\" || pairIdHash || pairEpoch (decimal), UTF-8 concatenation; salt is SHA-256(UTF-8 of pairIdHash + \"|\" + pairEpoch)",
+    "aead": "AES-256-GCM, 12-byte random nonce, 16-byte tag",
+    "aad": "JCS({channel: \"chat\", pairIdHash, pairEpoch, from, seq, sentAt})",
+    "plaintext": "Plain JSON {v: 1, kind: \"chat\", text}",
+    "seq": "Strictly increasing per pairing and direction, separate from peerMessage seq; same max(last + 1, unix milliseconds) rule",
+    "authFeature": "The socket auth message carries features: [\"chat\"]; the relay stores or forwards chat only for a device that has declared it",
+    "maxTextChars": 1000,
+    "storedTtlSeconds": 604800,
+    "storedPerSenderPerPairMax": 200,
+    "deviceBurstMessages": 20,
+    "deviceBurstWindowSeconds": 30,
+    "deviceHourlyMessages": 600,
+    "results": "delivered | stored | mailbox_full | needs_update | over_limit | over_budget | refused; stored is followed later by a second ack for the same id with delivered or expired, kept for an offline sender until it reconnects"
+  },
   "capabilitySecrets": {
     "sizeBits": 256,
     "encoding": "base64url without padding (43 characters) when transmitted; server stores only SHA-256(secretBytes) as capabilityId's paired hash.",

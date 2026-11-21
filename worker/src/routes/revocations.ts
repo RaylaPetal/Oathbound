@@ -104,6 +104,9 @@ export async function publishRevocation(request: Request, env: Env): Promise<Res
   await notifyPeer(env, pair, deviceKeyId, true);
   // The revoking device's own hub may hold the pair as active; it must stop forwarding now too.
   await env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(deviceKeyId)).forgetPair(pair.pair_id_hash).catch(() => undefined);
+  // Chat still waiting for either member of the ended pairing is dropped.
+  await Promise.all([pair.owner_device_key_id, pair.sub_device_key_id].map((member) =>
+    env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(member)).purgeChat(pair.pair_id_hash).catch(() => undefined)));
   return Response.json(envelope);
 }
 

@@ -277,5 +277,21 @@
     "plaintextUtf8": "{\"v\":1,\"kind\":\"command\",\"text\":\"outfit lock \\\"Maid\\\" 1h\",\"character\":{\"n\":\"Kai A\",\"w\":\"Odin\"}}",
     "nonceBase64Url": "AAECAwQFBgcICQoL",
     "ciphertextWithTagBase64Url": "LVM0Squ3Dp2ZPxjuRaC_WADyCXcvT7ArQj-dEBpAlO2y0VgBb_Kz3q856wqA-5poftD6eYQ9Za3VY-ZTTK6kYdY1L2g9xEY8ZKfFL_DPcrYVdwP5od7Hr4XuINN4Qox3bTxP2dEHDweYrhE13fk"
+  },
+  "peerChat": {
+    "description": "Chat message on a pairing: pairCharacters' static ECDH shared secret, salt SHA-256(UTF-8 pairIdHash + \"|\" + pairEpoch), HKDF-SHA256 info \"oathbound-relay-chat-v1\" + pairIdHash + pairEpoch, AES-256-GCM with AAD = JCS of {channel: \"chat\", pairIdHash, pairEpoch, from, seq, sentAt}. The same ciphertext must not open under peerMessage's key.",
+    "pairIdHash": "65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f",
+    "pairEpoch": 2,
+    "from": "sub",
+    "seq": 1700003000456,
+    "sentAt": 1700003000,
+    "sharedSecretHex": "780dc0923dac82ca3947113b1f7729f3a3c5c3a3d5500a65118462c91b86aa95",
+    "saltSha256Hex": "407d9d08cf3bd154c6795ee2375e75471fa657d30a050b82ece7a43d190eca2d",
+    "infoUtf8": "oathbound-relay-chat-v165628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f2",
+    "derivedAesKeyHex": "ab59436b581b86c5897b2e0497ba78cdb04a64a45e20495b8f54493cae68856b",
+    "additionalAuthenticatedDataCanonicalJson": "{\"channel\":\"chat\",\"from\":\"sub\",\"pairEpoch\":2,\"pairIdHash\":\"65628a9e671c78cf2dd85ef5e9522f0bac3e6bb33ad4673ba8a4acf7e846b59f\",\"sentAt\":1700003000,\"seq\":1700003000456}",
+    "plaintextUtf8": "{\"v\":1,\"kind\":\"chat\",\"text\":\"See you at the Gold Saucer, 9pm? 💜\"}",
+    "nonceBase64Url": "CwoJCAcGBQQDAgEA",
+    "ciphertextWithTagBase64Url": "RS0bPj7ZMG3lJB-8f-rdmLWIDCphU8VHKitBcODpVDmXLKUKiOEmqHcPXzYxdjxJ1uyjbUXsGeR6HO8XaFCHeJqIcmC-JDWyVfaQunlFTYIayIOD"
   }
 }
