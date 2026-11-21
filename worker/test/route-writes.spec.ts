@@ -17,6 +17,7 @@ import {
 import { consume, ecdhPublicJwk, fetchKey, freshPair, publishKey, status, upload, type Pair } from "./mailbox-helpers";
 import { type Channel, consumeItem, fetchRulebookKey, publishRulebookKey, uploadItem } from "./rulebook-helpers";
 import { fetchPictures, pictureId, syncPictures, uploadPicture } from "./picture-helpers";
+import { fetchChatImage, imageId, uploadChatImage } from "./chat-image-helpers";
 import { ROUTE_WEIGHTS, routeKey } from "../src/lib/routeWeights";
 import { emptyTally, meteredFetcher, type WriteTally } from "./write-meter";
 
@@ -225,6 +226,10 @@ async function measureEveryRoute(): Promise<void> {
   await measure("POST /v1/pictures/upload", () => uploadPicture(m, picture));
   await measure("POST /v1/pictures/fetch", () => fetchPictures(m, [picture]));
   await measure("POST /v1/pictures/sync", () => syncPictures(m, []));
+
+  const chatImage = imageId();
+  await measure("POST /v1/chat-images/upload", () => uploadChatImage(m, chatImage));
+  await measure("POST /v1/chat-images/fetch", () => fetchChatImage(m, chatImage));
 
   // Rulebook mailbox, both channels.
   for (const channel of ["rulebook", "report"] as Channel[]) {

@@ -116,8 +116,19 @@
       "required": ["v", "kind", "text"],
       "properties": {
         "v": { "const": 1 },
-        "kind": { "const": "chat" },
-        "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        "kind": { "enum": ["chat", "image"] },
+        "text": { "description": "Required (non-empty) for chat; an optional caption for image.", "type": "string", "maxLength": 1000 },
+        "image": {
+          "description": "kind image only. See constants.json peerChat.image.",
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "key", "width", "height"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+            "key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+            "width": { "type": "integer", "minimum": 1, "maximum": 1600 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 1600 }
+          }
+        }
       }
     },
     "plaintext": {

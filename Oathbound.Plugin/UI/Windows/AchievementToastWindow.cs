@@ -21,7 +21,6 @@ public sealed class AchievementToastWindow : Window
     private readonly Plugin plugin;
     private AchievementToast? current;
     private float elapsed;
-    private bool soundFailed;
 
     public AchievementToastWindow(Plugin plugin) : base("###OathboundAchievementToast",
         ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollbar |
@@ -63,20 +62,7 @@ public sealed class AchievementToastWindow : Window
         return true;
     }
 
-    public void PlaySound(int chatSound)
-    {
-        if (chatSound is < 1 or > 16 || soundFailed)
-            return;
-        try
-        {
-            UIGlobals.PlayChatSoundEffect((uint)chatSound);
-        }
-        catch (Exception ex)
-        {
-            soundFailed = true;
-            Plugin.Log.Warning(ex, "Achievement sound failed - sound is off for this session.");
-        }
-    }
+    public void PlaySound(int chatSound) => GameSound.Play(chatSound);
 
     public override void PreDraw()
     {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -24,10 +25,75 @@ public sealed class PeerMessagePlaintext
 public sealed class ChatPlaintext
 {
     public const string ChatKind = "chat";
+    public const string ImageKind = "image";
 
     [JsonPropertyName("v")] public int Version { get; set; } = 1;
     [JsonPropertyName("kind")] public string Kind { get; set; } = ChatKind;
+    /// The message, or an image's optional caption.
     [JsonPropertyName("text")] public string Text { get; set; } = "";
+    [JsonPropertyName("image"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ChatImageRef? Image { get; set; }
+
+    public bool IsWellFormed => Version == 1 && Text.Length <= PeerMessageCrypto.MaxChatChars && Kind switch
+    {
+        ChatKind => Text.Length > 0 && Image is null,
+        ImageKind => Image is { } i && i.IsWellFormed,
+        _ => false,
+    };
+}
+
+/// Where a chat picture is on the relay and the key that opens it; only ever sent inside a sealed chat message.
+public sealed class ChatImageRef
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("key")] public string Key { get; set; } = "";
+    [JsonPropertyName("width")] public int Width { get; set; }
+    [JsonPropertyName("height")] public int Height { get; set; }
+
+    public bool IsWellFormed =>
+        ChatImageCrypto.IsImageId(Id) && Key.Length == 43 && Width is >= 1 and <= ChatImageCrypto.MaxSidePixels && Height is >= 1 and <= ChatImageCrypto.MaxSidePixels;
+}
+
+/// protocol/constants.json `peerChat.image`; protocol/vectors/crypto-vectors.json `chatImage` is the reference.
+public static class ChatImageCrypto
+{
+    public const int MaxCiphertextBytes = 524288;
+    public const int MaxPlaintextBytes = MaxCiphertextBytes - 12 - 16;
+    public const int MaxSidePixels = 1600;
+
+    public static string NewImageId() => RelayCrypto.Base64UrlEncode(RelayCrypto.RandomBytes(16));
+
+    public static bool IsImageId(string id) =>
+        id.Length == 22 && id.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_');
+
+    private static byte[] Aad(string imageId) => Encoding.UTF8.GetBytes("oathbound-chat-image-v1|" + imageId);
+
+    /// A fresh key per picture: the blob alone is useless to the relay or anyone who isn't in the chat.
+    public static (string Key, byte[] Blob) Encrypt(byte[] image, string imageId)
+    {
+        var key = RelayCrypto.RandomBytes(32);
+        var nonce = RelayCrypto.RandomBytes(RelayCrypto.AeadNonceLengthBytes);
+        var ciphertext = RelayCrypto.AesGcmEncrypt(key, nonce, image, Aad(imageId));
+        var blob = new byte[nonce.Length + ciphertext.Length];
+        nonce.CopyTo(blob, 0);
+        ciphertext.CopyTo(blob, nonce.Length);
+        var encodedKey = RelayCrypto.Base64UrlEncode(key);
+        Array.Clear(key);
+        return (encodedKey, blob);
+    }
+
+    /// Null when the blob doesn't open with this key and id.
+    public static byte[]? Decrypt(byte[] blob, string key, string imageId)
+    {
+        try
+        {
+            if (blob.Length <= RelayCrypto.AeadNonceLengthBytes) return null;
+            return RelayCrypto.AesGcmDecrypt(RelayCrypto.Base64UrlDecode(key), blob[..RelayCrypto.AeadNonceLengthBytes], blob[RelayCrypto.AeadNonceLengthBytes..], Aad(imageId));
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException or ArgumentException)
+        {
+            return null;
+        }
+    }
 }
 
 /// The frame fields bound into the AEAD tag; they travel in the clear so the receiver can rebuild the AAD.
@@ -80,12 +146,12 @@ public static class PeerMessageCrypto
             ["sentAt"] = h.SentAt,
         }));
 
-    public static (string Nonce, string Ciphertext) SealChat(string text, byte[] key, PeerFrameHeader header)
+    public static (string Nonce, string Ciphertext) SealChat(ChatPlaintext message, byte[] key, PeerFrameHeader header)
     {
-        if (text.Length is 0 or > MaxChatChars)
+        if (!message.IsWellFormed)
             throw new InvalidOperationException($"A chat message can be at most {MaxChatChars} characters.");
         var nonce = RelayCrypto.RandomBytes(RelayCrypto.AeadNonceLengthBytes);
-        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new ChatPlaintext { Text = text });
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(message);
         var ciphertext = RelayCrypto.AesGcmEncrypt(key, nonce, plaintext, ChatAad(header));
         return (RelayCrypto.Base64UrlEncode(nonce), RelayCrypto.Base64UrlEncode(ciphertext));
     }
@@ -97,7 +163,7 @@ public static class PeerMessageCrypto
         {
             var plaintext = RelayCrypto.AesGcmDecrypt(key, RelayCrypto.Base64UrlDecode(nonce), RelayCrypto.Base64UrlDecode(ciphertext), ChatAad(header));
             var message = JsonSerializer.Deserialize<ChatPlaintext>(plaintext);
-            return message is { Version: 1, Kind: ChatPlaintext.ChatKind } && message.Text.Length is > 0 and <= MaxChatChars ? message : null;
+            return message is { IsWellFormed: true } ? message : null;
         }
         catch (Exception ex) when (ex is CryptographicException or JsonException or FormatException or ArgumentException)
         {

@@ -43,6 +43,9 @@ export const QUOTA_LIMITS = {
   // catalog-pictures: a first publish after updating sends every picture once (dozens at most 64 KB each); after
   // that only changed pictures go up.
   pictureUploadBytes: { windowSeconds: 3600, maxCount: 300, maxBytes: 8 * 1024 * 1024 },
+  // Chat pictures: an upload is one picture of at most 512 KB; fetches are one per picture received.
+  chatImageUploadBytes: { windowSeconds: 3600, maxCount: 60, maxBytes: 16 * 1024 * 1024 },
+  deviceChatImageFetch: { windowSeconds: 3600, maxCount: 300 },
   // Picture reference syncs (one per publish) and the Owner's batched fetches.
   devicePictureOps: { windowSeconds: 3600, maxCount: 120 },
   // The per-channel upload interval already allows at most 60 rulebooks or 6 reports per hour per pair.

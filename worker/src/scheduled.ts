@@ -6,7 +6,7 @@ import {
   PICTURE_IDLE_EXPIRY_SECONDS,
   PICTURE_UNREFERENCED_GRACE_SECONDS,
 } from "./lib/constants";
-import { deleteCiphertext, r2KeyForPicture } from "./lib/r2";
+import { deleteCiphertext, r2KeyForChatImage, r2KeyForPicture } from "./lib/r2";
 import { logEvent } from "./lib/log";
 import { QUOTA_LIMITS } from "./lib/quotas";
 
@@ -121,6 +121,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
   }
 
   const removedPictures = await removeExpiredPictures(env, now);
+  const removedChatImages = await removeExpiredChatImages(env, now);
 
   const removedNonces = await env.RELAY_DB.prepare(
     `DELETE FROM nonces WHERE seen_at <= ?1`,
@@ -152,6 +153,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
     expiredRulebookItems: expiredRulebookItems.results.length,
     removedRevokedRulebookMailboxes: revokedRulebookMailboxes.results.length,
     removedPictures,
+    removedChatImages,
     removedNonces: removedNonces.meta.changes ?? 0,
     activeDevices: active,
     removedQuotaCounters: removedQuotaCounters.meta.changes ?? 0,
@@ -179,6 +181,25 @@ async function removeExpiredPictures(env: Env, now: number): Promise<number> {
     await deleteCiphertext(env, r2KeyForPicture(row.pair_id_hash, row.pair_epoch, row.picture_id));
     await env.RELAY_DB.prepare(`DELETE FROM catalog_pictures WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND picture_id = ?3`)
       .bind(row.pair_id_hash, row.pair_epoch, row.picture_id)
+      .run();
+  }
+  return expired.results.length;
+}
+
+/** Chat pictures past their TTL, and every chat picture of a revoked or missing pair epoch. Bounded per run. */
+async function removeExpiredChatImages(env: Env, now: number): Promise<number> {
+  const expired = await env.RELAY_DB.prepare(
+    `SELECT c.pair_id_hash, c.pair_epoch, c.image_id FROM chat_images c
+     LEFT JOIN pairs p ON p.pair_id_hash = c.pair_id_hash AND p.pair_epoch = c.pair_epoch
+     WHERE c.expires_at <= ?1 OR p.pair_id_hash IS NULL OR p.revoked_at IS NOT NULL
+     LIMIT 200`,
+  )
+    .bind(now)
+    .all<{ pair_id_hash: string; pair_epoch: number; image_id: string }>();
+  for (const row of expired.results) {
+    await deleteCiphertext(env, r2KeyForChatImage(row.pair_id_hash, row.pair_epoch, row.image_id));
+    await env.RELAY_DB.prepare(`DELETE FROM chat_images WHERE pair_id_hash = ?1 AND image_id = ?2`)
+      .bind(row.pair_id_hash, row.image_id)
       .run();
   }
   return expired.results.length;

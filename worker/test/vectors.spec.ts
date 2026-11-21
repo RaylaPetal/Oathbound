@@ -276,4 +276,18 @@ describe("cross-runtime crypto vectors", () => {
     const messageKey = await crypto.subtle.importKey("raw", Buffer.from(vectors.peerMessage.derivedAesKeyHex, "hex"), "AES-GCM", false, ["decrypt"]);
     await expect(crypto.subtle.decrypt(params, messageKey, ciphertext)).rejects.toThrow();
   });
+
+  it("decrypts the sample chat picture blob and binds it to its id", async () => {
+    const v = vectors.chatImage;
+    const enc = new TextEncoder();
+    expect(v.imageId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(v.keyBase64Url).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(v.additionalAuthenticatedDataUtf8).toBe("oathbound-chat-image-v1|" + v.imageId);
+    const blob = Buffer.from(v.blobBase64Url, "base64url");
+    const key = await crypto.subtle.importKey("raw", Buffer.from(v.keyBase64Url, "base64url"), "AES-GCM", false, ["decrypt"]);
+    const open = (aad: string) => crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: blob.subarray(0, 12), additionalData: enc.encode(aad), tagLength: 128 }, key, blob.subarray(12));
+    expect(Buffer.from(await open(v.additionalAuthenticatedDataUtf8)).toString("hex")).toBe(v.plaintextHex);
+    await expect(open("oathbound-chat-image-v1|" + "A".repeat(22))).rejects.toThrow();
+  });
 });

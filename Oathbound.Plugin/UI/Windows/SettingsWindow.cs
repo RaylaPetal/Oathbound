@@ -127,6 +127,8 @@ public class SettingsWindow : Window, IDisposable
                 DrawTutorialCard(config);
             using (Section.Begin("achievementsCard"))
                 DrawAchievementsCard(config);
+            using (Section.Begin("chatCard"))
+                DrawChatCard(config);
             ImGui.EndTabItem();
         }
 
@@ -534,6 +536,26 @@ public class SettingsWindow : Window, IDisposable
                 plugin.AchievementToastWindow.PlaySound(sound);
         }
         IconGlyph.HelpMarker("The same sounds as <se.1> to <se.16> in chat, at your game's sound effect volume.");
+    }
+
+    private void DrawChatCard(PluginConfig config)
+    {
+        IconGlyph.Text(FontAwesomeIcon.Comments, "Chat");
+        ImGui.Separator();
+        var sound = Math.Clamp(config.ChatSound, 0, GameSound.Count);
+        Layout.ItemWidth(140);
+        if (ImGui.Combo("New message sound##chatSound", ref sound, AchievementSoundNames, AchievementSoundNames.Length))
+        {
+            config.ChatSound = sound;
+            config.Save();
+        }
+        ImGui.SameLine();
+        using (ImRaii.Disabled(sound == 0))
+        {
+            if (ImGui.Button("Preview##chatSound"))
+                GameSound.Play(sound);
+        }
+        IconGlyph.HelpMarker("Plays when a chat message arrives, unless that conversation is open in front of you. The same sounds as <se.1> to <se.16> in chat, at your game's sound effect volume.");
     }
 
     private void DrawTutorialCard(PluginConfig config)

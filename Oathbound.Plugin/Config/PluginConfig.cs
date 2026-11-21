@@ -1142,6 +1142,9 @@ public class PluginConfig : IPluginConfiguration
     /// The Sub's own muffled sounds, mixed into gagged chat. Never sent to anyone.
     public List<string> GagSounds { get; set; } = new();
 
+    /// Played when a chat message arrives, 1-16 as <se.1>-<se.16>; 0 = none.
+    public int ChatSound { get; set; } = 2;
+
     /// Never transmitted; only alias names cross chat.
     public AliasBook Aliases { get; set; } = new();
 

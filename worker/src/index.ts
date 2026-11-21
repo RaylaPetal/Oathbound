@@ -10,6 +10,7 @@ import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxK
 import { consumeRulebookItem, fetchRulebookKey, publishRulebookKey, uploadRulebookItem } from "./routes/rulebook";
 import { health } from "./routes/health";
 import { fetchPictures, syncPictures, uploadPicture } from "./routes/pictures";
+import { fetchChatImage, uploadChatImage } from "./routes/chatImages";
 import { runScheduledCleanup } from "./scheduled";
 import { assertQuotaRemaining, enforceQuota, sampledUnits } from "./lib/quotas";
 import { originScope } from "./lib/origin";
@@ -93,6 +94,11 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (action === "upload") return uploadMailboxSnapshot(request, env);
     if (action === "status") return mailboxStatus(request, env);
     if (action === "consume") return consumeMailboxSnapshot(request, env);
+  }
+
+  if (segments[1] === "chat-images" && method === "POST" && segments.length === 3) {
+    if (segments[2] === "upload") return uploadChatImage(request, env);
+    if (segments[2] === "fetch") return fetchChatImage(request, env);
   }
 
   if (segments[1] === "pictures" && method === "POST" && segments.length === 3) {

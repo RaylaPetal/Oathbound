@@ -53,6 +53,12 @@ interface ProtocolConstants {
     deviceBurstMessages: number;
     deviceBurstWindowSeconds: number;
     deviceHourlyMessages: number;
+    image: {
+      maxCiphertextBytes: number;
+      storedPerPairMax: number;
+      storedPerPairMaxBytes: number;
+      storedTtlSeconds: number;
+    };
   };
 }
 
@@ -109,3 +115,7 @@ export const CHAT_STORED_PER_SENDER_PER_PAIR_MAX = PROTOCOL.peerChat.storedPerSe
 export const CHAT_DEVICE_BURST_MESSAGES = PROTOCOL.peerChat.deviceBurstMessages;
 export const CHAT_DEVICE_BURST_WINDOW_SECONDS = PROTOCOL.peerChat.deviceBurstWindowSeconds;
 export const CHAT_DEVICE_HOURLY_MESSAGES = PROTOCOL.peerChat.deviceHourlyMessages;
+export const CHAT_IMAGE_MAX_CIPHERTEXT_BYTES = PROTOCOL.peerChat.image.maxCiphertextBytes;
+export const CHAT_IMAGES_PER_PAIR_MAX = PROTOCOL.peerChat.image.storedPerPairMax;
+export const CHAT_IMAGES_PER_PAIR_MAX_BYTES = PROTOCOL.peerChat.image.storedPerPairMaxBytes;
+export const CHAT_IMAGE_TTL_SECONDS = PROTOCOL.peerChat.image.storedTtlSeconds;

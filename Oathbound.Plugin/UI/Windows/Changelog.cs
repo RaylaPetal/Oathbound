@@ -9,18 +9,19 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.2.0", "2026-11-21", "Chat with your partner",
+        new("0.3.2.1", "2026-11-21", "Pictures in chat, and a new look",
         [
             new("New",
             [
-                "Chat: talk with your Owner or Sub right inside Oathbound - across worlds and data centers, where /tell can't reach. Open it with the speech-bubble icon in the main window's header; a red badge shows unread messages.",
-                "If your partner is offline, your message waits for them on the relay for up to 7 days, and you see when it's delivered. Messages are end-to-end encrypted, and your chat history stays on your own computer.",
-                "If you're both Owner and Sub of the same person, it's one conversation.",
-                "A gagged Sub's messages come out gagged, just like their game chat.",
+                "Send pictures in chat: press the paperclip to pick a PNG or JPEG, or take a snapshot of the game screen. Whatever you've typed goes along as its caption. Click a picture to see it full size; right-click to save it.",
+                "Pictures are encrypted with their own key before they leave your computer. The relay keeps the encrypted picture for up to 7 days so your partner can pick it up.",
+                "A sound when a chat message arrives. Pick it (or turn it off) under Settings > Chat.",
+                "The chat window has a fresh look: bubbles with the time and a delivered tick in the corner, day labels, and a rounded message box.",
+                "If you're both Owner and Sub of the same person, your two chats are merged into one.",
             ]),
             new("Testing build",
             [
-                "This testing build uses Oathbound's testing relay, which has a copy of your pairings. Your partner needs this testing build too for commands and chat to reach each other.",
+                "This testing build uses Oathbound's testing relay. Your partner needs this testing build too for commands, chat and pictures to reach each other.",
             ]),
         ]);
 }

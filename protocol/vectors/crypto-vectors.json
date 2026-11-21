@@ -293,5 +293,13 @@
     "plaintextUtf8": "{\"v\":1,\"kind\":\"chat\",\"text\":\"See you at the Gold Saucer, 9pm? 💜\"}",
     "nonceBase64Url": "CwoJCAcGBQQDAgEA",
     "ciphertextWithTagBase64Url": "RS0bPj7ZMG3lJB-8f-rdmLWIDCphU8VHKitBcODpVDmXLKUKiOEmqHcPXzYxdjxJ1uyjbUXsGeR6HO8XaFCHeJqIcmC-JDWyVfaQunlFTYIayIOD"
+  },
+  "chatImage": {
+    "description": "A chat picture blob: nonce (12 bytes) || AES-256-GCM(ciphertext || tag) under the image's own key, AAD = UTF-8 of \"oathbound-chat-image-v1|\" + imageId. The key travels only inside the sealed kind \"image\" chat message.",
+    "imageId": "yMfGxcTDwsHAv769vLu6uQ",
+    "keyBase64Url": "AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dw",
+    "additionalAuthenticatedDataUtf8": "oathbound-chat-image-v1|yMfGxcTDwsHAv769vLu6uQ",
+    "plaintextHex": "89504e470d0a1a0a0000000d49484452",
+    "blobBase64Url": "QEFCQ0RFRkdISUpL1VmG2alKZDBRSvGYUrk6G_P2lPr81csb5CiMBnzgek4"
   }
 }

@@ -226,7 +226,7 @@ public sealed class Plugin : IDalamudPlugin
         RelaySocket = new RelaySocket(RelayClient.RelayOrigin, () => DeviceIdentityService.DeviceKeyId, DeviceIdentityService.GetSigningKey,
             action => Framework.RunOnFrameworkThread(action), message => Log.Information(message));
         PeerMessenger = new PeerMessenger(Configuration, DeviceIdentityService, RelaySocket);
-        Chat = new ChatService(Configuration, PeerMessenger, ChatGagService);
+        Chat = new ChatService(Configuration, PeerMessenger, ChatGagService, RelayClient);
 
         TitleCommand = new TitleCommand(Configuration, HonorificIpc, RuntimeState);
         // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.

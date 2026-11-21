@@ -18,6 +18,10 @@ export function r2KeyForRulebookItem(pairIdHash: string, pairEpoch: number, chan
 }
 
 /** Content-addressed by the Sub's random id, so a re-upload of the same picture lands on the same object. */
+export function r2KeyForChatImage(pairIdHash: string, pairEpoch: number, imageId: string): string {
+  return `chat-images/${pairIdHash}/${pairEpoch}/${imageId}`;
+}
+
 export function r2KeyForPicture(pairIdHash: string, pairEpoch: number, pictureId: string): string {
   return `pictures/${pairIdHash}/${pairEpoch}/${pictureId}`;
 }

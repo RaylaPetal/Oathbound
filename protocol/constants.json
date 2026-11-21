@@ -47,7 +47,7 @@
     "kdfInfo": "\"oathbound-relay-chat-v1\" || pairIdHash || pairEpoch (decimal), UTF-8 concatenation; salt is SHA-256(UTF-8 of pairIdHash + \"|\" + pairEpoch)",
     "aead": "AES-256-GCM, 12-byte random nonce, 16-byte tag",
     "aad": "JCS({channel: \"chat\", pairIdHash, pairEpoch, from, seq, sentAt})",
-    "plaintext": "Plain JSON {v: 1, kind: \"chat\", text}",
+    "plaintext": "Plain JSON {v: 1, kind: \"chat\", text} or {v: 1, kind: \"image\", text (caption, may be empty), image: {id, key, width, height}}",
     "seq": "Strictly increasing per pairing and direction, separate from peerMessage seq; same max(last + 1, unix milliseconds) rule",
     "authFeature": "The socket auth message carries features: [\"chat\"]; the relay stores or forwards chat only for a device that has declared it",
     "maxTextChars": 1000,
@@ -56,7 +56,18 @@
     "deviceBurstMessages": 20,
     "deviceBurstWindowSeconds": 30,
     "deviceHourlyMessages": 600,
-    "results": "delivered | stored | mailbox_full | needs_update | over_limit | over_budget | refused; stored is followed later by a second ack for the same id with delivered or expired, kept for an offline sender until it reconnects"
+    "results": "delivered | stored | mailbox_full | needs_update | over_limit | over_budget | refused; stored is followed later by a second ack for the same id with delivered or expired, kept for an offline sender until it reconnects",
+    "image": {
+      "description": "A picture in chat: the sender encrypts it with a fresh random key, uploads the ciphertext to POST /v1/chat-images/upload, and sends a kind \"image\" chat message carrying the id and key. The relay never holds the key.",
+      "idEncoding": "128 random bits, base64url without padding (22 characters), chosen by the sender",
+      "blob": "nonce (12 bytes) || AES-256-GCM(ciphertext || tag) of the image file (JPEG or PNG) under a fresh 32-byte key; AAD = UTF-8 of \"oathbound-chat-image-v1|\" + id",
+      "keyEncoding": "base64url without padding (43 characters)",
+      "maxCiphertextBytes": 524288,
+      "maxSidePixels": 1600,
+      "storedPerPairMax": 100,
+      "storedPerPairMaxBytes": 33554432,
+      "storedTtlSeconds": 604800
+    }
   },
   "capabilitySecrets": {
     "sizeBits": 256,

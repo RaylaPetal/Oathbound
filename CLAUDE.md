@@ -157,8 +157,11 @@ Role only changes what a client does with incoming commands and what it declares
   limit: the recipient's hub stores it in `chat_mailbox` (7 days, 200 per sender per pair) and sends receipts back,
   kept in the sender's `chat_receipts` if it's offline. A device only gets chat after declaring `features: ["chat"]`
   at auth. Chat has its own rate limit and `globalDailyChat` budget. Plugin side: `ChatService` (gag rewrite, toasts,
-  unread) over `ChatHistoryStore` (one local file per pairing under `chat/`) and `ChatWindow`; a message is only ever
-  shown, never run.
+  unread) over `ChatHistoryStore` (one local file per partner under `chat/`) and `ChatWindow`; a message is only ever
+  shown, never run. A picture is a `kind: "image"` chat message carrying an id and a one-off key: `ChatImageService`
+  shrinks it, encrypts it (`ChatImageCrypto`) and uploads the blob to `/v1/chat-images/upload` (R2 + `chat_images`,
+  7 days, either pair member; the cron drops expired and revoked ones), and the receiver fetches and caches it under
+  `chat/images/`.
 
 - **`CodePairingService.cs`** is the default pairing flow: a pairing code (`PairingCodes.cs`, 80-bit Crockford
   base32) derives both the invitation's lookup id and the AES key for each side's character name/world, so the

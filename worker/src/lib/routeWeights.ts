@@ -42,6 +42,9 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "POST /v1/pictures/upload": 8,
   "POST /v1/pictures/fetch": 4,
 
+  "POST /v1/chat-images/upload": 10,
+  "POST /v1/chat-images/fetch": 4,
+
   "POST /v1/rulebook/key": 12,
   "POST /v1/rulebook/key/fetch": 4,
   "POST /v1/rulebook/upload": 13,

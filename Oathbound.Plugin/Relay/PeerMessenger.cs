@@ -39,7 +39,7 @@ public enum ChatDelivery
 }
 
 /// A chat message accepted from a pairing's peer; SentAt is the sender's clock, in unix seconds.
-public readonly record struct ChatReceived(PairingState Pairing, string Text, long SentAt);
+public readonly record struct ChatReceived(PairingState Pairing, ChatPlaintext Message, long SentAt);
 
 /// The one way anything reaches a paired peer (collar/relay-messaging). Commands and notices are sealed for the pairing
 /// and sent on the live connection; nothing here touches game chat. Main thread only.
@@ -107,7 +107,7 @@ public sealed class PeerMessenger
 
     /// Sends one chat message. Returns its message id (results follow through ChatResult), or null and the reason it
     /// couldn't go out at all.
-    public (string? MessageId, ChatDelivery? Failure) SendChat(PairingState pairing, string text)
+    public (string? MessageId, ChatDelivery? Failure) SendChat(PairingState pairing, ChatPlaintext message)
     {
         if (!pairing.IsPaired || pairing.PairIdHash is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
             return (null, ChatDelivery.Refused);
@@ -120,7 +120,7 @@ public sealed class PeerMessenger
         string nonce, ciphertext;
         try
         {
-            (nonce, ciphertext) = PeerMessageCrypto.SealChat(text, ChatKeyFor(pairing), header);
+            (nonce, ciphertext) = PeerMessageCrypto.SealChat(message, ChatKeyFor(pairing), header);
         }
         catch (Exception ex) when (ex is InvalidOperationException or DeviceIdentityUnavailableException)
         {
@@ -423,7 +423,7 @@ public sealed class PeerMessenger
 
         pairing.LastAcceptedChatSeq = header.Seq;
         config.Save();
-        ChatReceived?.Invoke(new ChatReceived(pairing, message.Text, header.SentAt));
+        ChatReceived?.Invoke(new ChatReceived(pairing, message, header.SentAt));
     }
 
     private static bool TryHeader(JsonElement frame, out PeerFrameHeader header, out string nonce, out string ciphertext)

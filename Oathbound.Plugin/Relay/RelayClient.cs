@@ -164,6 +164,35 @@ internal sealed class FetchedPicture
     [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
 }
 
+internal sealed class ChatImageUploadRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "chat-image-upload";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("imageId")] public string ImageId { get; set; } = "";
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
+}
+
+internal sealed class ChatImageUploadResult
+{
+    [JsonPropertyName("expiresAt")] public long ExpiresAt { get; set; }
+}
+
+internal sealed class ChatImageFetchRequest
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "chat-image-fetch";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("imageId")] public string ImageId { get; set; } = "";
+}
+
+internal sealed class ChatImageFetchResult
+{
+    [JsonPropertyName("ciphertextBase64Url")] public string CiphertextBase64Url { get; set; } = "";
+}
+
 internal sealed class CollarStatusAck
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "";
@@ -439,6 +468,19 @@ public sealed class RelayClient : IDisposable
         var body = new PictureFetchRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, Ids = ids.ToList() };
         var response = await SendSignedAsync<PictureFetchResponse>(HttpMethod.Post, "/v1/pictures/fetch", body, ct).ConfigureAwait(false);
         return response.Pictures.Select(p => (p.PictureId, RelayCrypto.Base64UrlDecode(p.CiphertextBase64Url))).ToList();
+    }
+
+    // ---- Chat pictures ----
+
+    public Task UploadChatImageAsync(string pairIdHash, int pairEpoch, string imageId, byte[] blob, CancellationToken ct) =>
+        SendSignedAsync<ChatImageUploadResult>(HttpMethod.Post, "/v1/chat-images/upload",
+            new ChatImageUploadRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, ImageId = imageId, CiphertextBase64Url = RelayCrypto.Base64UrlEncode(blob) }, ct);
+
+    public async Task<byte[]> FetchChatImageAsync(string pairIdHash, int pairEpoch, string imageId, CancellationToken ct)
+    {
+        var body = new ChatImageFetchRequest { PairIdHash = pairIdHash, PairEpoch = pairEpoch, ImageId = imageId };
+        var response = await SendSignedAsync<ChatImageFetchResult>(HttpMethod.Post, "/v1/chat-images/fetch", body, ct).ConfigureAwait(false);
+        return RelayCrypto.Base64UrlDecode(response.CiphertextBase64Url);
     }
 
     public Task<CatalogMailboxKeyInfo> FetchMailboxKeyAsync(string pairIdHash, int pairEpoch, CancellationToken ct) =>

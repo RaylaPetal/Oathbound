@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/chat-image.schema.json",
+  "title": "Chat pictures",
+  "description": "Signed requests to store and fetch an encrypted chat picture for a pairing (constants.json peerChat.image). Either member may upload or fetch; the relay keeps it storedTtlSeconds and drops it when the pair epoch is revoked.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/upload"
+    },
+    {
+      "$ref": "#/$defs/uploadResult"
+    },
+    {
+      "$ref": "#/$defs/fetch"
+    },
+    {
+      "$ref": "#/$defs/fetchResult"
+    }
+  ],
+  "$defs": {
+    "imageId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "upload": {
+      "description": "POST /v1/chat-images/upload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "pairIdHash",
+        "pairEpoch",
+        "imageId",
+        "ciphertextBase64Url"
+      ],
+      "properties": {
+        "type": {
+          "const": "chat-image-upload"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "pairIdHash": {
+          "$ref": "common.schema.json#/$defs/pairIdHash"
+        },
+        "pairEpoch": {
+          "$ref": "common.schema.json#/$defs/pairEpoch"
+        },
+        "imageId": {
+          "$ref": "#/$defs/imageId"
+        },
+        "ciphertextBase64Url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      }
+    },
+    "uploadResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "expiresAt"
+      ],
+      "properties": {
+        "type": {
+          "const": "chat-image-upload-result"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "expiresAt": {
+          "$ref": "common.schema.json#/$defs/unixSeconds"
+        }
+      }
+    },
+    "fetch": {
+      "description": "POST /v1/chat-images/fetch",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "pairIdHash",
+        "pairEpoch",
+        "imageId"
+      ],
+      "properties": {
+        "type": {
+          "const": "chat-image-fetch"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "pairIdHash": {
+          "$ref": "common.schema.json#/$defs/pairIdHash"
+        },
+        "pairEpoch": {
+          "$ref": "common.schema.json#/$defs/pairEpoch"
+        },
+        "imageId": {
+          "$ref": "#/$defs/imageId"
+        }
+      }
+    },
+    "fetchResult": {
+      "description": "404 not_found once it expired or the pairing ended.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schemaVersion",
+        "ciphertextBase64Url"
+      ],
+      "properties": {
+        "type": {
+          "const": "chat-image-fetch-result"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "ciphertextBase64Url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      }
+    }
+  }
+}

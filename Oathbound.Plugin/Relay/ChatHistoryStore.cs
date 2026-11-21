@@ -30,6 +30,30 @@ public sealed class ChatEntry
     public ChatEntryState State { get; set; }
     /// Why an outgoing message wasn't delivered.
     public string? Reason { get; set; }
+
+    /// A picture message: Text is then its caption, possibly empty.
+    public ChatImageState Image { get; set; }
+    public string? ImageId { get; set; }
+    /// A received picture's key, kept only until it's downloaded.
+    public string? ImageKey { get; set; }
+    /// The pairing a received picture is fetched through.
+    public string? ImagePairIdHash { get; set; }
+    public int ImagePairEpoch { get; set; }
+    /// Under chat/images once it's on this computer.
+    public string? ImageFile { get; set; }
+    public int ImageWidth { get; set; }
+    public int ImageHeight { get; set; }
+}
+
+public enum ChatImageState
+{
+    None,
+    /// Being shrunk, encrypted and uploaded before the message goes out.
+    Preparing,
+    Downloading,
+    Ready,
+    /// Expired on the relay, or couldn't be opened.
+    Unavailable,
 }
 
 /// One per partner: someone who is both your Owner and your Sub is one conversation, keyed by their device key.
@@ -114,7 +138,7 @@ public sealed class ChatHistoryStore
             {
                 conversation.Messages.AddRange(other.Messages);
                 conversation.Unread += other.Unread;
-                Clear(other.PairingId);
+                Clear(other.PairingId, deleteImages: false);
             }
             if (matches.Count > 1)
             {
@@ -142,7 +166,11 @@ public sealed class ChatHistoryStore
     {
         conversation.Messages.Add(entry);
         if (conversation.Messages.Count > MaxMessages)
-            conversation.Messages.RemoveRange(0, conversation.Messages.Count - MaxMessages);
+        {
+            var dropped = conversation.Messages.Count - MaxMessages;
+            foreach (var old in conversation.Messages.Take(dropped)) ChatImageService.Delete(old.ImageFile);
+            conversation.Messages.RemoveRange(0, dropped);
+        }
         MarkDirty(conversation);
     }
 
@@ -157,8 +185,11 @@ public sealed class ChatHistoryStore
 
     public void MarkDirty(ChatConversation conversation) => dirty[conversation.PairingId] = DateTime.UtcNow;
 
-    public void Clear(Guid pairingId)
+    public void Clear(Guid pairingId, bool deleteImages = true)
     {
+        if (deleteImages && conversations.TryGetValue(pairingId, out var cleared))
+            foreach (var file in cleared.Messages.Select(m => m.ImageFile).Where(f => f is not null).ToList())
+                ChatImageService.Delete(file);
         conversations.Remove(pairingId);
         dirty.Remove(pairingId);
         var path = FileFor(pairingId);
