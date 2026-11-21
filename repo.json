@@ -4,7 +4,7 @@
     "Name": "Oathbound",
     "InternalName": "Oathbound.Plugin",
     "AssemblyVersion": "0.3.1.3",
-    "TestingAssemblyVersion": "0.3.2.0",
+    "TestingAssemblyVersion": "0.3.2.1",
     "Description": "A consent-based collar control plugin. Commands between paired players travel end-to-end encrypted through the Oathbound Cloudflare relay, never as game chat; the relay also handles pairing and encrypted catalog sync, while gameplay actions stay local to the Sub's client.",
     "Punchline": "Consent-based Owner/Sub control: outfit, title, gesture, and leash.",
     "IconUrl": "https://raw.githubusercontent.com/RaylaPetal/Oathbound/master/Oathbound.Plugin/images/icon.png",
@@ -21,9 +21,9 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadLinkInstall": "https://github.com/RaylaPetal/Oathbound/releases/download/v0.3.1.3/latest.zip",
-    "DownloadLinkTesting": "https://github.com/RaylaPetal/Oathbound/releases/download/v0.3.2.0-testing/latest.zip",
+    "DownloadLinkTesting": "https://github.com/RaylaPetal/Oathbound/releases/download/v0.3.2.1-testing/latest.zip",
     "DownloadLinkUpdate": "https://github.com/RaylaPetal/Oathbound/releases/download/v0.3.1.3/latest.zip",
-    "LastUpdate": "1795290614",
+    "LastUpdate": "1795299767",
     "TestingDalamudApiLevel": 15
   }
 ]
