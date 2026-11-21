@@ -51,6 +51,12 @@ public sealed class ChatWindow : Window, IDisposable
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(360, 380), MaximumSize = new Vector2(float.MaxValue, float.MaxValue) };
         Size = new Vector2(460, 560);
         SizeCondition = ImGuiCond.FirstUseEver;
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.QuestionCircle,
+            Click = _ => plugin.Tutorial.Start("chat", plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide),
+            ShowTooltip = () => ImGui.SetTooltip("Tour of Chat"),
+        });
         plugin.Chat.OpenRequested += Open;
     }
 
@@ -79,6 +85,12 @@ public sealed class ChatWindow : Window, IDisposable
 
     public override void Draw()
     {
+        // Title-bar buttons aren't ImGui items, so the ? button's area is reported by position.
+        var windowPos = ImGui.GetWindowPos();
+        var titleBarHeight = ImGui.GetFrameHeight();
+        TutorialService.AnchorRect(TutorialAnchors.ChatHelp, windowPos + new Vector2(ImGui.GetWindowWidth() - titleBarHeight * 3f, 0),
+            windowPos + new Vector2(ImGui.GetWindowWidth(), titleBarHeight));
+
         var conversations = Chat.Conversations();
         if (conversations.Count == 0)
         {
@@ -157,6 +169,7 @@ public sealed class ChatWindow : Window, IDisposable
     {
         var width = Layout.Scaled(58f);
         Pane("rail", new Vector2(width, 0), BarBg, 0f, () => DrawRailItems(conversations, width));
+        TutorialService.Anchor(TutorialAnchors.ChatPartners);
     }
 
     private void DrawRailItems(IReadOnlyList<(ChatConversation Conversation, IReadOnlyList<PairingState> Pairings)> conversations, float width)
@@ -201,6 +214,7 @@ public sealed class ChatWindow : Window, IDisposable
 
         var inputBar = pairing is null ? 0f : InputBarHeight();
         Pane("messages", new Vector2(0, -inputBar), PaneBg, Layout.Scaled(12f), () => DrawMessages(conversation));
+        TutorialService.Anchor(TutorialAnchors.ChatMessages);
 
         if (pairing is not null) DrawInputBar(conversation, pairing);
     }
@@ -253,6 +267,7 @@ public sealed class ChatWindow : Window, IDisposable
                     : "Clear history - deletes this conversation from this computer only. Your partner keeps their copy.");
         }
 
+        TutorialService.AnchorRect(TutorialAnchors.ChatHeader, start, start + new Vector2(width, height));
         ImGui.SetCursorScreenPos(start + new Vector2(0, height + 1));
         ImGui.Dummy(new Vector2(width, 0));
     }
@@ -492,6 +507,7 @@ public sealed class ChatWindow : Window, IDisposable
             {
                 ChatImageState.Preparing => (FontAwesomeIcon.CloudUploadAlt, "Sending picture…"),
                 ChatImageState.Downloading => (FontAwesomeIcon.CloudDownloadAlt, "Loading picture…"),
+                ChatImageState.Unavailable when entry.Outgoing => (FontAwesomeIcon.EyeSlash, "Picture not sent"),
                 ChatImageState.Unavailable => (FontAwesomeIcon.EyeSlash, "Picture no longer available"),
                 _ => (FontAwesomeIcon.Image, "Loading…"),
             };
@@ -618,8 +634,9 @@ public sealed class ChatWindow : Window, IDisposable
             }
             ImGui.SetNextItemWidth(width - fieldX - pad * 2 - button);
             // The buffer is in bytes; the character limit is checked on send so multi-byte text isn't cut early.
-            if (ImGui.InputTextWithHint("##chatInput", $"Message {Name(conversation)}", ref draft, 4096, ImGuiInputTextFlags.EnterReturnsTrue))
-                Send(pairing);
+            var entered = ImGui.InputTextWithHint("##chatInput", $"Message {Name(conversation)}", ref draft, 4096, ImGuiInputTextFlags.EnterReturnsTrue);
+            TutorialService.Anchor(TutorialAnchors.ChatInput);
+            if (entered) Send(pairing);
         }
 
         var canSend = count > 0 && !over;
@@ -646,8 +663,9 @@ public sealed class ChatWindow : Window, IDisposable
     /// its caption.
     private void DrawAttach(PairingState pairing, float size)
     {
-        if (GhostIcon("attach", FontAwesomeIcon.Paperclip, size, Theme.TextMuted, false))
-            ImGui.OpenPopup("attachMenu");
+        var attach = GhostIcon("attach", FontAwesomeIcon.Paperclip, size, Theme.TextMuted, false);
+        TutorialService.Anchor(TutorialAnchors.ChatAttach);
+        if (attach) ImGui.OpenPopup("attachMenu");
         if (ImGui.IsItemHovered()) Tip("Send a picture");
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, PopupPadding);

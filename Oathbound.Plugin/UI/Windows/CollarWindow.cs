@@ -450,7 +450,9 @@ public class CollarWindow : Window, IDisposable
     {
         var chat = plugin.Chat;
         var unread = chat.TotalUnread;
-        if (IconGlyph.CenteredButton("openChat", FontAwesomeIcon.Comments, size, unread > 0 ? Theme.AccentHover : ImGui.GetStyle().Colors[(int)ImGuiCol.Text]))
+        var clicked = IconGlyph.CenteredButton("openChat", FontAwesomeIcon.Comments, size, unread > 0 ? Theme.AccentHover : ImGui.GetStyle().Colors[(int)ImGuiCol.Text]);
+        TutorialService.Anchor(TutorialAnchors.MainChat);
+        if (clicked)
         {
             var target = chat.Conversations().FirstOrDefault(c => c.Conversation.Unread > 0).Conversation?.PairingId
                 ?? plugin.Configuration.ActivePairing?.Id

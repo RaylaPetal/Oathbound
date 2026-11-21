@@ -25,6 +25,13 @@ public static class TutorialAnchors
     public const string ReactionNew = "reaction:new";
     public const string FavoritesHelp = "favorites:help";
     public const string FavoritesRow = "favorites:row";
+    public const string MainChat = "main:chat";
+    public const string ChatHelp = "chat:help";
+    public const string ChatPartners = "chat:partners";
+    public const string ChatHeader = "chat:header";
+    public const string ChatMessages = "chat:messages";
+    public const string ChatAttach = "chat:attach";
+    public const string ChatInput = "chat:input";
 
     public static string Section(string id) => "section:" + id;
     public static string Fixed(string fixedActionId) => "fixed:" + fixedActionId;
@@ -81,6 +88,7 @@ public static class TutorialCatalog
             new("Your pairing", "Who you're paired with. With more than one pairing, pick the active one here: commands go to it, and each module shows its Owner or Sub view.", TutorialAnchors.MainPairing, n => n.Main()),
             new("Revert all", "Takes everything off your active Sub at once: restraints, outfit, title, leash, animation, toys and moodles. It needs two clicks. The collar and the pairing are never touched.", TutorialAnchors.MainRevertAll, n => n.Main(), "Shown once you're paired as an Owner."),
             new("Sub Control", "Opens every command you have, from every module, in one console docked beside this window.", TutorialAnchors.MainSubControl, n => n.Main(), "Shown once you're paired as an Owner."),
+            new("Chat", "The speech bubble opens chat with your Sub - it works across worlds and data centers, and messages wait for them while they're offline. A red badge counts unread messages. Its own tour is behind the ? in the chat window.", TutorialAnchors.MainChat, n => n.Main(), "Shown once you're paired."),
             new("Safeword", "Your own safeword. Typing /obpanic always takes everything off you, whatever role you're in.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile opens a module: titles, outfits, animations, moodles, restraints, toys, custom triggers, the collar, the leash, the cage, games, the rulebook, reactions and sync. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
             new("Favorites", "The Favorites tile, near the bottom of the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
@@ -208,6 +216,16 @@ public static class TutorialCatalog
             new("Cloud catalog sync", "Your Sub's catalog arrives here by itself, end-to-end encrypted, within about half an hour of a change.", S("catalogRelay"), n => n.Module("sync")),
             new("Import from a file", "If your Sub sends you an export file instead, import it here.", S("catalogFileFallback"), n => n.Module("sync")),
         ],
+        ["chat"] =
+        [
+            new("Chat", "Talk with your partner here, across worlds and data centers where /tell can't reach. Messages are end-to-end encrypted.\n\nThe ? button up here starts this tour again any time.", TutorialAnchors.ChatHelp, n => n.Chat()),
+            new("Your partners", "With more than one partner, each one has an avatar here; a red badge counts unread messages. If you're both Owner and Sub of the same person, that's one chat.", TutorialAnchors.ChatPartners, n => n.Chat(), "With a single partner there's nothing to switch between, so this rail is hidden."),
+            new("This conversation", "Who you're talking to. The bin clears this conversation from your computer only - your partner keeps their copy.", TutorialAnchors.ChatHeader, n => n.Chat(), "Pair with someone first to start a conversation."),
+            new("Messages", "Yours are on the right. In each one's corner: a clock while sending, one tick while it waits on the relay for your partner to come online (up to 7 days), two ticks once delivered. Right-click a message to copy it.", TutorialAnchors.ChatMessages, n => n.Chat(), "Pair with someone first to start a conversation."),
+            new("Pictures", "The paperclip sends a picture: a PNG or JPEG from your computer, or a snapshot of the game screen. Whatever you've typed goes with it as a caption. Click a picture to see it full size.", TutorialAnchors.ChatAttach, n => n.Chat(), "Shown while you're paired."),
+            new("Writing", "Type and press Enter to send. A gagged Sub's messages come out gagged, just like their game chat.", TutorialAnchors.ChatInput, n => n.Chat(), "Shown while you're paired."),
+            new("New message sound", "Pick the sound that plays for a new message, or turn it off, in Settings.", S("chatCard"), n => n.Settings(SettingsTab.Identity)),
+        ],
         ["favorites"] =
         [
             new("Favorites", "Every command you've starred, grouped by module, with Send on each.", TutorialAnchors.FavoritesHelp, n => n.Favorites()),
@@ -224,6 +242,7 @@ public static class TutorialCatalog
             new("Opening Oathbound", "Type /ob to open this window, and /obsettings to open Settings."),
             new("You", "Your character. Everything your Owner sends is applied here, by your own plugin.", TutorialAnchors.MainCharacter, n => n.Main()),
             new("Your pairing", "Who owns you. With more than one pairing, pick the active one here.", TutorialAnchors.MainPairing, n => n.Main()),
+            new("Chat", "The speech bubble opens chat with your Owner - it works across worlds and data centers, and messages wait for them while they're offline. A red badge counts unread messages. Its own tour is behind the ? in the chat window.", TutorialAnchors.MainChat, n => n.Main(), "Shown once you're paired."),
             new("Safeword", "Your safeword. Typing /obpanic takes everything off you at once, except a locked collar.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile is something your Owner can do to you. In each one you choose what's allowed - which outfits, animations, moodles, restraints. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
             new("Favorites", "Starred commands are an Owner feature; as a Switch, the Favorites tile opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
@@ -325,6 +344,16 @@ public static class TutorialCatalog
             new("Scan", "Find your designs, animations, restraints and moodles. Scan all refreshes everything.", S("subScan"), n => n.Module("sync")),
             new("Not shared", "What never leaves your PC.", S("subShareLimits"), n => n.Module("sync")),
             new("Offline / manual export", "Export a file instead, if you'd rather hand it over yourself.", S("subExport"), n => n.Module("sync")),
+        ],
+        ["chat"] =
+        [
+            new("Chat", "Talk with your partner here, across worlds and data centers where /tell can't reach. Messages are end-to-end encrypted.\n\nThe ? button up here starts this tour again any time.", TutorialAnchors.ChatHelp, n => n.Chat()),
+            new("Your partners", "With more than one partner, each one has an avatar here; a red badge counts unread messages. If you're both Owner and Sub of the same person, that's one chat.", TutorialAnchors.ChatPartners, n => n.Chat(), "With a single partner there's nothing to switch between, so this rail is hidden."),
+            new("This conversation", "Who you're talking to. The bin clears this conversation from your computer only - your partner keeps their copy.", TutorialAnchors.ChatHeader, n => n.Chat(), "Pair with someone first to start a conversation."),
+            new("Messages", "Yours are on the right. In each one's corner: a clock while sending, one tick while it waits on the relay for your partner to come online (up to 7 days), two ticks once delivered. Right-click a message to copy it.", TutorialAnchors.ChatMessages, n => n.Chat(), "Pair with someone first to start a conversation."),
+            new("Pictures", "The paperclip sends a picture: a PNG or JPEG from your computer, or a snapshot of the game screen. Whatever you've typed goes with it as a caption. Click a picture to see it full size.", TutorialAnchors.ChatAttach, n => n.Chat(), "Shown while you're paired."),
+            new("Writing", "Type and press Enter to send. A gagged Sub's messages come out gagged, just like their game chat.", TutorialAnchors.ChatInput, n => n.Chat(), "Shown while you're paired."),
+            new("New message sound", "Pick the sound that plays for a new message, or turn it off, in Settings.", S("chatCard"), n => n.Settings(SettingsTab.Identity)),
         ],
         ["favorites"] =
         [

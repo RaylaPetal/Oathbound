@@ -95,12 +95,15 @@ public sealed class ChatImageService
         catch (RelayException ex)
         {
             Delete(fileName);
+            Plugin.Log.Warning($"Chat picture upload refused by the relay: {ex.Message}");
             throw new InvalidOperationException(ex.Code switch
             {
                 "payload_too_large" => "too many pictures are waiting for your partner right now - try again later",
                 "rate_limited" => "you've sent a lot of pictures this hour - try again later",
                 "unauthorized" => "the relay doesn't see this pairing as active",
-                _ => "the relay couldn't store it",
+                "not_found" => "this relay doesn't support pictures yet",
+                "service_unavailable" => "the relay is busy - try again later",
+                _ => $"the relay couldn't store it ({ex.Code})",
             });
         }
         catch

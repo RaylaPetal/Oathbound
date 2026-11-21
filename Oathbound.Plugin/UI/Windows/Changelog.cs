@@ -9,19 +9,22 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.2.1", "2026-11-21", "Pictures in chat, and a new look",
+        new("0.3.2.2", "2026-11-21", "Chat with your partner",
         [
-            new("New",
+            new("New: Chat",
             [
-                "Send pictures in chat: press the paperclip to pick a PNG or JPEG, or take a snapshot of the game screen. Whatever you've typed goes along as its caption. Click a picture to see it full size; right-click to save it.",
-                "Pictures are encrypted with their own key before they leave your computer. The relay keeps the encrypted picture for up to 7 days so your partner can pick it up.",
-                "A sound when a chat message arrives. Pick it (or turn it off) under Settings > Chat.",
-                "The chat window has a fresh look: bubbles with the time and a delivered tick in the corner, day labels, and a rounded message box.",
-                "If you're both Owner and Sub of the same person, your two chats are merged into one.",
+                "Talk with your Owner or Sub right inside Oathbound - across worlds and data centers, where /tell can't reach. Open it with the speech-bubble icon in the main window's header (Owners: next to Revert all). A red badge counts unread messages.",
+                "If your partner is offline, your message waits for them for up to 7 days. The ticks in each message's corner show it: a clock while sending, one tick while it waits, two ticks once it's delivered.",
+                "Send pictures: the paperclip picks a PNG or JPEG from your computer, or takes a snapshot of the game screen. Whatever you've typed goes along as its caption. Click a picture to see it full size; right-click to save it.",
+                "Everything is end-to-end encrypted, pictures included, and your chat history stays on your own computer.",
+                "If you're both Owner and Sub of the same person, it's one conversation.",
+                "A sound plays when a message arrives - pick it or turn it off under Settings > Chat.",
+                "A gagged Sub's messages come out gagged, just like their game chat.",
             ]),
-            new("Testing build",
+            new("Good to know",
             [
-                "This testing build uses Oathbound's testing relay. Your partner needs this testing build too for commands, chat and pictures to reach each other.",
+                "You both need this update to chat. Until your partner updates, the chat tells you they need to.",
+                "The guided tour now covers chat, and the chat window has its own tour behind the ? in its title bar.",
             ]),
         ]);
 }
