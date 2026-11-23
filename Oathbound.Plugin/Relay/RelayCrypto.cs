@@ -203,15 +203,11 @@ public static class RelayCrypto
         return FixedLength32(z);
     }
 
-    /// HKDF-SHA256 to 32 bytes. salt = SHA-256(ownerEphemeral || subEphemeral),
-    /// info = "oathbound-relay-catalog-v1" || pairIdHash || requestId - both must match protocol/constants.json.
+    /// HKDF-SHA256 to 32 bytes; salt and info per protocol/constants.json for each use.
     public static byte[] DeriveAesKey(byte[] sharedSecret, byte[] salt, byte[] info) =>
         HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedSecret, outputLength: 32, salt: salt, info: info);
 
-    public static byte[] BuildCatalogHkdfInfo(string pairIdHash, string requestId) =>
-        Encoding.UTF8.GetBytes("oathbound-relay-catalog-v1" + pairIdHash + requestId);
-
-    /// A distinct label so a mailbox key can never be confused with a request key.
+    /// A distinct label so a mailbox key can never be confused with a key from the retired request flow.
     public static byte[] BuildCatalogPushHkdfInfo(string pairIdHash, string receiveKeyId) =>
         Encoding.UTF8.GetBytes("oathbound-relay-catalog-push-v1" + pairIdHash + receiveKeyId);
 

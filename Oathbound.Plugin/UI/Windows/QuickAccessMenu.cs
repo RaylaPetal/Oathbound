@@ -5,7 +5,6 @@ using System.Numerics;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Commands;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 
 namespace Oathbound.Plugin.UI;
@@ -62,11 +61,9 @@ public static class QuickAccessMenu
         }
 
         // A Sub has no one to send Owner commands to, so the menu shows only the open-window shortcuts.
-        var activePairing = plugin.Configuration.ActivePairing;
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (isOwnerMode)
         {
-            var canSend = activePairing is { Direction: PairingDirection.OwnerSide };
             var favoritesByCategory = CategorizedFavorites(plugin.Configuration.QuickCommands);
             var teleportFavorited = plugin.Configuration.QuickCommands.FavoriteFixedActions.Contains(FixedActionIds.Teleport);
 
@@ -82,13 +79,13 @@ public static class QuickAccessMenu
                         continue;
 
                     foreach (var cmd in favorites)
-                        DrawFavoriteMenuItem(plugin, cmd, canSend);
+                        DrawFavoriteMenuItem(plugin, cmd);
                     ImGui.EndMenu();
                 }
 
                 // Teleport has no static command text, so it gets its own top-level entry.
                 if (teleportFavorited)
-                    DrawTeleportMenuItem(plugin, canSend);
+                    DrawTeleportMenuItem(plugin);
             }
         }
 
@@ -105,8 +102,8 @@ public static class QuickAccessMenu
     [
         (FixedActionIds.CollarLock, "Collar lock", "Collar", "collar lock"),
         (FixedActionIds.CollarUnlock, "Collar unlock", "Collar", "collar unlock"),
-        (FixedActionIds.ClearMoodle, "Clear moodle", "Moodles", "moodle clear"),
-        (FixedActionIds.RestraintUnlock, "Restraint unlock", "Restraints", "restraint unlock"),
+        (FixedActionIds.ClearMoodle, "Clear moodles", "Moodles", "moodle clear"),
+        (FixedActionIds.RestraintUnlock, "Unlock restraints", "Restraints", "restraint unlock"),
         (FixedActionIds.ClearTitle, "Clear title", "Title", "title clear"),
         (FixedActionIds.UnlockOutfit, "Unlock outfit", "Outfit", "outfit unlock"),
         (FixedActionIds.LeashDefault, "Leash", "Follow", ControlWords.Leash),
@@ -170,38 +167,28 @@ public static class QuickAccessMenu
         FixedActions.Where(a => a.Category == category)
             .Select(a => new QuickCommand { Label = a.Label, Command = a.Command });
 
-    private static void DrawFavoriteMenuItem(Plugin plugin, QuickCommand cmd, bool canSend)
+    private static void DrawFavoriteMenuItem(Plugin plugin, QuickCommand cmd)
     {
-        var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
-        var fits = CommandSelector.Fits(command);
-        using (ImRaii.Disabled(!canSend || !fits))
-        {
-            if (ImGui.MenuItem(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label))
-                plugin.SendCommand(command);
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
+        var label = OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label;
+        DrawSendMenuItem(plugin, new SendSpec($"fav_{cmd.Label}_{cmd.Command}", label) { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd) });
     }
 
-    /// The popup closes on click, so a resolution failure is reported as a notification.
-    private static void DrawTeleportMenuItem(Plugin plugin, bool canSend)
-    {
-        using (ImRaii.Disabled(!canSend))
+    /// The popup closes on click, so a failure is reported as a notification.
+    private static void DrawTeleportMenuItem(Plugin plugin) =>
+        DrawSendMenuItem(plugin, new SendSpec("favTeleport", "Teleport")
         {
-            if (ImGui.MenuItem("Teleport"))
-            {
-                var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
-                if (!success)
-                    Plugin.NotificationManager.AddNotification(new Notification
-                    {
-                        Title = "Oathbound",
-                        Content = error ?? "Teleport failed.",
-                        Type = NotificationType.Warning,
-                        InitialDuration = TimeSpan.FromSeconds(5),
-                    });
-            }
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.");
+            Help = "Teleport your paired Sub to your current position.",
+            Custom = SendNotice.Teleport(plugin),
+        });
+
+    private static void DrawSendMenuItem(Plugin plugin, SendSpec spec)
+    {
+        var gate = SendGate.Evaluate(plugin, spec);
+        bool clicked;
+        using (ImRaii.Disabled(!gate.Enabled))
+            clicked = ImGui.MenuItem($"{spec.Label}##{spec.Id}");
+        SendGate.Tooltip(gate);
+        if (clicked && gate.Enabled)
+            SendGate.Run(plugin, spec);
     }
 }

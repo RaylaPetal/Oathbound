@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { b64url, signedFetch } from "./helpers";
-import { freshPair } from "./mailbox-helpers";
+import { b64url, type KeyPair, signedFetch } from "./helpers";
+import { freshPair, postStatus } from "./mailbox-helpers";
+import { connect } from "./socket-helpers";
 import {
   type Channel,
   consumeItem,
@@ -128,6 +129,69 @@ export function defineChannelSuite(channel: Channel): void {
       await rewindRulebookUploadClock(p, channel);
       expect((await uploadItem(p, channel, key.receiveKeyId, 2)).r.status).toBe(401);
       expect((await consumeItem(p, channel, 1)).r.status).toBe(401);
+    });
+  });
+}
+
+/** The retry-safe consume on one channel; its own spec files, for the same origin limiter reason. */
+export function defineChannelRetrySuite(channel: Channel): void {
+  const consumeWith = (p: Awaited<ReturnType<typeof freshPair>>, sequence: number, nextKey: object) => {
+    const as: { keys: KeyPair; id: string } = recipientOf(p, channel);
+    return signedFetch("/v1/rulebook/consume", "POST", { pairIdHash: p.pairIdHash, pairEpoch: 0, channel, sequence, nextKey }, as.keys.privateKey, as.id);
+  };
+  const held = async (p: { pairIdHash: string }) =>
+    (await env.RELAY_CATALOG_BUCKET.list({ prefix: `rulebook/${p.pairIdHash}/0/${channel}/` })).objects.map((o) => o.key);
+
+  async function handedOut() {
+    const p = await freshPair();
+    const { envelope: key } = await publishRulebookKey(p, channel);
+    const { ciphertext } = await uploadItem(p, channel, key.receiveKeyId, 1);
+    const nextKey = await signedRulebookKey(p, channel);
+    expect((await consumeWith(p, 1, nextKey)).status).toBe(200);
+    return { p, nextKey, ciphertext };
+  }
+
+  describe(`rulebook mailbox, channel ${channel}: retry-safe consume`, () => {
+    it("hands the same item again to a retry carrying the same next key", async () => {
+      const { p, nextKey, ciphertext } = await handedOut();
+      const retry = await consumeWith(p, 1, nextKey);
+      expect(retry.status).toBe(200);
+      expect(retry.json.envelope.sequence).toBe(1);
+      expect(retry.json.ciphertextBase64Url).toBe(b64url(ciphertext));
+    });
+
+    it("refuses a retry with a different next key", async () => {
+      const { p } = await handedOut();
+      expect((await consumeWith(p, 1, await signedRulebookKey(p, channel))).status).toBe(404);
+    });
+
+    it("releases the held item on the recipient's receipt", async () => {
+      const { p, nextKey } = await handedOut();
+      expect(await held(p)).toEqual([`rulebook/${p.pairIdHash}/0/${channel}/1`]);
+      expect((await postStatus(p, { mailbox: channel, sequence: 1, code: "ok" })).r.status).toBe(200);
+      expect(await held(p)).toEqual([]);
+      expect((await consumeWith(p, 1, nextKey)).status).toBe(404);
+    });
+
+    it("releases the held item when the recipient publishes a key outside a pickup", async () => {
+      const { p, nextKey } = await handedOut();
+      await publishRulebookKey(p, channel);
+      expect(await held(p)).toEqual([]);
+      expect((await consumeWith(p, 1, nextKey)).status).toBe(404);
+    });
+
+    it("hints the sender on a pickup", async () => {
+      const p = await freshPair();
+      const { envelope: key } = await publishRulebookKey(p, channel);
+      await uploadItem(p, channel, key.receiveKeyId, 1);
+      const sender = senderOf(p, channel);
+      const socket = await connect({ key: sender.keys, id: sender.id });
+      try {
+        expect((await consumeItem(p, channel, 1)).r.status).toBe(200);
+        expect(await socket.next()).toEqual({ type: "hint", pairIdHash: p.pairIdHash, pairEpoch: 0 });
+      } finally {
+        socket.close();
+      }
     });
   });
 }

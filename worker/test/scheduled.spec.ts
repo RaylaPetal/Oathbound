@@ -165,6 +165,78 @@ describe("scheduled cleanup", () => {
     expect(await env.RELAY_CATALOG_BUCKET.head(revokedKey)).toBeNull();
   });
 
+  it("keeps a held item until its expiry, sweeps none of it as an orphan, and drops revoked pairs' statuses", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const past = now - 3600;
+    const insertPair = (hash: string, revokedAt: number | null) =>
+      env.RELAY_DB.prepare(
+        `INSERT INTO pairs (pair_id_hash, pair_epoch, owner_device_key_id, sub_device_key_id, created_at, revoked_at) VALUES (?1, 0, 'o', 's', ?2, ?3)`,
+      )
+        .bind(hash, past, revokedAt)
+        .run();
+    const insertHandedSnapshot = async (hash: string, expiresAt: number) => {
+      const r2Key = `mailbox/${hash}/0/1`;
+      await env.RELAY_DB.prepare(
+        `INSERT INTO catalog_mailboxes (pair_id_hash, pair_epoch, receive_key_id, receive_key_envelope, key_published_at, last_consumed_snapshot_id,
+           handed_snapshot_id, handed_r2_key, handed_envelope, handed_expires_at, handed_next_key_id)
+         VALUES (?1, 0, 'key-id', '{}', ?2, 1, 1, ?3, '{}', ?4, 'key-id')`,
+      )
+        .bind(hash, past, r2Key, expiresAt)
+        .run();
+      await env.RELAY_CATALOG_BUCKET.put(r2Key, new Uint8Array([1]));
+      return r2Key;
+    };
+    const insertHandedItem = async (hash: string, expiresAt: number) => {
+      const r2Key = `rulebook/${hash}/0/rulebook/1`;
+      await env.RELAY_DB.prepare(
+        `INSERT INTO rulebook_mailboxes (pair_id_hash, pair_epoch, channel, receive_key_id, receive_key_envelope, key_published_at, last_sequence,
+           last_consumed_sequence, handed_sequence, handed_r2_key, handed_envelope, handed_expires_at, handed_next_key_id)
+         VALUES (?1, 0, 'rulebook', 'key-id', '{}', ?2, 1, 1, 1, ?3, '{}', ?4, 'key-id')`,
+      )
+        .bind(hash, past, r2Key, expiresAt)
+        .run();
+      await env.RELAY_CATALOG_BUCKET.put(r2Key, new Uint8Array([1]));
+      return r2Key;
+    };
+    const insertStatus = (hash: string) =>
+      env.RELAY_DB.prepare(
+        `INSERT INTO mailbox_status (pair_id_hash, pair_epoch, mailbox, role, sequence, code, at, envelope) VALUES (?1, 0, 'catalog', 'recipient', 1, 'ok', ?2, '{}')`,
+      )
+        .bind(hash, past)
+        .run();
+
+    await insertPair("held-live", null);
+    const liveSnapshot = await insertHandedSnapshot("held-live", now + 3600);
+    const liveItem = await insertHandedItem("held-live", now + 3600);
+    await insertStatus("held-live");
+
+    await insertPair("held-expired", null);
+    const expiredSnapshot = await insertHandedSnapshot("held-expired", past);
+    const expiredItem = await insertHandedItem("held-expired", past);
+
+    await insertPair("held-revoked", past);
+    const revokedSnapshot = await insertHandedSnapshot("held-revoked", now + 3600);
+    const revokedItem = await insertHandedItem("held-revoked", now + 3600);
+    await insertStatus("held-revoked");
+
+    await runScheduledCleanup(env);
+
+    expect(await env.RELAY_CATALOG_BUCKET.head(liveSnapshot)).not.toBeNull();
+    expect(await env.RELAY_CATALOG_BUCKET.head(liveItem)).not.toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT handed_snapshot_id FROM catalog_mailboxes WHERE pair_id_hash = 'held-live'`).first()).toEqual({ handed_snapshot_id: 1 });
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM mailbox_status WHERE pair_id_hash = 'held-live'`).first()).not.toBeNull();
+
+    expect(await env.RELAY_CATALOG_BUCKET.head(expiredSnapshot)).toBeNull();
+    expect(await env.RELAY_CATALOG_BUCKET.head(expiredItem)).toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT handed_snapshot_id, last_consumed_snapshot_id FROM catalog_mailboxes WHERE pair_id_hash = 'held-expired'`).first())
+      .toEqual({ handed_snapshot_id: null, last_consumed_snapshot_id: 1 });
+    expect(await env.RELAY_DB.prepare(`SELECT handed_sequence FROM rulebook_mailboxes WHERE pair_id_hash = 'held-expired'`).first()).toEqual({ handed_sequence: null });
+
+    expect(await env.RELAY_CATALOG_BUCKET.head(revokedSnapshot)).toBeNull();
+    expect(await env.RELAY_CATALOG_BUCKET.head(revokedItem)).toBeNull();
+    expect(await env.RELAY_DB.prepare(`SELECT 1 FROM mailbox_status WHERE pair_id_hash = 'held-revoked'`).first()).toBeNull();
+  });
+
   it("drops nonces once they're past the replay window", async () => {
     const now = Math.floor(Date.now() / 1000);
     const insert = (device: string, nonce: string, seenAt: number) =>

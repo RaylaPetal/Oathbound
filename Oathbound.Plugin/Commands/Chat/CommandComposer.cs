@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
@@ -19,9 +22,7 @@ public sealed class CommandComposer
     /// `gesture stop` ends a held animation on the Sub.
     public const string StopGestureWord = "stop";
 
-    /// Carries only the request's id; the signed content is fetched from the relay.
-    public string ComposeCatalogRequestNotice(string requestId) => $"{CatalogRequestKeyword} {requestId}";
-
+    /// Sent only by Owners from before mailbox receipts; this version answers it through the mailbox.
     public const string CatalogRequestKeyword = "collarcatalogreq";
 
     /// Tells the Owner the Sub hasn't opted in, without any catalog content ever existing.
@@ -73,6 +74,39 @@ public sealed class CommandComposer
     public string ComposePresenceMessage(string text) => $"{PresenceMessageKeyword} {text.Trim()}";
 
     public const string PresenceMessageKeyword = "collarsay";
+
+    /// The Sub's apply receipts: `collarreceipt <seq>:<a|r>[:<code>] ...`, one entry per answered command frame.
+    public const string ReceiptNoticeKeyword = "collarreceipt";
+    public const int ReceiptMaxEntries = 50;
+
+    public string ComposeReceipt(IEnumerable<(long Seq, RefusalCode? Refused)> entries) =>
+        ReceiptNoticeKeyword + " " + string.Join(' ', entries.Select(e => e.Refused is { } code ? $"{e.Seq}:r:{code.ToWire()}" : $"{e.Seq}:a"));
+
+    /// The Sub's own Accept / Decline of a rulebook version or an oath offer.
+    public const string DecisionNoticeKeyword = "collardecision";
+    public const string DecisionRulebookWord = "rulebook";
+    public const string DecisionOathWord = "oath";
+    public const string DecisionAcceptedWord = "accepted";
+    public const string DecisionDeclinedWord = "declined";
+    public const int DecisionReasonMaxChars = 200;
+
+    public string ComposeRulebookDecision(bool accepted, int version, string? reason)
+    {
+        var text = $"{DecisionNoticeKeyword} {DecisionRulebookWord} {(accepted ? DecisionAcceptedWord : DecisionDeclinedWord)} {version}";
+        return !accepted && CleanDecisionReason(reason) is { } clean ? $"{text} {clean}" : text;
+    }
+
+    public string ComposeOathDecision(bool accepted, string oathId) =>
+        $"{DecisionNoticeKeyword} {DecisionOathWord} {(accepted ? DecisionAcceptedWord : DecisionDeclinedWord)} {oathId}";
+
+    /// Whitespace collapsed and cut to the limit; null when nothing is left.
+    public static string? CleanDecisionReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return null;
+        var collapsed = string.Join(' ', reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return collapsed.Length <= DecisionReasonMaxChars ? collapsed : collapsed[..DecisionReasonMaxChars].TrimEnd();
+    }
 
     /// The words an older build's tells start with, besides the trigger phrase; how an outdated partner is recognized.
     public static readonly string[] LegacyTellKeywords =

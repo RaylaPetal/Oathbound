@@ -38,9 +38,10 @@ public static class CageSendAction
             return (false, "Select an Owner-side pairing first.");
         if (!CommandSelector.Fits(body))
             return (false, "That cage command is too long to send - try a shorter name.");
-        if (plugin.SendCommand(pairing, body) is { } failed)
+        var sent = plugin.SendCommand(pairing, body);
+        if (sent.Failure is { } failed)
             return (false, OwnerSendFeedback.Explain(failed));
-        plugin.OwnerCageStatus.MarkSent(pairing, cage, open);
+        plugin.OwnerCageStatus.MarkSent(pairing, cage, open, sent.Seq);
         return (true, null);
     }
 }

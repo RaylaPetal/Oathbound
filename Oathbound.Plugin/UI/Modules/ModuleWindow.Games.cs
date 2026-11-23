@@ -39,13 +39,11 @@ public sealed partial class ModuleWindow
 
     private void DrawGamesModule()
     {
-        IconGlyph.Text(FontAwesomeIcon.Dice, "Games");
-        ImGui.Separator();
         IconGlyph.WrappedDisabled("Play with the other person of your active pairing. Either of you can lose, and a loss only ever changes the loser's own character. Panic ends the game and gives everything back.");
 
         var games = plugin.Games;
         if (games.Penalty is { } penalty)
-            IconGlyph.WrappedColored(Theme.Warning, $"You lost a game: locked naked for {Commands.RestraintLock.Format(penalty.EndsAtUtc - DateTime.UtcNow)} more. Panic ends it early.");
+            Status.Line(StatusKind.Caution, $"You lost a game: locked naked for {TimeText.Duration(penalty.EndsAtUtc - DateTime.UtcNow)} more. Panic ends it early.");
         if (games.Session is { } session)
         {
             using (Section.Begin("gamesSession", $"{GameWords.Name(session.Kind)} with {session.PeerName}"))
@@ -68,13 +66,13 @@ public sealed partial class ModuleWindow
         var config = plugin.Configuration.Games;
         if (games.Invite is { Outgoing: false } incoming)
         {
-            IconGlyph.WrappedColored(Theme.Warning, $"{incoming.PeerName} invites you to {GameWords.Name(incoming.Kind)}.");
+            Status.Line(StatusKind.Caution, $"{incoming.PeerName} invites you to {GameWords.Name(incoming.Kind)}.");
             IconGlyph.WrappedDisabled(DescribeTerms(incoming.Kind, incoming.Channel, incoming.Loss, incoming.Rating, incoming.DeathrollStart, incoming.End, incoming.Penalty));
             IconGlyph.WrappedDisabled("Accepting agrees to this loss rule for this game only. A strip loss takes a piece off your own character, and it all comes back when the game ends or you panic.");
             if (!incoming.Penalty.IsOff)
-                IconGlyph.WrappedColored(Theme.Warning, $"Penalty: whoever loses the game is stripped of everything in their strip order and locked naked for {incoming.Penalty.DescribeLength()}, even after the game ends. Panic ends it early.");
+                Status.Line(StatusKind.Caution, $"Penalty: whoever loses the game is stripped of everything in their strip order and locked naked for {incoming.Penalty.DescribeLength()}, even after the game ends. Panic ends it early.");
             if (incoming.Loss != LossRule.Forfeit && !games.CanStrip)
-                IconGlyph.WrappedColored(Theme.Warning, "Glamourer isn't available, so your strip losses become forfeits.");
+                Status.Line(StatusKind.Error, "Glamourer isn't available, so your strip losses become forfeits.");
             if (ImGui.Button("Accept"))
                 games.AcceptInvite();
             ImGui.SameLine();
@@ -94,7 +92,7 @@ public sealed partial class ModuleWindow
 
         if (plugin.Configuration.ActivePairing is not { } pairing)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Pick a pairing in the header first.");
+            Status.Line(StatusKind.Caution, "Pick a pairing in the header first.");
             return;
         }
 
@@ -173,7 +171,7 @@ public sealed partial class ModuleWindow
         if (ImGui.Button($"Invite {pairing.PeerName}"))
             gameInviteError = games.SendInvite(newGameKind, config.LastChannel, config.LastLossRule, config.LastRating, config.LastDeathrollStart, end, penalty);
         if ((gameInviteError ?? games.InviteFailure) is { } inviteProblem)
-            IconGlyph.WrappedColored(Theme.Warning, inviteProblem);
+            Status.Line(StatusKind.Error, inviteProblem);
     }
 
     private void DrawGameSession(GamesService games, GameSession s)
@@ -187,14 +185,14 @@ public sealed partial class ModuleWindow
 
         ImGui.Spacing();
         if (s.GameLoser is { } gameLoser)
-            IconGlyph.WrappedColored(Theme.Warning, s.Penalty.IsOff
+            Status.Line(StatusKind.Caution, s.Penalty.IsOff
                 ? $"Game over: {s.NameOf(gameLoser)} lost the game. End it to get everything back."
                 : $"Game over: {s.NameOf(gameLoser)} lost the game and stays locked naked for {s.Penalty.DescribeLength()}.");
         else
         {
             IconGlyph.WrappedColored(s.Rules.IsTurnOf(s.Me) ? Theme.AccentHover : Theme.TextMuted, s.Rules.Status());
             if (s.OutOfStep)
-                IconGlyph.WrappedColored(Theme.Warning, $"Your game and {s.PeerName}'s have drifted apart. Quit to end it and get everything back.");
+                Status.Line(StatusKind.Caution, $"Your game and {s.PeerName}'s have drifted apart. Quit to end it and get everything back.");
             DrawGameActions(games, s);
         }
         DrawForfeits(games, s);
@@ -305,7 +303,7 @@ public sealed partial class ModuleWindow
     private void DrawForfeits(GamesService games, GameSession s)
     {
         if (s.ForfeitsOwed > 0)
-            IconGlyph.WrappedColored(Theme.Warning, $"{s.PeerName} is picking your forfeit.");
+            Status.Line(StatusKind.Caution, $"{s.PeerName} is picking your forfeit.");
         if (s.ForfeitsToGive <= 0)
             return;
         ImGui.Spacing();
@@ -395,12 +393,12 @@ public sealed partial class ModuleWindow
             ImGui.TextDisabled(label);
             foreach (var cmd in commands)
             {
-                var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
-                using (ImRaii.Disabled(pairing is null || !Commands.CommandSelector.Fits(command)))
+                SendButton.Draw(plugin, new SendSpec($"gameFollow{label}{cmd.Command}", cmd.Label)
                 {
-                    if (ImGui.Button($"{cmd.Label}##gameFollow{label}{cmd.Command}") && pairing is not null)
-                        plugin.SendCommand(pairing, command);
-                }
+                    Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd),
+                    Pairing = pairing,
+                    BlockedReason = pairing is null ? SendReadiness.NoSubReason : null,
+                });
                 ImGui.SameLine();
             }
             ImGui.NewLine();
@@ -412,7 +410,7 @@ public sealed partial class ModuleWindow
         var games = plugin.Configuration.Games;
         IconGlyph.WrappedDisabled("When you lose a strip round, the first piece here that you're wearing comes off. Pieces held by restraints, locks or the collar are skipped.");
         if (!plugin.Games.CanStrip)
-            IconGlyph.WrappedColored(Theme.Warning, "Glamourer isn't available, so your strip losses become forfeits.");
+            Status.Line(StatusKind.Error, "Glamourer isn't available, so your strip losses become forfeits.");
         var changed = false;
         for (var i = 0; i < games.StripOrder.Count; i++)
         {
@@ -537,7 +535,7 @@ public sealed partial class ModuleWindow
                     }, CardCommandPurpose);
                 }
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Delete"))
+                if (ConfirmDelete.Button("deleteCard", card.Text.Length > 40 ? card.Text[..40] + "…" : card.Text, small: true))
                 {
                     games.Cards.Remove(card);
                     changed = true;

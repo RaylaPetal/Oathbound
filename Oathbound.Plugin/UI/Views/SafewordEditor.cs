@@ -24,7 +24,7 @@ internal static class SafewordEditor
         if (ImGui.Button(reveal ? "Hide" : "Show", new Vector2(revealWidth, 0)))
             reveal = !reveal;
 
-        IconGlyph.WrappedColored(config.PanicSafeword is null ? Theme.TextMuted : Theme.Success,
+        IconGlyph.WrappedColored(config.PanicSafeword is null ? Theme.Muted : Theme.Ok,
             config.PanicSafeword is null ? "No safeword set — plain /obpanic remains available." : "Safeword configured for /obpanic.");
         if (help is not null)
             IconGlyph.HelpMarker(help);

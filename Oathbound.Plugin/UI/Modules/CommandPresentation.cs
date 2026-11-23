@@ -20,18 +20,30 @@ public static class CommandPresentation
         _ => "Unknown action",
     };
 
-    public static string Rule(RestraintRuleAssignment rule) => rule.Kind switch
+    public static string RuleName(RestraintRuleKind kind) => kind switch
     {
-        RestraintRuleKind.ForcedPose => rule.PoseModeId == 0 ? "Forced Pose · Animation mod" : $"Forced Pose · {Pose(rule.PoseModeId)}",
-        RestraintRuleKind.WalkOnly => "Walking Only",
-        RestraintRuleKind.ActionBlock => "Actions Blocked",
-        RestraintRuleKind.Blindfolded => rule.BlindfoldLevel == BlindfoldLevel.Full ? "Blindfolded" : $"Blindfolded · {rule.BlindfoldLevel}",
-        RestraintRuleKind.Gagged => (rule.GagLevel == GagLevel.Heavy ? "Gagged" : $"Gagged · {rule.GagLevel}") + (rule.CustomizePresetId is null ? "" : " · Customize+"),
+        RestraintRuleKind.ForcedPose => "Forced Pose",
+        RestraintRuleKind.WalkOnly => "Walk Only",
+        RestraintRuleKind.ActionBlock => "Action Block",
+        RestraintRuleKind.Blindfolded => "Blindfolded",
+        RestraintRuleKind.Gagged => "Gagged",
         RestraintRuleKind.ArmsCuffed => "Arms Cuffed",
         RestraintRuleKind.LegsCuffed => "Legs Cuffed",
-        RestraintRuleKind.FullBodyCuffed => "Fully Restrain",
+        RestraintRuleKind.FullBodyCuffed => "Full Body Cuffed",
         _ => "Unknown rule",
     };
+
+    public static string Rule(RestraintRuleAssignment rule)
+    {
+        var name = RuleName(rule.Kind);
+        return rule.Kind switch
+        {
+            RestraintRuleKind.ForcedPose => rule.PoseModeId == 0 ? $"{name} · Animation mod" : $"{name} · {Pose(rule.PoseModeId)}",
+            RestraintRuleKind.Blindfolded => rule.BlindfoldLevel == BlindfoldLevel.Full ? name : $"{name} · {rule.BlindfoldLevel}",
+            RestraintRuleKind.Gagged => (rule.GagLevel == GagLevel.Heavy ? name : $"{name} · {rule.GagLevel}") + (rule.CustomizePresetId is null ? "" : " · Customize+"),
+            _ => name,
+        };
+    }
 
     /// Mods often name the group after the animation and give it plain "Enable"/"Disabled" options.
     private static readonly string[] GenericOptionNames = ["enable", "enabled", "disable", "disabled", "on", "off", "yes", "no", "none", "default"];

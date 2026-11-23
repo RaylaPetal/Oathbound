@@ -147,7 +147,8 @@
               "properties": { "n": { "type": "string", "minLength": 1, "maxLength": 32 }, "w": { "type": "string", "minLength": 1, "maxLength": 32 } }
             }
           ]
-        }
+        },
+        "receipt": { "description": "Owner commands only: asks the sub for an apply receipt (constants.json peerMessage.receipts). Written only when true.", "const": true }
       }
     }
   }

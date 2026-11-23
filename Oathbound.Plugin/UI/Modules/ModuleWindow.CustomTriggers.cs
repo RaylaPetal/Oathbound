@@ -72,8 +72,6 @@ public sealed partial class ModuleWindow
     private void DrawCustomTriggersModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
-        ImGui.Separator();
         IconGlyph.WrappedDisabled("Run several actions from one alias. Each action still needs its own permission.");
 
         var triggers = config.Aliases.CustomTriggers;
@@ -139,12 +137,12 @@ public sealed partial class ModuleWindow
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(Theme.AccentHover, triggers[index].Alias);
             ImGui.SameLine();
-            if (ImGui.Button("Delete##customTrigger"))
+            if (ConfirmDelete.Button("deleteCustomTrigger", triggers[index].Alias))
             {
                 triggers.RemoveAt(index);
                 config.Save();
                 ResetCustomTriggerDraft();
-                customTriggerListDetail.Select(null);
+                customTriggerListDetail.Deleted();
                 return;
             }
         }
@@ -204,7 +202,7 @@ public sealed partial class ModuleWindow
 
         var kindBlocked = plugin.DependencyStatus.MissingReason(DependencyGates.CustomTriggerPart(kind));
         if (kindBlocked is not null)
-            IconGlyph.WrappedColored(Theme.StatusMissing, kindBlocked);
+            Status.Line(StatusKind.Error, kindBlocked);
         var kindDisabled = ImRaii.Disabled(kindBlocked is not null);
 
         switch (kind)
@@ -232,7 +230,7 @@ public sealed partial class ModuleWindow
                 var designs = config.WardrobeMapping.LocalDesigns.Values.ToList();
                 if (designs.Count == 0)
                 {
-                    IconGlyph.WrappedDisabled("No scanned designs yet - rescan in Settings (gear icon) first.");
+                    DrawGoToSyncTabPrompt("No scanned designs yet.");
                     break;
                 }
                 var designNames = designs.Select(d => d.Name).ToArray();
@@ -262,7 +260,7 @@ public sealed partial class ModuleWindow
                 var statuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
                 if (statuses.Count == 0)
                 {
-                    IconGlyph.WrappedDisabled("No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
+                    DrawGoToSyncTabPrompt("No scanned Moodles statuses yet.");
                     break;
                 }
                 var statusNames = statuses.Select(s => MoodlesTextFormat.StripMarkup(s.Name)).ToArray();
@@ -315,7 +313,7 @@ public sealed partial class ModuleWindow
         var duplicateAlias = triggers.Where((_, i) => i != editingCustomTriggerIndex)
             .Any(t => string.Equals(t.Alias, ctNewAlias.Trim(), StringComparison.OrdinalIgnoreCase));
         if (duplicateAlias)
-            IconGlyph.WrappedColored(Theme.Warning, "A custom trigger already uses this alias.");
+            Status.Line(StatusKind.Caution, "A custom trigger already uses this alias.");
         using (ImRaii.Disabled(ctNewAlias.Trim().Length == 0 || IsReserved(ctNewAlias) || ctDraftActions.Count == 0 || duplicateAlias))
         {
             if (ImGui.Button(editingCustomTriggerIndex is null ? "Save trigger" : "Save changes"))
@@ -632,12 +630,13 @@ public sealed partial class ModuleWindow
         if (bundleHasRestraint)
         {
             Section.SubHeading("Restraint lock");
-            OwnerLockOption.Draw("ctqCustomTrigger", ref ctqLockSeconds);
-            OwnerLockOption.DrawKey("ctqCustomTrigger", ref ctqLockKey);
             // Only a restraint whose rules travel in the bundle has somewhere to carry the setting.
-            if (ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint && a.RestraintRules is not null))
-                OwnerLockOption.DrawStruggle("ctqCustomTrigger", ref ctqStruggle, ref ctqStrugglePenalty, ctqLockSeconds is not null);
-            else
+            var carriesRules = ctqDraftActions.Any(a => a.Kind == CustomTriggerActionKind.Restraint && a.RestraintRules is not null);
+            var lockSettings = new LockSettings(ctqLockSeconds, ctqLockKey, ctqStruggle, ctqStrugglePenalty);
+            if (OwnerLockOption.Draw("ctqCustomTrigger", ref lockSettings, LockKind.Restraint, LockLayout.Stacked,
+                    carriesRules ? LockExtras.KeyAndStruggle : LockExtras.Key))
+                (ctqLockSeconds, ctqLockKey, ctqStruggle, ctqStrugglePenalty) = (lockSettings.Seconds, lockSettings.Key ?? "", lockSettings.Struggle, lockSettings.PenaltyMinutes);
+            if (!carriesRules)
                 IconGlyph.WrappedDisabled("Struggling can only be allowed for a restraint picked from your Sub's synced list, which carries its rules.");
         }
         var bundleLockSeconds = bundleHasRestraint ? ctqLockSeconds : null;
@@ -653,7 +652,7 @@ public sealed partial class ModuleWindow
             ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted(editingOwnerBundle is null ? "Send or save this bundle:" : "Update this saved bundle:");
             ContinueRowOrWrap(ButtonWidth("Send"));
-            DrawSendCopyButtons(OwnerLockOption.Apply(RestraintStruggle.Insert(command, new StruggleSetting(bundleStruggle, bundlePenalty)), bundleLockSeconds, bundleKey), canSend, "ctqCustomTrigger");
+            SendButton.Draw(plugin, new SendSpec("ctqCustomTrigger", "Send") { Command = OwnerLockOption.Apply(RestraintStruggle.Insert(command, new StruggleSetting(bundleStruggle, bundlePenalty)), bundleLockSeconds, bundleKey), AnchorQuickSend = true });
             ContinueRowOrWrap(ButtonWidth("Save bundle"));
             var aliases = plugin.Configuration.QuickCommands.Aliases;
             var stale = editingOwnerBundle is not null && !aliases.Contains(editingOwnerBundle);
@@ -680,16 +679,16 @@ public sealed partial class ModuleWindow
                     ClearOwnerBundleDraft();
                 }
             }
-            if (stale) IconGlyph.WrappedColored(Theme.Warning, "This saved bundle was removed while it was being edited.");
-            else if (duplicate) IconGlyph.WrappedColored(Theme.Warning, "Another saved bundle already uses this label or command.");
-            else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This bundle is too long to send.");
+            if (stale) Status.Line(StatusKind.Caution, "This saved bundle was removed while it was being edited.");
+            else if (duplicate) Status.Line(StatusKind.Caution, "Another saved bundle already uses this label or command.");
+            else if (!safe) Status.Line(StatusKind.Caution, "This bundle is too long to send.");
             ContinueRowOrWrap(ButtonWidth("Cancel"));
             if (ImGui.Button($"{(editingOwnerBundle is null ? "Clear bundle" : "Cancel")}##ctq"))
                 ClearOwnerBundleDraft();
         }
         else
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Give this bundle a label and at least one action before it can be sent.");
+            Status.Line(StatusKind.Caution, "Give this bundle a label and at least one action before it can be sent.");
         }
     }
 
@@ -733,11 +732,11 @@ public sealed partial class ModuleWindow
         var composed = plugin.CommandComposer.Compose(commandInput);
 
         var hasCommand = composed.Length > 0;
-        using (ImRaii.Disabled(!canSend || !hasCommand))
+        SendButton.Draw(plugin, new SendSpec("freeformComposer", "Send")
         {
-            if (ImGui.Button("Send"))
-                plugin.SendCommand(composed);
-        }
+            Command = hasCommand ? composed : null,
+            BlockedReason = hasCommand ? null : "Type an alias or a command first.",
+        });
         ImGui.SameLine();
         var aliasQuick = plugin.Configuration.QuickCommands.Aliases;
         using (ImRaii.Disabled(!hasCommand))
@@ -762,9 +761,10 @@ public sealed partial class ModuleWindow
     private void DrawOwnerBundles(bool canSend)
     {
         var aliases = plugin.Configuration.QuickCommands.Aliases;
-        var items = aliases.Select((cmd, i) => new ListDetailItem($"alias:{i}", cmd.Label, IsBundle(cmd) ? null : "your Sub's word")).ToList();
+        var rows = aliases.Select((cmd, i) => new ListDetailItem($"alias:{i}", cmd.Label, IsBundle(cmd) ? null : "your Sub's word", Group: ListGroups.Of(cmd))).ToList();
         if (ownerBundleList.Selected == NewBundleKey)
-            items.Add(new ListDetailItem(NewBundleKey, "New bundle"));
+            rows.Add(new ListDetailItem(NewBundleKey, "New bundle", Group: ListGroups.WrittenByYou));
+        var items = ListGroups.Finish(rows);
         QuickCommand? Find(string? key) => key is not null && key.StartsWith("alias:") && int.TryParse(key[6..], out var i) && i < aliases.Count ? aliases[i] : null;
 
         ownerBundleList.Draw("ownerBundles", items,
@@ -805,12 +805,12 @@ public sealed partial class ModuleWindow
                 ContinueRowOrWrap(StarWidth);
                 DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
                 ContinueRowOrWrap(ButtonWidth("Delete"));
-                if (ImGui.Button("Delete"))
+                if (ConfirmDelete.Button("delete", cmd.Label))
                 {
                     aliases.Remove(cmd);
                     ClearOwnerBundleDraft();
                     plugin.Configuration.Save();
-                    ownerBundleList.Select(null);
+                    ownerBundleList.Deleted();
                     ImGui.PopID();
                     return;
                 }

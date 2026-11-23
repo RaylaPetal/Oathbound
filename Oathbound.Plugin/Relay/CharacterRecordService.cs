@@ -201,6 +201,7 @@ public sealed class CharacterRecordService
                 Accepted = pairing.Direction == PairingDirection.SubSide
                     ? pairing.ConfirmedCharacters.Select(CharacterRecordEntry.From).ToList()
                     : null,
+                Features = [CharacterRecord.ReceiptsFeature],
             };
             var key = CharacterRecordCrypto.DeriveKey(ownKey, PeerKey(pairing), pairing.PairIdHash!, pairing.PairEpoch);
             try
@@ -319,6 +320,13 @@ public sealed class CharacterRecordService
         if (!peerIsOwner)
             pairing.PeerAcceptedMine = (record.Accepted ?? new()).Where(Valid).Take(PluginConfig.PeerCharactersMax)
                 .Select(c => new CharacterRef { Name = c.Name, World = c.World }).ToList();
+
+        var sendsReceipts = !peerIsOwner && record.Features?.Contains(CharacterRecord.ReceiptsFeature) == true;
+        if (!peerIsOwner && sendsReceipts != pairing.PeerSendsReceipts)
+        {
+            pairing.PeerSendsReceipts = sendsReceipts;
+            Plugin.Log.Information(sendsReceipts ? $"{pairing.PeerName}'s client confirms commands." : $"{pairing.PeerName}'s client doesn't confirm commands.");
+        }
 
         pairing.PeerPublishesCharacters = true;
         pairing.LastAppliedPeerRecordSeq = record.Seq;

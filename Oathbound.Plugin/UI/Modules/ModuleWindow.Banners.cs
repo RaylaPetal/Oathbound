@@ -36,20 +36,13 @@ public sealed partial class ModuleWindow
         return true;
     }
 
-    /// "1h 30m left" for a timed lock, else `untimed`.
-    private static string? TimeLeft(DateTime? endsAtUtc, string? untimed) =>
-        endsAtUtc is { } end ? $"{RestraintLock.Format(end - DateTime.UtcNow)} left" : untimed;
-
     internal static string MoodleRemoveCommand(EstimatedMoodle moodle) =>
         moodle.CustomId is { } id ? new CustomMoodle { Id = id }.RemoveCommand() : $"moodle {CustomMoodle.RemoveWord} {CommandSelector.Quote(moodle.Name)}";
 
-    private void EndNowButton(string id, string command, string tooltip)
+    private void EndNowButton(string id, string command, string help)
     {
         ImGui.SameLine();
-        if (ImGui.Button($"End now##bannerEnd_{id}"))
-            plugin.SendCommand(command);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(tooltip);
+        SendButton.Draw(plugin, new SendSpec($"bannerEnd_{id}", "End now") { Command = command, Help = help, Small = true });
     }
 
     private string PeerName(Guid? pairingId, string fallback) =>
@@ -62,13 +55,13 @@ public sealed partial class ModuleWindow
         {
             case "title":
                 return BannerLine(state.TitleText ?? (state.TitleApplied ? "A title" : null), state.TitleForceLocked ? "locked by your Owner" : null,
-                    TimeLeft(plugin.Configuration.OwnerLocks.Title?.ExpiresAtUtc, null));
+                    TimeText.Left(plugin.Configuration.OwnerLocks.Title?.ExpiresAtUtc));
             case "outfit":
                 return BannerLine(state.OutfitName ?? (state.OutfitForceLocked ? "An outfit" : null), state.OutfitForceLocked ? "locked by your Owner" : null,
-                    TimeLeft(plugin.Configuration.OwnerLocks.Outfit?.ExpiresAtUtc, null));
+                    TimeText.Left(plugin.Configuration.OwnerLocks.Outfit?.ExpiresAtUtc));
             case "animation":
                 var hold = plugin.GestureCommand.HoldSecondsLeft;
-                return BannerLine(plugin.GestureCommand.HeldName, hold is { } left ? $"{RestraintLock.Format(TimeSpan.FromSeconds(left))} left" : null);
+                return BannerLine(plugin.GestureCommand.HeldName, hold is { } left ? TimeText.Left(TimeSpan.FromSeconds(left)) : null);
             case "moodles":
                 return DrawSubMoodleLines();
             case "restraints":
@@ -92,7 +85,7 @@ public sealed partial class ModuleWindow
         var catalog = plugin.Configuration.MoodlesMapping.LocalCatalog.Values;
         var any = false;
         foreach (var locked in plugin.Configuration.OwnerLocks.Moodles.ToList())
-            any |= BannerLine(MoodlesTextFormat.StripMarkup(locked.Name), "locked by your Owner", TimeLeft(locked.ExpiresAtUtc, null));
+            any |= BannerLine(MoodlesTextFormat.StripMarkup(locked.Name), "locked by your Owner", TimeText.Left(locked.ExpiresAtUtc));
         foreach (var (source, statusId) in plugin.Configuration.AttachedMoodleHolds.ToList())
         {
             if (source.StartsWith(AttachedMoodleLedger.LockPrefix))
@@ -124,7 +117,7 @@ public sealed partial class ModuleWindow
             ImGui.PushID($"worn_{w.RuntimeId}");
             var l = w.Lock;
             BannerLine(w.Reference,
-                l is null ? "not locked" : l.ExpiresAtUtc is { } end ? $"locked, {RestraintLock.Format(end - DateTime.UtcNow)} left" : "locked",
+                l is null ? "not locked" : l.ExpiresAtUtc is { } end ? $"locked, {TimeText.Left(end)}" : "locked",
                 l is not null ? $"by {PeerName(l.ByPairingId, "your Owner")}" : null,
                 l?.Struggle.Allowed == true ? "struggle" : null,
                 l?.Key is not null ? "key" : null);
@@ -132,7 +125,9 @@ public sealed partial class ModuleWindow
             {
                 using var caged = ImRaii.Disabled(plugin.CageService.IsCaged);
                 if (ImGui.Button("Take off"))
-                    restraintActionResult = restraints.TakeOff(w.RuntimeId) ? $"{w.Reference} taken off." : restraints.LastFailureReason;
+                    restraintActionResult = restraints.TakeOff(w.RuntimeId)
+                        ? StatusMessage.Ok($"{w.Reference} taken off.")
+                        : StatusMessage.Error(restraints.LastFailureReason ?? $"{w.Reference} couldn't be taken off.");
             }
             else
             {
@@ -143,8 +138,7 @@ public sealed partial class ModuleWindow
             }
             ImGui.PopID();
         }
-        if (restraintActionResult is not null)
-            IconGlyph.WrappedDisabled(restraintActionResult);
+        Status.Line(restraintActionResult);
         return true;
     }
 
@@ -164,22 +158,44 @@ public sealed partial class ModuleWindow
         }
 
         var estimate = plugin.OwnerStatusEstimates.ForBanner(pairing);
-        ActiveBanner.Draw("activeBanner", $"Sent to {pairing.PeerName}", () => estimate is not null && DrawOwnerBannerBody(estimate),
-            "Last sent by you - your client can't see your Sub's side.",
+        var mark = CommandMarkText.Describe(estimate?.MarkFor(activeModule), pairing.PeerName ?? "your Sub", ModuleCommandWord(activeModule));
+        ActiveBanner.Draw("activeBanner", $"Sent to {pairing.PeerName}", () =>
+            {
+                var any = estimate is not null && DrawOwnerBannerBody(estimate);
+                if (mark is null)
+                    return any;
+                if (!any)
+                    ImGui.TextDisabled("Nothing active.");
+                Status.Line(mark);
+                return true;
+            },
+            pairing.PeerSendsReceipts
+                ? "Last sent by you that your Sub's client didn't refuse."
+                : "Last sent by you - your client can't see your Sub's side.",
             estimate is null ? null : () => plugin.OwnerStatusEstimates.ClearModule(pairing.Id, activeModule));
     }
+
+    private static string ModuleCommandWord(string module) => module switch
+    {
+        "animation" => "animation",
+        "moodles" => "moodle",
+        "restraints" => "restraint",
+        "toycontrol" => "toy",
+        "follow" => "leash",
+        _ => module,
+    };
 
     private bool DrawOwnerBannerBody(OwnerStatusEstimate estimate)
     {
         switch (activeModule)
         {
             case "title":
-                if (!BannerLine(estimate.LastTitle, TimeLeft(estimate.TitleEndsAtUtc, "locked")))
+                if (!BannerLine(estimate.LastTitle, TimeText.Left(estimate.TitleEndsAtUtc) ?? "locked"))
                     return false;
                 EndNowButton("title", "title clear", "Clears the title now.");
                 return true;
             case "outfit":
-                if (!BannerLine(estimate.LastOutfit, TimeLeft(estimate.OutfitEndsAtUtc, estimate.LastOutfitLocked ? "locked" : null)))
+                if (!BannerLine(estimate.LastOutfit, TimeText.Left(estimate.OutfitEndsAtUtc) ?? (estimate.LastOutfitLocked ? "locked" : null)))
                     return false;
                 if (estimate.LastOutfitLocked)
                     EndNowButton("outfit", "outfit unlock", "Unlocks the outfit now. Your Sub keeps wearing it.");
@@ -190,7 +206,7 @@ public sealed partial class ModuleWindow
                 var any = false;
                 foreach (var moodle in estimate.Moodles.ToList())
                 {
-                    any |= BannerLine(moodle.Name, TimeLeft(moodle.EndsAtUtc, null));
+                    any |= BannerLine(moodle.Name, TimeText.Left(moodle.EndsAtUtc));
                     EndNowButton($"moodle_{moodle.Name}", MoodleRemoveCommand(moodle), "Takes this moodle off now.");
                 }
                 return any;
@@ -198,10 +214,14 @@ public sealed partial class ModuleWindow
                 foreach (var restraint in estimate.Restraints.ToList())
                 {
                     BannerLine(restraint.Reference,
-                        restraint.ExpiresAtUtc is { } until ? $"{RestraintLock.Format(until - DateTime.UtcNow)} left" : "locked",
+                        restraint.ExpiresAtUtc is { } until ? TimeText.Left(until) : "locked",
                         restraint.HasKey ? "key" : null);
-                    if (ImGui.Button($"Unlock##bannerUnlock_{restraint.Reference}"))
-                        plugin.SendCommand($"restraint unlock {restraint.Reference}");
+                    SendButton.Draw(plugin, new SendSpec($"bannerUnlock_{restraint.Reference}", "Unlock")
+                    {
+                        Command = $"restraint unlock {restraint.Reference}",
+                        Help = "Unlocks and takes off this restraint now.",
+                        Small = true,
+                    });
                 }
                 return estimate.Restraints.Count > 0;
             case "toycontrol":

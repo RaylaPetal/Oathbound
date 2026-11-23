@@ -213,7 +213,7 @@ public sealed class ChatWindow : Window, IDisposable
         DrawNotice(conversation, pairing);
 
         var inputBar = pairing is null ? 0f : InputBarHeight();
-        Pane("messages", new Vector2(0, -inputBar), PaneBg, Layout.Scaled(12f), () => DrawMessages(conversation));
+        Pane("messages", new Vector2(0, -inputBar), PaneBg, Layout.Scaled(12f), () => DrawMessages(conversation, pairings));
         TutorialService.Anchor(TutorialAnchors.ChatMessages);
 
         if (pairing is not null) DrawInputBar(conversation, pairing);
@@ -248,7 +248,7 @@ public sealed class ChatWindow : Window, IDisposable
             var buttonSize = Layout.Scaled(30f);
             ImGui.SetCursorScreenPos(start + new Vector2(width - padX - buttonSize, (height - buttonSize) / 2));
             var armed = DateTime.UtcNow < clearArmedUntil;
-            if (GhostIcon("clearChat", FontAwesomeIcon.TrashAlt, buttonSize, armed ? Theme.StatusMissing : Theme.TextMuted, armed))
+            if (GhostIcon("clearChat", FontAwesomeIcon.TrashAlt, buttonSize, armed ? Theme.Destructive : Theme.TextMuted, armed))
             {
                 if (armed)
                 {
@@ -277,8 +277,8 @@ public sealed class ChatWindow : Window, IDisposable
     {
         (Vector4 Color, FontAwesomeIcon Icon, string Text)? notice =
             pairing is null ? (Theme.TextMuted, FontAwesomeIcon.Lock, "Your pairing has ended - this chat is read-only.")
-            : conversation.PeerNeedsUpdate ? (Theme.Warning, FontAwesomeIcon.ExclamationTriangle, $"{Name(conversation)} needs to update Oathbound before they can chat.")
-            : !plugin.PeerMessenger.Connected ? (Theme.Warning, FontAwesomeIcon.Wifi, "Reconnecting to the relay - messages can't be sent until it's back.")
+            : conversation.PeerNeedsUpdate ? (Theme.Caution, FontAwesomeIcon.ExclamationTriangle, $"{Name(conversation)} needs to update Oathbound before they can chat.")
+            : !plugin.PeerMessenger.Connected ? (Theme.Caution, FontAwesomeIcon.Wifi, "Reconnecting to the relay - messages can't be sent until it's back.")
             : null;
         if (notice is not { } n) return;
 
@@ -296,7 +296,7 @@ public sealed class ChatWindow : Window, IDisposable
 
     // ---- messages ---------------------------------------------------------------------------------------------------
 
-    private void DrawMessages(ChatConversation conversation)
+    private void DrawMessages(ChatConversation conversation, IReadOnlyList<PairingState> pairings)
     {
         var messages = conversation.Messages;
         if (messages.Count == 0)
@@ -324,8 +324,9 @@ public sealed class ChatWindow : Window, IDisposable
                 ImGui.Dummy(new Vector2(0, sameRun ? Layout.Scaled(1f) : Layout.Scaled(7f)));
 
             ImGui.PushID(entry.LocalId.GetHashCode());
-            if (entry.Image != ChatImageState.None) ImageBubble(entry, when);
-            else Bubble(entry, when);
+            Action? retry = Chat.CanRetry(conversation, entry, pairings) ? () => RetryMessage(conversation, entry, pairings) : null;
+            if (entry.Image != ChatImageState.None) ImageBubble(entry, when, retry);
+            else Bubble(entry, when, retry);
             ImGui.PopID();
             previous = entry;
         }
@@ -358,7 +359,7 @@ public sealed class ChatWindow : Window, IDisposable
 
     /// Drawn by hand so it sizes to its text and sits on its side; the time and delivery tick live in its corner,
     /// beside short text or under long text. Right-click copies.
-    private static void Bubble(ChatEntry entry, DateTime when)
+    private static void Bubble(ChatEntry entry, DateTime when, Action? retry)
     {
         var font = ImGui.GetFont();
         var small = ImGui.GetFontSize() * 0.78f;
@@ -416,6 +417,8 @@ public sealed class ChatWindow : Window, IDisposable
         {
             if (ImGui.Selectable("Copy text"))
                 ImGui.SetClipboardText(entry.Text);
+            if (retry is not null && ImGui.Selectable("Retry"))
+                retry();
             ImGui.EndPopup();
         }
         ImGui.SetCursorScreenPos(new Vector2(lineStart.X, max.Y));
@@ -431,7 +434,7 @@ public sealed class ChatWindow : Window, IDisposable
             var size = ImGui.CalcTextSize(text, false, avail * BubbleWidthShare) * 0.86f;
             ImGui.Dummy(new Vector2(0, Layout.Scaled(2f)));
             var pos = ImGui.GetCursorScreenPos() + new Vector2(entry.Outgoing ? avail - size.X : 0, 0);
-            ImGui.GetWindowDrawList().AddText(ImGui.GetFont(), ImGui.GetFontSize() * 0.86f, pos, ImGui.GetColorU32(Theme.StatusMissing), text, avail * BubbleWidthShare);
+            ImGui.GetWindowDrawList().AddText(ImGui.GetFont(), ImGui.GetFontSize() * 0.86f, pos, ImGui.GetColorU32(Theme.Error), text, avail * BubbleWidthShare);
             ImGui.Dummy(new Vector2(0, size.Y));
         }
         else
@@ -466,7 +469,13 @@ public sealed class ChatWindow : Window, IDisposable
     }
 
     /// A picture in a slim bubble, its caption (if any) under it, and the time over its corner. Click to view full size.
-    private void ImageBubble(ChatEntry entry, DateTime when)
+    private void RetryMessage(ChatConversation conversation, ChatEntry entry, IReadOnlyList<PairingState> pairings)
+    {
+        if (Chat.Retry(conversation, entry, pairings) is { } error)
+            SendNotice.Failed(error, error);
+    }
+
+    private void ImageBubble(ChatEntry entry, DateTime when, Action? retry)
     {
         var pad = Layout.Scaled(4f);
         var textPad = new Vector2(Layout.Scaled(8f), Layout.Scaled(5f));
@@ -572,6 +581,8 @@ public sealed class ChatWindow : Window, IDisposable
                 ImGui.SetClipboardText(entry.Text);
             if (entry is { Image: ChatImageState.Downloading } && ImGui.Selectable("Try loading again"))
                 Chat.RetryImage(entry);
+            if (retry is not null && ImGui.Selectable("Retry"))
+                retry();
             ImGui.EndPopup();
         }
         ImGui.SetCursorScreenPos(new Vector2(lineStart.X, max.Y));
@@ -583,7 +594,7 @@ public sealed class ChatWindow : Window, IDisposable
         ChatEntryState.Sending => (FontAwesomeIcon.Clock, MetaText, "Sending…"),
         ChatEntryState.Waiting => (FontAwesomeIcon.Check, MetaText, "Waiting on the relay - they'll get it when they're online."),
         ChatEntryState.Delivered => (FontAwesomeIcon.CheckDouble, Read, "Delivered"),
-        ChatEntryState.NotDelivered => (FontAwesomeIcon.ExclamationCircle, Theme.StatusMissing, "Not delivered"),
+        ChatEntryState.NotDelivered => (FontAwesomeIcon.ExclamationCircle, Theme.Error, "Not delivered"),
         _ => null,
     };
 
@@ -652,7 +663,7 @@ public sealed class ChatWindow : Window, IDisposable
         if (hint is not null)
         {
             var small = ImGui.GetFontSize() * 0.8f;
-            var color = sendError is not null || over ? Theme.StatusMissing : Theme.TextMuted;
+            var color = sendError is not null || over ? Theme.Error : Theme.TextMuted;
             draw.AddText(ImGui.GetFont(), small, start + new Vector2(fieldX + Layout.Scaled(14f), rowHeight - Layout.Scaled(4f)), ImGui.GetColorU32(color), hint);
         }
 
@@ -748,7 +759,7 @@ public sealed class ChatWindow : Window, IDisposable
         var textSize = ImGui.CalcTextSize(text) * 0.78f;
         var radius = MathF.Max(textSize.Y * 0.6f, textSize.X * 0.5f + Layout.Scaled(3f));
         draw.AddCircleFilled(center, radius + Layout.Scaled(1.5f), ImGui.GetColorU32(BarBg));
-        draw.AddCircleFilled(center, radius, ImGui.GetColorU32(Theme.StatusMissing));
+        draw.AddCircleFilled(center, radius, ImGui.GetColorU32(Theme.Notify));
         draw.AddText(ImGui.GetFont(), small, center - textSize / 2, ImGui.GetColorU32(new Vector4(1, 1, 1, 1)), text);
     }
 

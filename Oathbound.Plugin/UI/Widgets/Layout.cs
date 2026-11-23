@@ -63,4 +63,46 @@ public static class Layout
         if (!fits)
             ImGui.SetCursorPosX(startX + textWidth + spacing);
     }
+
+    /// Cut to fit with "…"; `truncated` tells the caller to show the full text on hover.
+    public static string Ellipsize(string text, float maxWidth, out bool truncated)
+    {
+        truncated = ImGui.CalcTextSize(text).X > maxWidth;
+        if (!truncated)
+            return text;
+        int lo = 0, hi = text.Length;
+        while (lo < hi)
+        {
+            var mid = (lo + hi + 1) / 2;
+            if (ImGui.CalcTextSize(text[..mid].TrimEnd() + "…").X <= maxWidth)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return text[..lo].TrimEnd() + "…";
+    }
+
+    /// A checkbox whose label wraps beside the box instead of running past the window's edge. The whole label is its
+    /// ID, so call sites keep their IDs; anything after "##" isn't shown.
+    public static bool WrappedCheckbox(string label, ref bool value)
+    {
+        var changed = ImGui.Checkbox($"##{label}", ref value);
+        var hash = label.IndexOf("##", StringComparison.Ordinal);
+        ImGui.SameLine();
+        ImGui.PushTextWrapPos(0f);
+        ImGui.TextUnformatted(hash < 0 ? label : label[..hash]);
+        ImGui.PopTextWrapPos();
+        if (ImGui.IsItemClicked())
+        {
+            value = !value;
+            changed = true;
+        }
+        return changed;
+    }
+
+    public static bool WrappedCheckbox(string label, bool value, out bool newValue)
+    {
+        newValue = value;
+        return WrappedCheckbox(label, ref newValue);
+    }
 }

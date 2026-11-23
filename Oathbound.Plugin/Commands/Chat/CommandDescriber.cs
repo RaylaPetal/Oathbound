@@ -51,7 +51,7 @@ public static class CommandDescriber
         var (verb, payload) = Split(rest);
         return verb.ToLowerInvariant() switch
         {
-            "unlock" => "release outfit",
+            "unlock" => "unlock outfit",
             "wear" when payload.Length > 0 => $"wear outfit {Name(payload)}{Locked(seconds)}",
             "lock" when payload.Length > 0 => $"lock outfit {Name(payload)}{Locked(seconds)}",
             _ => null,

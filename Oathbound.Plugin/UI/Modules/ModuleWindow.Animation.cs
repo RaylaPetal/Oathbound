@@ -25,9 +25,7 @@ public sealed partial class ModuleWindow
     private void DrawGestureModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation");
-        ImGui.Separator();
-        IconGlyph.WrappedDisabled("Select animation mods and scan them in Settings. Pick an animation to see it and give it an alias.");
+        IconGlyph.WrappedDisabled("Select animation mods and scan them in the Sync module. Pick an animation to see it and give it an alias.");
 
         var held = plugin.GestureCommand.IsHeld;
         if (plugin.GestureCommand.HasActiveTemporary && !held)
@@ -57,6 +55,8 @@ public sealed partial class ModuleWindow
 
         using (Section.Begin("gestureAliases", "Your animations"))
         {
+            if (catalog.Count == 0)
+                DrawGoToSyncTabPrompt("No scanned animations yet.");
             gestureList.Draw("gestures", items, null, item => DrawGestureModDetail(config, gestures, catalog, item),
                 () => newGestureAlias.Trim().Length > 0,
                 _ =>
@@ -64,7 +64,7 @@ public sealed partial class ModuleWindow
                     newGestureAlias = "";
                     gestureAnimId = null;
                 },
-                "No scanned animations yet - rescan in Settings (gear icon) first.");
+                "Nothing scanned yet.");
         }
     }
 
@@ -81,7 +81,7 @@ public sealed partial class ModuleWindow
 
         if (item.Key == StaleGesturesKey)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "These aliases point at animations that aren't in the latest scan. Rescan, or delete them and make them again.");
+            Status.Line(StatusKind.Caution, "These aliases point at animations that aren't in the latest scan. Rescan, or delete them and make them again.");
             foreach (var (stale, index) in gestures.Select((g, i) => (g, i)).ToList())
             {
                 if (!string.IsNullOrEmpty(stale.GestureId) && config.GestureMapping.LocalCatalog.ContainsKey(stale.GestureId))
@@ -92,7 +92,7 @@ public sealed partial class ModuleWindow
                 ImGui.SameLine();
                 ImGui.TextDisabled($"{(stale.AnimationName.Length > 0 ? stale.AnimationName : stale.EmoteName)} ({stale.ModName})");
                 ContinueRowOrWrap(ButtonWidth("Delete"));
-                if (ImGui.Button("Delete"))
+                if (ConfirmDelete.Button("delete", stale.Alias))
                 {
                     gestures.RemoveAt(index);
                     config.Save();
@@ -154,7 +154,7 @@ public sealed partial class ModuleWindow
                 config.Save();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Delete"))
+            if (ConfirmDelete.Button("delete", alias.Alias))
             {
                 gestures.RemoveAt(index);
                 config.Save();
@@ -192,9 +192,7 @@ public sealed partial class ModuleWindow
     private void DrawGestureQuickSection(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Gestures;
-        // No clear-all here: wiping the imported list was too easy to hit while trying to stop an animation.
-        IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation");
-        ImGui.Separator();
+        // No Clear imported here: wiping the imported list was too easy to hit while trying to stop an animation.
 
         // Drawn even with nothing imported - the Sub may be held by an alias or a Custom Trigger.
         DrawCommandRow("gestureQuickFixed", canSend, new RowCommand("Stop animation", $"gesture {CommandComposer.StopGestureWord}", FixedActionIds.StopAnimation,
@@ -218,8 +216,9 @@ public sealed partial class ModuleWindow
 
         using var _ = Section.Begin("gestureQuickList", "Your Sub's animations");
         static string ModOf(QuickCommand c) => c.GestureModName ?? "Other";
-        var items = quick.GroupBy(ModOf).Select(mod => new ListDetailItem($"mod:{mod.Key}", mod.Key, $"{mod.Count()}",
-            Tooltip: $"{mod.Count()} animation{(mod.Count() == 1 ? "" : "s")}")).ToList();
+        var items = ListGroups.Finish(quick.GroupBy(ModOf).Select(mod => new ListDetailItem($"mod:{mod.Key}", mod.Key, $"{mod.Count()}",
+            Tooltip: $"{mod.Count()} animation{(mod.Count() == 1 ? "" : "s")}",
+            Group: mod.All(c => c.Source == ImportSource.Imported) ? ListGroups.FromSub : ListGroups.WrittenByYou)));
         var listDetail = QuickList("gestureQuick");
         listDetail.Draw("gestureQuick", items, null, item =>
             {

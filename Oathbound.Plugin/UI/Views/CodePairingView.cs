@@ -32,13 +32,13 @@ public sealed class CodePairingView
         DrawIncoming(config, service);
 
         foreach (var accepted in service.Accepted)
-            IconGlyph.WrappedColored(Theme.Warning, $"Waiting for {accepted.PeerName}@{accepted.PeerWorld} to confirm - it completes the next time they're online ({Remaining(accepted.ExpiresAt)} left).");
+            Status.Line(StatusKind.Caution, $"Waiting for {accepted.PeerName}@{accepted.PeerWorld} to confirm - it completes the next time they're online ({TimeText.Left(accepted.ExpiresAt)}).");
 
         if ((localError ?? service.LastError) is { Length: > 0 } error)
-            IconGlyph.WrappedColored(Theme.Danger, error);
+            Status.Line(StatusKind.Error, error);
         if (service.Notice is { Length: > 0 } notice)
         {
-            Layout.TextWithActions(notice, Layout.ActionsWidth("OK"), t => ImGui.TextColored(Theme.Warning, t));
+            Layout.TextWithActions(notice, Layout.ActionsWidth("OK"), t => Status.Inline(StatusKind.Caution, t));
             if (ImGui.Button("OK##codePairingNotice"))
                 service.DismissNotice();
         }
@@ -74,7 +74,7 @@ public sealed class CodePairingView
 
         if (outgoing.Status == "needs-confirm")
         {
-            IconGlyph.WrappedColored(Theme.Warning, $"{outgoing.PeerName}@{outgoing.PeerWorld} entered your code to become {theyWillBe}. Is this who you meant to pair with?");
+            Status.Line(StatusKind.Caution, $"{outgoing.PeerName}@{outgoing.PeerWorld} entered your code to become {theyWillBe}. Is this who you meant to pair with?");
             using (ImRaii.Disabled(busy))
             {
                 if (ImGui.Button("Confirm##codeConfirm"))
@@ -87,7 +87,7 @@ public sealed class CodePairingView
             return;
         }
 
-        IconGlyph.WrappedDisabled($"Waiting for someone to enter it - {Remaining(outgoing.ExpiresAt)} left. You'll be asked to confirm who they are.");
+        IconGlyph.WrappedDisabled($"Waiting for someone to enter it - {TimeText.Left(outgoing.ExpiresAt)}. You'll be asked to confirm who they are.");
         using (ImRaii.Disabled(busy))
         {
             if (ImGui.Button("Cancel code##codeCancel"))
@@ -100,7 +100,7 @@ public sealed class CodePairingView
         if (service.Preview is { } preview)
         {
             var asWhat = preview.OwnDirection == PairingDirection.SubSide ? "their Sub" : "their Owner";
-            IconGlyph.WrappedColored(Theme.Warning, $"{preview.Inviter.Name}@{preview.Inviter.World} wants you as {asWhat}.");
+            Status.Line(StatusKind.Caution, $"{preview.Inviter.Name}@{preview.Inviter.World} wants you as {asWhat}.");
             using (ImRaii.Disabled(busy))
             {
                 if (ImGui.Button("Accept##codeAccept"))
@@ -169,11 +169,5 @@ public sealed class CodePairingView
         {
             busy = false;
         }
-    }
-
-    internal static string Remaining(long expiresAtUnix)
-    {
-        var left = TimeSpan.FromSeconds(Math.Max(0, expiresAtUnix - DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-        return left.TotalDays >= 1 ? $"{(int)left.TotalDays}d {left.Hours}h" : left.TotalHours >= 1 ? $"{(int)left.TotalHours}h {left.Minutes}m" : $"{left.Minutes}m";
     }
 }

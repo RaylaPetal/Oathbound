@@ -47,15 +47,13 @@ public sealed partial class ModuleWindow
     {
         var config = plugin.Configuration;
         var reactions = plugin.ReactionService;
-        IconGlyph.Text(FontAwesomeIcon.Magic, "Reactions");
-        ImGui.Separator();
         IconGlyph.WrappedDisabled("Make your character react when someone emotes at you or says a phrase. Runs only on your client.");
 
         if (plugin.RuntimeState.ReactionsSuspended)
         {
             using (Section.Begin("reactionsSuspended"))
             {
-                IconGlyph.WrappedColored(Theme.Warning, "Reactions are paused because panic was triggered. Nothing below will fire until you resume them.");
+                Status.Line(StatusKind.Caution, "Reactions are paused because panic was triggered. Nothing below will fire until you resume them.");
                 if (ImGui.Button("Resume reactions"))
                     plugin.RuntimeState.ReactionsSuspended = false;
             }
@@ -139,12 +137,12 @@ public sealed partial class ModuleWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(enabled ? "Enabled - click to pause this reaction" : "Paused - click to enable");
         ImGui.SameLine();
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", ReactionLabel(rule)))
         {
             config.Reactions.Remove(rule);
             config.Save();
             reactionDraft = null;
-            reactionList.Select(null);
+            reactionList.Deleted();
             ImGui.PopID();
             return;
         }
@@ -226,7 +224,10 @@ public sealed partial class ModuleWindow
         {
             var trigger = config.TriggerPhrase.Trim();
             if (trigger.Length == 0)
-                IconGlyph.WrappedColored(Theme.Warning, "You don't have a trigger word yet - set one in Settings > Identity & Pairing first.");
+            {
+                Status.Line(StatusKind.Caution, "You don't have a trigger word yet - set one in Settings > Identity & Pairing first.");
+                DrawOpenSettingsButton("Open Settings##reactionTrigger", SettingsTab.Identity);
+            }
             var phrase = draft.ChatPhrase;
             ItemWidth(260);
             if (ImGui.InputTextWithHint("Phrase##reaction", "e.g. kneel", ref phrase, 64))
@@ -263,7 +264,7 @@ public sealed partial class ModuleWindow
 
         ImGui.Spacing();
         if (reactionError is { } error)
-            IconGlyph.WrappedColored(Theme.Warning, error);
+            Status.Line(StatusKind.Error, error);
 
         if (ImGui.Button(isNew ? "Add reaction" : "Save reaction"))
         {
@@ -344,7 +345,7 @@ public sealed partial class ModuleWindow
         using (ImRaii.Disabled(blocked is not null))
             draw();
         if (blocked is not null)
-            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            Status.Line(StatusKind.Error, blocked);
     }
 
     private void DrawReactionGesture(ReactionRule draft)

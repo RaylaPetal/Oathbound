@@ -4,6 +4,7 @@ import { resolverFromStoredDeviceKeys, READ_ONLY, verifySignedRequest } from "..
 import { base64UrlToBytes, bytesToBase64Url } from "../lib/base64";
 import {
   CATALOG_MAILBOX_EXPIRY_SECONDS,
+  CATALOG_MAILBOX_REFRESH_MIN_INTERVAL_SECONDS,
   CATALOG_MAILBOX_MIN_UPLOAD_INTERVAL_SECONDS,
   TIMESTAMP_TOLERANCE_SECONDS,
   nowSeconds,
@@ -25,6 +26,7 @@ import {
   isUnixSeconds,
   requireField,
 } from "../lib/validate";
+import type { MailboxStatusEnvelope, MailboxStatuses } from "./mailboxStatus";
 
 /**
  * collar/catalog-sync automatic sync: a per-(pairIdHash, pairEpoch) mailbox the Sub pushes encrypted catalog
@@ -80,6 +82,12 @@ interface MailboxRow {
   snapshot_created_at: number | null;
   snapshot_expires_at: number | null;
   last_consumed_snapshot_id: number | null;
+  handed_snapshot_id: number | null;
+  handed_r2_key: string | null;
+  handed_envelope: string | null;
+  handed_expires_at: number | null;
+  handed_next_key_id: string | null;
+  refresh_requested_at: number | null;
 }
 
 function isReceiveKeyId(value: unknown): value is string {
@@ -116,10 +124,19 @@ function waitingSnapshotId(mailbox: MailboxRow): number | null {
 
 export type CatalogMailboxSummary =
   | { exists: false }
-  | { exists: true; receiveKeyId: string; waitingSnapshotId: number | null; lastConsumedSnapshotId: number | null; lastUploadAt: number | null };
+  | {
+      exists: true;
+      receiveKeyId: string;
+      waitingSnapshotId: number | null;
+      lastConsumedSnapshotId: number | null;
+      lastUploadAt: number | null;
+      refreshRequestedAt: number | null;
+      senderStatus: MailboxStatusEnvelope | null;
+      recipientStatus: MailboxStatusEnvelope | null;
+    };
 
 /** Rides on the pair status response, which both members already poll, so an unchanged catalog costs no mailbox call. */
-export async function catalogMailboxSummary(env: Env, pairIdHash: string, pairEpoch: number): Promise<CatalogMailboxSummary> {
+export async function catalogMailboxSummary(env: Env, pairIdHash: string, pairEpoch: number, statuses: MailboxStatuses): Promise<CatalogMailboxSummary> {
   const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
   if (!mailbox) return { exists: false };
   return {
@@ -128,7 +145,30 @@ export async function catalogMailboxSummary(env: Env, pairIdHash: string, pairEp
     waitingSnapshotId: waitingSnapshotId(mailbox),
     lastConsumedSnapshotId: mailbox.last_consumed_snapshot_id,
     lastUploadAt: mailbox.last_upload_at,
+    refreshRequestedAt: mailbox.refresh_requested_at,
+    senderStatus: statuses["catalog:sender"] ?? null,
+    recipientStatus: statuses["catalog:recipient"] ?? null,
   };
+}
+
+/** The highest snapshot a receipt may name: the last one handed out (a Get latest clears last_consumed_snapshot_id). */
+export async function highestReceiptableSnapshot(env: Env, pairIdHash: string, pairEpoch: number): Promise<number> {
+  const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
+  return Math.max(mailbox?.last_consumed_snapshot_id ?? 0, mailbox?.handed_snapshot_id ?? 0);
+}
+
+/** A receipt settled the handed-out snapshot (or a later one), so no retry can need it again. */
+export async function releaseHandedSnapshot(env: Env, pairIdHash: string, pairEpoch: number, uptoSnapshotId: number): Promise<void> {
+  const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
+  if (!mailbox?.handed_r2_key || mailbox.handed_snapshot_id === null || mailbox.handed_snapshot_id > uptoSnapshotId) return;
+  const released = await env.RELAY_DB.prepare(
+    `UPDATE catalog_mailboxes SET handed_snapshot_id = NULL, handed_r2_key = NULL, handed_envelope = NULL,
+       handed_expires_at = NULL, handed_next_key_id = NULL
+     WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND handed_r2_key = ?3`,
+  )
+    .bind(pairIdHash, pairEpoch, mailbox.handed_r2_key)
+    .run();
+  if ((released.meta.changes ?? 0) > 0) await deleteCiphertext(env, mailbox.handed_r2_key);
 }
 
 function readPairRef(body: Record<string, unknown>): { pairIdHash: string; pairEpoch: number } {
@@ -160,7 +200,9 @@ async function parseOwnerKeyEnvelope(env: Env, raw: unknown, pair: PairRow): Pro
 
 /**
  * Owner: publish (or replace) this pair's receive key. Replacing it discards any waiting snapshot, which could only
- * have been encrypted to the old key, and reopens the upload interval so the Sub's republish isn't held back.
+ * have been encrypted to the old key, and the snapshot held for a retried pickup, and reopens the upload interval so
+ * the Sub's republish isn't held back. With `refresh: true` (Get latest) it also records the request and clears the
+ * pickup record, so a Sub from before receipts sees its last snapshot as undelivered and publishes again.
  */
 export async function publishMailboxKey(request: Request, env: Env): Promise<Response> {
   await assertCircuitBreakerClosed(env);
@@ -169,24 +211,35 @@ export async function publishMailboxKey(request: Request, env: Env): Promise<Res
 
   const body = asRecord(bodyJson);
   const { pairIdHash, pairEpoch } = readPairRef(body);
+  if (body.refresh !== undefined && typeof body.refresh !== "boolean") throw new RelayError("invalid_request");
+  const refresh = body.refresh === true;
   const pair = await requirePairSide(env, pairIdHash, pairEpoch, deviceKeyId, "owner");
   const envelope = await parseOwnerKeyEnvelope(env, body.key, pair);
 
+  const now = nowSeconds();
   const existing = await loadMailbox(env, pairIdHash, pairEpoch);
+  if (refresh && existing?.refresh_requested_at != null && now - existing.refresh_requested_at < CATALOG_MAILBOX_REFRESH_MIN_INTERVAL_SECONDS) {
+    throw new RelayError("rate_limited", Math.max(CATALOG_MAILBOX_REFRESH_MIN_INTERVAL_SECONDS - (now - existing.refresh_requested_at), 1));
+  }
   await env.RELAY_DB.prepare(
-    `INSERT INTO catalog_mailboxes (pair_id_hash, pair_epoch, receive_key_id, receive_key_envelope, key_published_at)
-     VALUES (?1, ?2, ?3, ?4, ?5)
+    `INSERT INTO catalog_mailboxes (pair_id_hash, pair_epoch, receive_key_id, receive_key_envelope, key_published_at, refresh_requested_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, CASE WHEN ?6 THEN ?5 END)
      ON CONFLICT (pair_id_hash, pair_epoch) DO UPDATE SET
        receive_key_id = excluded.receive_key_id,
        receive_key_envelope = excluded.receive_key_envelope,
        key_published_at = excluded.key_published_at,
        last_upload_at = NULL,
        snapshot_id = NULL, snapshot_r2_key = NULL, snapshot_envelope = NULL,
-       snapshot_created_at = NULL, snapshot_expires_at = NULL`,
+       snapshot_created_at = NULL, snapshot_expires_at = NULL,
+       handed_snapshot_id = NULL, handed_r2_key = NULL, handed_envelope = NULL,
+       handed_expires_at = NULL, handed_next_key_id = NULL,
+       refresh_requested_at = CASE WHEN ?6 THEN ?5 ELSE refresh_requested_at END,
+       last_consumed_snapshot_id = CASE WHEN ?6 THEN NULL ELSE last_consumed_snapshot_id END`,
   )
-    .bind(pairIdHash, pairEpoch, envelope.receiveKeyId, toCanonicalJson(envelope), nowSeconds())
+    .bind(pairIdHash, pairEpoch, envelope.receiveKeyId, toCanonicalJson(envelope), now, refresh ? 1 : 0)
     .run();
   if (existing?.snapshot_r2_key) await deleteCiphertext(env, existing.snapshot_r2_key);
+  if (existing?.handed_r2_key) await deleteCiphertext(env, existing.handed_r2_key);
 
   await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
@@ -339,8 +392,9 @@ export async function mailboxStatus(request: Request, env: Env): Promise<Respons
 }
 
 /**
- * Owner: one-use retrieval of the waiting snapshot, atomically rotating the mailbox to the next receive key
- * carried in the body - after this, nothing can still be encrypted to the key that decrypts this snapshot.
+ * Owner: retrieval of the waiting snapshot, atomically rotating the mailbox to the next receive key carried in the
+ * body - after this, nothing can still be encrypted to the key that decrypts this snapshot. The snapshot is kept
+ * until the Owner's receipt, so a consume whose response was lost can be repeated with the same next key.
  */
 export async function consumeMailboxSnapshot(request: Request, env: Env): Promise<Response> {
   const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
@@ -352,11 +406,23 @@ export async function consumeMailboxSnapshot(request: Request, env: Env): Promis
   const pair = await requirePairSide(env, pairIdHash, pairEpoch, deviceKeyId, "owner");
   const nextKey = await parseOwnerKeyEnvelope(env, body.nextKey, pair);
 
+  const now = nowSeconds();
   const mailbox = await loadMailbox(env, pairIdHash, pairEpoch);
-  if (!mailbox?.snapshot_envelope || !mailbox.snapshot_r2_key || mailbox.snapshot_id !== expectedSnapshotId) throw new RelayError("not_found");
-  if ((mailbox.snapshot_expires_at ?? 0) <= nowSeconds()) throw new RelayError("not_found");
+  if (!mailbox) throw new RelayError("not_found");
+  const waiting = !!mailbox.snapshot_envelope && !!mailbox.snapshot_r2_key && mailbox.snapshot_id === expectedSnapshotId
+    && (mailbox.snapshot_expires_at ?? 0) > now;
+  if (!waiting) {
+    // Only the exact retry: same snapshot, same next key, and the relay still on that key.
+    const retry = mailbox.handed_snapshot_id === expectedSnapshotId && !!mailbox.handed_envelope && !!mailbox.handed_r2_key
+      && mailbox.handed_next_key_id === nextKey.receiveKeyId && mailbox.receive_key_id === nextKey.receiveKeyId
+      && (mailbox.handed_expires_at ?? 0) > now;
+    if (!retry) throw new RelayError("not_found");
+    const heldBytes = await getCiphertext(env, mailbox.handed_r2_key!);
+    if (!heldBytes) throw new RelayError("not_found");
+    return Response.json({ envelope: JSON.parse(mailbox.handed_envelope!), ciphertextBase64Url: bytesToBase64Url(heldBytes) });
+  }
 
-  const ciphertextBytes = await getCiphertext(env, mailbox.snapshot_r2_key);
+  const ciphertextBytes = await getCiphertext(env, mailbox.snapshot_r2_key!);
   if (!ciphertextBytes) throw new RelayError("not_found");
 
   // Claim by exact snapshot identity: a concurrent upload replacing it, or a concurrent consume, makes this
@@ -364,17 +430,20 @@ export async function consumeMailboxSnapshot(request: Request, env: Env): Promis
   const claim = await env.RELAY_DB.prepare(
     `UPDATE catalog_mailboxes SET
        receive_key_id = ?1, receive_key_envelope = ?2, key_published_at = ?3,
+       handed_snapshot_id = snapshot_id, handed_r2_key = snapshot_r2_key, handed_envelope = snapshot_envelope,
+       handed_expires_at = snapshot_expires_at, handed_next_key_id = ?1,
        snapshot_id = NULL, snapshot_r2_key = NULL, snapshot_envelope = NULL,
        snapshot_created_at = NULL, snapshot_expires_at = NULL, last_consumed_snapshot_id = ?6
      WHERE pair_id_hash = ?4 AND pair_epoch = ?5 AND snapshot_id = ?6 AND snapshot_r2_key = ?7`,
   )
-    .bind(nextKey.receiveKeyId, toCanonicalJson(nextKey), nowSeconds(), pairIdHash, pairEpoch, mailbox.snapshot_id, mailbox.snapshot_r2_key)
+    .bind(nextKey.receiveKeyId, toCanonicalJson(nextKey), now, pairIdHash, pairEpoch, mailbox.snapshot_id, mailbox.snapshot_r2_key)
     .run();
   if ((claim.meta.changes ?? 0) === 0) throw new RelayError("not_found");
-  await deleteCiphertext(env, mailbox.snapshot_r2_key);
+  if (mailbox.handed_r2_key && mailbox.handed_r2_key !== mailbox.snapshot_r2_key) await deleteCiphertext(env, mailbox.handed_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json({
-    envelope: JSON.parse(mailbox.snapshot_envelope),
+    envelope: JSON.parse(mailbox.snapshot_envelope!),
     ciphertextBase64Url: bytesToBase64Url(ciphertextBytes),
   });
 }

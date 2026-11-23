@@ -122,7 +122,8 @@ Oathbound.Plugin/
     Windows/      CollarWindow (main), SettingsWindow, SubControlWindow, Favorites, pickers, Quick Access
     Modules/      ModuleWindow, one partial per module, plus module helpers
     Views/        panels embedded in windows (pairing, recovery, status views, header pieces)
-    Widgets/      shared ImGui building blocks (Card, Section, Layout, Theme, NavBar, ...)
+    Widgets/      shared ImGui building blocks (Card, Section, Layout, Theme, Status, SendButton, ConfirmDelete,
+                  TimeText, ListDetail, NavBar, ...)
     World/        drawing in the game world (leash, cuffs, cage bounds, status icons)
     Tutorial/     guided tours
     Owner/        the Owner's view of relay-reported collar and cage status
@@ -132,6 +133,9 @@ Oathbound.Plugin/
   Games/        games between the two people of a pairing
   Achievements/ private, local achievements: the catalog, counters and unlocks (never sent anywhere)
 ```
+
+New status text goes through `Status` (its kinds have fixed colours), every Owner send through `SendButton`/`SendGate`,
+every saved-item delete through `ConfirmDelete`, and every shown time through `TimeText`.
 
 Subfolders are for finding things only: every file in `Commands/` is in namespace `Oathbound.Plugin.Commands` and every
 file in `UI/` in `Oathbound.Plugin.UI`, whatever subfolder it sits in. New files follow the same rule.
@@ -245,8 +249,12 @@ an Owner-written `collarsay` message from an accepted presence rule (`RulebookSe
 `collarstruggle free <restraint>` / `collarstruggle key <restraint>` notices (`RestraintCommand.StruggledFree` /
 `KeyUnlocked`), the `collargame` piece report (`stripped`) and game-ended (`quit`) notices during a game
 (`GamesService`), and the Sub's generic `collarsafeword panic <at>` safety notice to each Owner on panic
-(`SafewordNotifier`, always on, at most once a minute), plus notices tied to a user action (catalog request/denied,
-Grant leave). Accepted rulebooks (`Rulebook/`) run consequences on their own, but only through
+(`SafewordNotifier`, always on, at most once a minute), the Sub's `collarreceipt` apply receipts for each Owner command
+frame that asks for one (`CommandReceiptSender`: applied or refused plus one fixed reason code, coalesced to about one
+frame a second, always on, never for rulebook consequences), plus notices tied to a user action (the Sub's
+`collardecision` rulebook/oath Accept or Decline with an optional decline reason, from `RulebookService`; Grant leave).
+New clients never send a catalog request notice; they answer an older Owner's request only by republishing the catalog
+to the mailbox. Accepted rulebooks (`Rulebook/`) run consequences on their own, but only through
 `ChatCommandListener.RunRulebookCommand` and `ConsequenceQueue`, limited to `ConsequenceValidator`'s categories (never
 chat, teleport, leash or collar) - except a presence rule's leash/unleash and message to the Owner, which run outside
 the queue's commands but behind its cooldown and the Sub's Follow permission.
@@ -272,7 +280,9 @@ from the pair status check. Plugin state stays per install, so everything applie
 character.
 
 The Owner never sees the Sub's real state: `OwnerStatusEstimateTracker` builds an estimate from the commands the
-relay reported delivered. Four pieces of real state flow back: the leash-off notice, and the collar status, cage status and safeword the
+relay reported delivered and the Sub's client didn't refuse - `OwnerReceiptTracker` turns delivery plus the Sub's apply
+receipt into one `CommandOutcome` (applied / refused / not confirmed after 15 s / legacy for a Sub whose character record
+doesn't declare `receipts`), which the feedback line, estimate, toy status and cage store follow. Four pieces of real state flow back: the leash-off notice, and the collar status, cage status and safeword the
 Sub's `CollarStatusReporter` / `CageStatusReporter` / `SafewordNotifier` post to the relay (the safeword is always
 reported, and only says that it happened) (read by the Owner into `OwnerCollarStatusStore` /
 `OwnerCageStatusStore` during the pair status check). Separately, with SimpleHeels installed, `SharedStatusPublisher`

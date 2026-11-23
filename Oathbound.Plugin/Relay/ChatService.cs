@@ -159,10 +159,11 @@ public sealed class ChatService : IDisposable
         var ct = shutdown.Token;
         _ = Task.Run(async () =>
         {
+            ChatImageService.Prepared? prepared = null;
             try
             {
                 if (pairIdHash is null) throw new InvalidOperationException("this pairing isn't set up on the relay yet");
-                var prepared = await ChatImageService.PrepareAsync(sourcePath).ConfigureAwait(false);
+                prepared = await ChatImageService.PrepareAsync(sourcePath).ConfigureAwait(false);
                 var (fileName, key) = await images.UploadAsync(pairIdHash, pairEpoch, imageId, prepared, ct).ConfigureAwait(false);
                 await Plugin.Framework.RunOnFrameworkThread(() =>
                 {
@@ -179,7 +180,7 @@ public sealed class ChatService : IDisposable
                     {
                         Kind = ChatPlaintext.ImageKind,
                         Text = sentCaption,
-                        Image = new ChatImageRef { Id = imageId, Key = key, Width = prepared.Width, Height = prepared.Height },
+                        Image = new ChatImageRef { Id = imageId, Key = key, Width = prepared!.Width, Height = prepared.Height },
                     };
                     var (id, failure) = messenger.SendChat(live, message);
                     entry.MessageId = id;
@@ -194,9 +195,23 @@ public sealed class ChatService : IDisposable
             {
                 var reason = ex is InvalidOperationException ? ex.Message : "the picture couldn't be sent";
                 if (ex is not InvalidOperationException) Plugin.Log.Warning(ex, "Chat picture send failed.");
+                // The prepared copy stays when the upload is what failed, so Retry can send it again.
+                var kept = prepared is null ? null : ChatImageService.FileNameFor(imageId, prepared);
+                var keptExists = ChatImageService.PathOf(kept) is { } keptPath && System.IO.File.Exists(keptPath);
                 await Plugin.Framework.RunOnFrameworkThread(() =>
                 {
-                    entry.Image = ChatImageState.Unavailable;
+                    if (keptExists && History.All.Any(c => c.Messages.Contains(entry)))
+                    {
+                        entry.ImageFile = kept;
+                        entry.ImageWidth = prepared!.Width;
+                        entry.ImageHeight = prepared.Height;
+                        entry.Image = ChatImageState.Ready;
+                    }
+                    else
+                    {
+                        if (keptExists) ChatImageService.Delete(kept);
+                        entry.Image = ChatImageState.Unavailable;
+                    }
                     FailWith(conversation, entry, reason.TrimEnd('.'));
                 }).ConfigureAwait(false);
             }
@@ -209,6 +224,36 @@ public sealed class ChatService : IDisposable
                 }
             }
         }, ct);
+    }
+
+    /// Whether an outgoing message that wasn't delivered can be sent again: not while the pairing has ended, not while
+    /// the partner still needs an update it failed for, and for a picture only while its local copy exists.
+    public bool CanRetry(ChatConversation conversation, ChatEntry entry, IReadOnlyList<PairingState> pairings)
+    {
+        if (!entry.Outgoing || entry.State != ChatEntryState.NotDelivered || SendPairing(pairings) is null)
+            return false;
+        if (entry.FailedNeedsUpdate && conversation.PeerNeedsUpdate)
+            return false;
+        return entry.Image == ChatImageState.None
+            || entry.Image == ChatImageState.Ready && ChatImageService.PathOf(entry.ImageFile) is { } path && System.IO.File.Exists(path);
+    }
+
+    /// Sends a failed message again as a new one with its own id and delivery state; the failed one stays as it is.
+    /// The text goes through the Gagged rewrite again like anything typed now. A picture is re-encrypted under a new
+    /// id and key from its kept copy, which is then gone from the failed message. Null, or why it couldn't.
+    public string? Retry(ChatConversation conversation, ChatEntry entry, IReadOnlyList<PairingState> pairings)
+    {
+        if (!CanRetry(conversation, entry, pairings) || SendPairing(pairings) is not { } pairing)
+            return "That message can't be sent again.";
+        if (entry.Image == ChatImageState.None)
+            return Send(pairing, entry.Text);
+
+        var source = ChatImageService.PathOf(entry.ImageFile)!;
+        entry.ImageFile = null;
+        entry.Image = ChatImageState.Unavailable;
+        History.MarkDirty(conversation);
+        SendImage(pairing, source, entry.Text, deleteSource: true);
+        return null;
     }
 
     /// Fetches a received picture unless that's already running or failed a moment ago.
@@ -353,6 +398,7 @@ public sealed class ChatService : IDisposable
     private static void Fail(ChatConversation conversation, ChatEntry entry, ChatDelivery delivery)
     {
         entry.State = ChatEntryState.NotDelivered;
+        entry.FailedNeedsUpdate = delivery == ChatDelivery.NeedsUpdate;
         if (delivery == ChatDelivery.NeedsUpdate) conversation.PeerNeedsUpdate = true;
         entry.Reason = delivery switch
         {

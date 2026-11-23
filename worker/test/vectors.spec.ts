@@ -100,6 +100,16 @@ describe("cross-runtime crypto vectors", () => {
     expect(ok).toBe(true);
   });
 
+  it("canonicalizes and verifies a mailbox-status envelope signed by the device key it names", async () => {
+    const v = vectors.mailboxStatusSignature;
+    expect(toCanonicalJson(v.unsigned)).toBe(v.canonical);
+    const publicKey = vectors.ecdsaSignRequest.signingPublicKeyJwk;
+    const clean = { kty: publicKey.kty, crv: publicKey.crv, x: publicKey.x, y: publicKey.y };
+    expect(await sha256Hex(toCanonicalJson(clean))).toBe(v.unsigned.deviceKeyId);
+    expect(await verifyEcdsaSignature(publicKey as never, v.signatureBase64Url, v.canonical)).toBe(true);
+    expect(await verifyEcdsaSignature(publicKey as never, v.signatureBase64Url, v.canonical.replace("decrypt_failed", "ok"))).toBe(false);
+  });
+
   for (const [name, label] of [
     ["ecdhHkdfAesGcmRulebookPush", "oathbound-relay-rulebook-push-v1"],
     ["ecdhHkdfAesGcmRulebookReport", "oathbound-relay-rulebook-report-v1"],
@@ -252,6 +262,23 @@ describe("cross-runtime crypto vectors", () => {
       Buffer.from(v.ciphertextWithTagBase64Url, "base64url"),
     );
     expect(new TextDecoder().decode(plaintext)).toBe(v.plaintextUtf8);
+  });
+
+  it("decrypts the receipt-asking sample frame under the same peer message key", async () => {
+    const v = vectors.peerMessageReceipt;
+    const enc = new TextEncoder();
+    expect(v.derivedAesKeyHex).toBe(vectors.peerMessage.derivedAesKeyHex);
+    const aad = toCanonicalJson({ pairIdHash: v.pairIdHash, pairEpoch: v.pairEpoch, from: v.from, seq: v.seq, sentAt: v.sentAt });
+    expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
+    const key = await crypto.subtle.importKey("raw", Buffer.from(v.derivedAesKeyHex, "hex"), "AES-GCM", false, ["decrypt"]);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 },
+      key,
+      Buffer.from(v.ciphertextWithTagBase64Url, "base64url"),
+    );
+    const text = new TextDecoder().decode(plaintext);
+    expect(text).toBe(v.plaintextUtf8);
+    expect(JSON.parse(text)).toMatchObject({ v: 1, kind: "command", receipt: true });
   });
 
   it("derives the chat key separately from the message key and decrypts the sample chat", async () => {

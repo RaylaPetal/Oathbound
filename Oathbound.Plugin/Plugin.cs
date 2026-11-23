@@ -132,7 +132,7 @@ public sealed class Plugin : IDalamudPlugin
     public CageService CageService { get; }
     public Games.GamesService Games { get; }
     public CatalogSyncService CatalogSyncService { get; }
-    public CatalogSyncRelayService CatalogSyncRelayService { get; }
+    public MailboxStatusService MailboxStatusService { get; }
     public CatalogMailboxService CatalogMailboxService { get; }
     public CatalogAutoSync CatalogAutoSync { get; }
     public UI.RestraintThumbnailWorker RestraintThumbnailWorker { get; }
@@ -143,6 +143,7 @@ public sealed class Plugin : IDalamudPlugin
     public AchievementToastWindow AchievementToastWindow { get; }
     public CommandComposer CommandComposer { get; }
     public ChatSender ChatSender { get; }
+    public OwnerReceiptTracker OwnerReceipts { get; }
     public OwnerToyStatusTracker OwnerToyStatus { get; }
     public OwnerStatusEstimateTracker OwnerStatusEstimates { get; }
     public OwnerCollarStatusStore OwnerCollarStatus { get; }
@@ -163,6 +164,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CageStatusReporter cageStatusReporter;
     private readonly SafewordNotifier safewordNotifier;
     private readonly OwnerSendFeedback ownerSendFeedback;
+    private readonly CommandReceiptSender commandReceiptSender;
     private readonly LegacyTellDetector legacyTellDetector;
     /// Pairings the relay hinted about, and when to check them; a burst of hints becomes one check.
     private readonly Dictionary<Guid, DateTime> hintedPairings = new();
@@ -252,13 +254,16 @@ public sealed class Plugin : IDalamudPlugin
         CatalogSyncService = new CatalogSyncService(Configuration, OutfitCommand, GestureCommand, MoodlesCommand, RestraintCommand, CatalogStore);
         CommandComposer = new CommandComposer();
         ChatSender = new ChatSender();
-        OwnerToyStatus = new OwnerToyStatusTracker(Configuration, PeerMessenger);
-        OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, PeerMessenger);
-        ownerSendFeedback = new OwnerSendFeedback(Configuration, PeerMessenger);
+        OwnerReceipts = new OwnerReceiptTracker(Configuration, PeerMessenger);
+        commandReceiptSender = new CommandReceiptSender(Configuration, PeerMessenger, CommandComposer);
+        OwnerToyStatus = new OwnerToyStatusTracker(Configuration, OwnerReceipts);
+        OwnerStatusEstimates = new OwnerStatusEstimateTracker(Configuration, OwnerReceipts);
+        ownerSendFeedback = new OwnerSendFeedback(Configuration, PeerMessenger, OwnerReceipts);
         OwnerCollarStatus = new OwnerCollarStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCollarStatus.Update;
         OwnerCageStatus = new OwnerCageStatusStore(Configuration);
         RevocationService.PairStatusFetched += OwnerCageStatus.Update;
+        OwnerReceipts.CommandOutcome += OwnerCageStatus.OnCommandOutcome;
         OwnerSafewordAlerts = new OwnerSafewordAlerts(Configuration, OwnerStatusEstimates);
         RevocationService.PairStatusFetched += OwnerSafewordAlerts.OnPairStatus;
         RevocationService.PairStatusFetched += RelayActivity.Update;
@@ -294,14 +299,28 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService.PairingRevoked += TeleportCommand.StopIfSourcePairingEnded;
         RevocationService.PairingRevoked += GestureCommand.StopIfSourcePairingEnded;
         var catalogPictures = new CatalogPictureService(Configuration, RelayClient, RestraintCommand);
-        CatalogSyncRelayService = new CatalogSyncRelayService(Configuration, RelayClient, DeviceIdentityService, CommandComposer, PeerMessenger, CatalogSyncService, catalogPictures);
-        CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService, catalogPictures);
-        CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
+        MailboxStatusService = new MailboxStatusService(Configuration, RelayClient, DeviceIdentityService);
+        CatalogMailboxService = new CatalogMailboxService(Configuration, RelayClient, DeviceIdentityService, CatalogSyncService, catalogPictures, MailboxStatusService);
+        CatalogAutoSync = new CatalogAutoSync(Configuration, CatalogMailboxService, CatalogSyncService, MailboxStatusService, OutfitCommand, GestureCommand, RestraintCommand, MoodlesCommand,
             () => relayBackgroundWorkCts.Token);
         RevocationService.PairStatusFetched += CatalogAutoSync.OnPairStatus;
         PairingService.PairingCompleted += CatalogAutoSync.OnPairingCompleted;
-        ChatCommandListener = new ChatCommandListener(Configuration, PeerMessenger, CatalogSyncRelayService, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
+        ChatCommandListener = new ChatCommandListener(Configuration, PeerMessenger, TitleCommand, OutfitCommand, GestureCommand, FollowCommand, CollarCommand, MoodlesCommand, RestraintCommand, ToyControlCommand, CustomTriggerCommand, TeleportCommand, leashOffNotifier, OwnerStatusEstimates);
         ChatCommandListener.Cage = CageService;
+        ChatCommandListener.Receipts = commandReceiptSender;
+        ChatCommandListener.OwnerReceipts = OwnerReceipts;
+        ChatCommandListener.DependencyReady = id => id switch
+        {
+            DependencyId.Glamourer => GlamourerIpc.IsAvailable,
+            DependencyId.Penumbra => PenumbraIpc.IsAvailable,
+            DependencyId.Honorific => HonorificIpc.IsAvailable,
+            DependencyId.Moodles => MoodlesIpc.IsAvailable,
+            DependencyId.Lifestream => LifestreamIpc.IsAvailable,
+            DependencyId.Vnavmesh => VnavmeshIpc.IsAvailable,
+            DependencyId.Intiface => IntifaceIpc.IsConnected,
+            _ => true,
+        };
+        ChatCommandListener.CatalogRequestReceived += CatalogAutoSync.RequestRedelivery;
         legacyTellDetector = new LegacyTellDetector(Configuration, PeerMessenger);
         PeerMessenger.HintReceived += pairing => hintedPairings.TryAdd(pairing.Id, DateTime.UtcNow.AddSeconds(2));
         RevocationService.PairingEndedByPeer += ChatCommandListener.NotePeerUnpaired;
@@ -319,7 +338,7 @@ public sealed class Plugin : IDalamudPlugin
         PanicHandler.AfterLocalRevert = CustomTriggerCommand.ForgetEffects;
         PanicHandler.Games = Games;
 
-        RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService);
+        RulebookMailboxService = new RulebookMailboxService(Configuration, RelayClient, DeviceIdentityService, MailboxStatusService);
         RulebookService = new Rulebook.RulebookService(Configuration, RulebookMailboxService, ChatCommandListener, CommandComposer, PeerMessenger, EmoteWatcher, GestureCommand, FollowCommand, OutfitCommand, GlamourerIpc, SlotLockManager, () => relayBackgroundWorkCts.Token);
         RulebookService.AttachRestraints(RestraintCommand);
         Achievements = new Achievements.AchievementService(Configuration, FollowCommand, CageService, RestraintCommand, RestrictionRuleManager,
@@ -351,7 +370,7 @@ public sealed class Plugin : IDalamudPlugin
 
         favoritesDtrEntry = DtrBar.Get("Oathbound Quick Access");
         favoritesDtrEntry.Text = ((char)SeIconChar.BoxedStar).ToString();
-        favoritesDtrEntry.Tooltip = "Favorited Collar commands";
+        favoritesDtrEntry.Tooltip = "Favorited Oathbound commands";
         favoritesDtrEntry.OnClick = _ => QuickAccessMenu.Toggle();
         favoritesDtrEntry.Shown = true;
         Tutorial = new TutorialService(this, on => quickAccessHighlight = on, () => favoritesDtrEntry.UserHidden);
@@ -423,15 +442,14 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information("Oathbound loaded.");
     }
 
-    /// One Owner command to one Sub over the relay; OwnerSendFeedback reports what happened to it. Null when it went
-    /// out, otherwise why it couldn't.
-    public PeerDelivery? SendCommand(PairingState pairing, string command) => PeerMessenger.SendCommand(pairing, CommandComposer.Compose(command));
+    /// One Owner command to one Sub over the relay; OwnerSendFeedback reports what happened to it.
+    public PeerSent SendCommand(PairingState pairing, string command) => PeerMessenger.SendCommand(pairing, CommandComposer.Compose(command));
 
     /// To the active pairing, when this install is its Owner.
-    public PeerDelivery? SendCommand(string command) =>
+    public PeerSent SendCommand(string command) =>
         Configuration.GetActivePairing() is { IsPaired: true, Direction: PairingDirection.OwnerSide } pairing
             ? SendCommand(pairing, command)
-            : PeerDelivery.NotReady;
+            : new PeerSent(PeerDelivery.NotReady, 0);
 
     /// A real login, not just a plugin reload mid-session.
     private void SendRestraintNotice(Guid? pairingId, string word, string restraint)
@@ -520,6 +538,7 @@ public sealed class Plugin : IDalamudPlugin
         favoritesDtrEntry.Remove();
         toyStatusDtrEntry.Remove();
         OwnerToyStatus.Dispose();
+        commandReceiptSender.Dispose();
         RevocationService.PairStatusFetched -= OwnerCollarStatus.Update;
         RevocationService.PairStatusFetched -= OwnerCageStatus.Update;
         RevocationService.PairStatusFetched -= OwnerSafewordAlerts.OnPairStatus;
@@ -531,6 +550,7 @@ public sealed class Plugin : IDalamudPlugin
         RulebookService.DetachRestraints();
         RulebookService.Dispose();
         OwnerStatusEstimates.Dispose();
+        OwnerReceipts.Dispose();
         leashOffNotifier.Dispose();
         leashRenderer.Dispose();
         worldStrokes.Dispose();
@@ -631,6 +651,8 @@ public sealed class Plugin : IDalamudPlugin
 
         RelaySocket.Wanted = ClientState.IsLoggedIn && Configuration.ActivePairings.Any(p => p.PairIdHash is not null);
         PeerMessenger.Tick();
+        commandReceiptSender.Tick();
+        OwnerReceipts.Tick();
         Chat.Tick();
         if (hintedPairings.Count > 0)
         {

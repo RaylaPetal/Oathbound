@@ -45,12 +45,12 @@ public sealed class CustomizePresetPickerWindow : Window, IDisposable
         var result = plugin.CustomizePlusIpc.GetOwnProfiles();
         if (result.Status == CustomizePlusScanStatus.Unavailable)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Customize+ is not installed or not ready.");
+            Status.Line(StatusKind.Error, "Customize+ is not installed or not ready.");
             return;
         }
         if (result.Status == CustomizePlusScanStatus.Failed)
         {
-            IconGlyph.WrappedColored(Theme.Warning, $"Could not read Customize+ profiles: {result.Error}");
+            Status.Line(StatusKind.Error, $"Could not read Customize+ profiles: {result.Error}");
             return;
         }
         if (result.Profiles.Count == 0)

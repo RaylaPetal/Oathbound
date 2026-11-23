@@ -37,7 +37,7 @@ public sealed class OwnerSafewordAlerts
         config.Save();
         estimates.Clear(pairing.Id);
 
-        var text = $"{pairing.PeerName ?? "Your Sub"} used their safeword {Ago(at)}.";
+        var text = $"{pairing.PeerName ?? "Your Sub"} used their safeword {TimeText.Ago(at)}.";
         Plugin.NotificationManager.AddNotification(new Notification
         {
             Title = "Safeword used",
@@ -60,14 +60,5 @@ public sealed class OwnerSafewordAlerts
     {
         pairing.SafewordDismissedAt = pairing.LastSafewordAt;
         config.Save();
-    }
-
-    public static string Ago(long at)
-    {
-        var elapsed = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(at);
-        if (elapsed < TimeSpan.FromMinutes(1)) return "just now";
-        if (elapsed < TimeSpan.FromHours(1)) return $"{(int)elapsed.TotalMinutes} min ago";
-        if (elapsed < TimeSpan.FromDays(1)) return $"{(int)elapsed.TotalHours} h ago";
-        return $"{(int)elapsed.TotalDays} d ago";
     }
 }

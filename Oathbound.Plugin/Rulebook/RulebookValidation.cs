@@ -71,17 +71,17 @@ public static class RulebookValidation
         }
 
         if (doc.Thresholds.Count > RulebookLimits.MaxThresholds)
-            return $"More than {RulebookLimits.MaxThresholds} ledger thresholds.";
+            return $"More than {RulebookLimits.MaxThresholds} milestones.";
         foreach (var t in doc.Thresholds)
         {
             if (t.Score is < RulebookLimits.MinLedger or > RulebookLimits.MaxLedger)
-                return $"Threshold \"{Label(t.Name)}\": score must be {RulebookLimits.MinLedger} to {RulebookLimits.MaxLedger}.";
+                return $"Milestone \"{Label(t.Name)}\": points must be {RulebookLimits.MinLedger} to {RulebookLimits.MaxLedger}.";
             if (t.ResetTo is < RulebookLimits.MinLedger or > RulebookLimits.MaxLedger)
-                return $"Threshold \"{Label(t.Name)}\": reset value is out of range.";
+                return $"Milestone \"{Label(t.Name)}\": reset value is out of range.";
             if (t.Consequence.Count == 0 && !t.DrawCard)
-                return $"Threshold \"{Label(t.Name)}\" does nothing.";
+                return $"Milestone \"{Label(t.Name)}\" does nothing.";
             if ((CheckCooldown(t.CooldownSeconds) ?? ConsequenceValidator.CheckAll(t.Consequence)) is { } e)
-                return $"Threshold \"{Label(t.Name)}\": {e}";
+                return $"Milestone \"{Label(t.Name)}\": {e}";
         }
 
         if (doc.Times.Count > RulebookLimits.MaxTimeRules)
@@ -132,7 +132,7 @@ public static class RulebookValidation
             && o.LedgerPerStrike == 0 && o.StreakEvery == 0)
             return "it has no outcome.";
         if (!OathConditions.IsRitual(o.Condition) && (o.LedgerPerDone != 0 || o.LedgerPerMissed != 0))
-            return "only rituals score the ledger each time.";
+            return "only rituals give or take points each time.";
         if (o.Scope == OathScope.NextDuty && !OathConditions.IsDuty(o.Condition))
             return "only duty oaths can last for the next duty.";
         if (o.Strikes is < 0 or > RulebookLimits.MaxStrikes)
@@ -198,7 +198,7 @@ public static class RulebookValidation
             o.LedgerPerMissed is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
             o.LedgerPerStrike is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange ||
             o.StreakLedger is < -RulebookLimits.MaxLedgerChange or > RulebookLimits.MaxLedgerChange)
-            return $"a ledger change is at most {RulebookLimits.MaxLedgerChange}.";
+            return $"a points change is at most {RulebookLimits.MaxLedgerChange}.";
         return ConsequenceValidator.CheckAll(o.Kept.Concat(o.Broken));
     }
 

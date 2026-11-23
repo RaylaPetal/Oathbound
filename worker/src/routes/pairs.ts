@@ -6,6 +6,7 @@ import { RelayError } from "../lib/errors";
 import { type CageState, type CollarState, isMemberOfPair, latestPair, pairAtEpoch, type PairRow, type SafewordMood } from "../lib/pairs";
 import { enforceQuota } from "../lib/quotas";
 import { catalogMailboxSummary } from "./mailbox";
+import { loadMailboxStatuses } from "./mailboxStatus";
 import { rulebookMailboxSummary } from "./rulebook";
 import { asRecord, type EncryptedBlob, isAeadNonce, isHex64, isNonNegInt, isUnixSeconds, requireField } from "../lib/validate";
 
@@ -60,6 +61,7 @@ export async function fetchPairStatusBatch(request: Request, env: Env): Promise<
 }
 
 async function pairStatusBody(env: Env, pair: PairRow, readerDeviceKeyId: string, activity: Awaited<ReturnType<typeof relayActivity>>) {
+  const statuses = await loadMailboxStatuses(env, pair.pair_id_hash, pair.pair_epoch);
   return {
     type: "pair",
     schemaVersion: 1,
@@ -78,8 +80,8 @@ async function pairStatusBody(env: Env, pair: PairRow, readerDeviceKeyId: string
     safewordAt: pair.safeword_at ?? null,
     safewordMood: pair.safeword_mood ?? null,
     peerCharacters: peerCharacters(pair, readerDeviceKeyId),
-    catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
-    rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch),
+    catalogMailbox: await catalogMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch, statuses),
+    rulebookMailbox: await rulebookMailboxSummary(env, pair.pair_id_hash, pair.pair_epoch, statuses),
     ...activity,
   };
 }

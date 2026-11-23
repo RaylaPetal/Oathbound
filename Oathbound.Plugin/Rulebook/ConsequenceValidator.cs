@@ -38,7 +38,7 @@ public static class ConsequenceValidator
                 "teleport" => "Teleport can't be a rulebook consequence.",
                 "leash" or "follow" or ControlWords.Unleash => "Follow and leash can't be rulebook consequences.",
                 "collar" => "The collar can't be a rulebook consequence.",
-                _ => $"\"{word}\" isn't allowed in a rulebook. Use title, outfit, gesture, moodle, restraint, toy, revert all, deck draw reward/punishment, ledger or ladder up/down.",
+                _ => $"\"{word}\" isn't allowed in a rulebook. Use title, outfit, gesture, moodle, restraint, toy, revert all, deck draw reward/punishment, ledger +n/-n (points) or ladder up/down.",
             };
 
         switch (word.ToLowerInvariant())
@@ -48,7 +48,7 @@ public static class ConsequenceValidator
             case DeckWord:
                 return CardPiles.TryParseDraw(rest, out _) ? null : "Use \"deck draw reward\" or \"deck draw punishment\".";
             case LedgerWord:
-                return LedgerCommand.TryParse(rest, out _, out _) ? null : "Use \"ledger +n\" or \"ledger -n\" with n from 1 to 99.";
+                return LedgerCommand.TryParse(rest, out _, out _) ? null : "Use \"ledger +n\" or \"ledger -n\" to give or take n points, with n from 1 to 99.";
             case LadderWord:
                 return LadderCommand.TryParse(rest, allowSet: false, out _, out _) ? null : "Use \"ladder up\" or \"ladder down\".";
             case "customtrigger":

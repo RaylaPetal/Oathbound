@@ -17,8 +17,7 @@ public sealed class RecoveryView
     private string restoreInput = "";
     private bool restoring;
     private bool needsReplaceConfirm;
-    private string? restoreMessage;
-    private bool restoreMessageIsError;
+    private StatusMessage? restoreMessage;
 
     public RecoveryView(Plugin plugin)
     {
@@ -38,7 +37,7 @@ public sealed class RecoveryView
             var code = backup.GetFormattedCode();
             if (code is null)
             {
-                IconGlyph.WrappedColored(Theme.Danger, "Your recovery code can't be read on this machine. Regenerate it below.");
+                Status.Line(StatusKind.Error, "Your recovery code can't be read on this machine. Regenerate it below.");
             }
             else
             {
@@ -53,9 +52,9 @@ public sealed class RecoveryView
             }
 
             if (backup.LastError is { Length: > 0 } error)
-                IconGlyph.WrappedColored(Theme.Warning, error);
+                Status.Line(StatusKind.Error, error);
             else if (backup.IsUpToDate && backup.LastUploadAt is { } at)
-                IconGlyph.WrappedColored(Theme.Success, $"Backup up to date (saved {at.ToLocalTime():g}).");
+                Status.Line(StatusKind.Ok, $"Backup up to date (saved {TimeText.Date(at)}).");
             else if (backup.WaitingForPairing)
                 IconGlyph.WrappedDisabled("Your backup will be saved once you pair with someone.");
             else
@@ -68,8 +67,8 @@ public sealed class RecoveryView
             }
             if (confirmingRegenerate)
             {
-                IconGlyph.WrappedColored(Theme.Danger, "Your current code will stop working and a new one will be shown. Continue?");
-                if (ImGui.Button("Regenerate##recoveryRegenerateConfirm"))
+                Status.Line(StatusKind.Caution, "Your current code will stop working and a new one will be shown. Continue?");
+                if (ConfirmDelete.DestructiveButton("Regenerate##recoveryRegenerateConfirm"))
                 {
                     backup.Regenerate();
                     confirmingRegenerate = false;
@@ -99,15 +98,14 @@ public sealed class RecoveryView
 
         if (needsReplaceConfirm)
         {
-            IconGlyph.WrappedColored(Theme.Danger, "This install already has pairings under a different identity. Restoring replaces them - those partners would need to unpair on their side. Restore anyway?");
-            if (ImGui.Button("Restore anyway##restoreReplace"))
+            Status.Line(StatusKind.Caution, "This install already has pairings under a different identity. Restoring replaces them - those partners would need to unpair on their side. Restore anyway?");
+            if (ConfirmDelete.DestructiveButton("Restore anyway##restoreReplace"))
                 StartRestore(replaceConfirmed: true);
             ImGui.SameLine();
             if (ImGui.Button("Cancel##restoreReplaceCancel"))
                 needsReplaceConfirm = false;
         }
-        if (restoreMessage is { Length: > 0 } message)
-            IconGlyph.WrappedColored(restoreMessageIsError ? Theme.Danger : Theme.Success, message);
+        Status.Line(restoreMessage);
 
         ImGui.Spacing();
         IconGlyph.WrappedDisabled("The code is stored with the same protection as your device key - under Wine that protection isn't real, so treat this PC's config folder as sensitive.");
@@ -127,27 +125,26 @@ public sealed class RecoveryView
         try
         {
             var (outcome, restored, dropped) = await plugin.BackupService.RestoreAsync(typed, replaceConfirmed, CancellationToken.None);
-            restoreMessageIsError = outcome != RestoreOutcome.Restored;
             switch (outcome)
             {
                 case RestoreOutcome.Restored:
                     restoreInput = "";
-                    restoreMessage = dropped > 0
+                    restoreMessage = StatusMessage.Ok(dropped > 0
                         ? $"Restored {restored} pairing(s). {dropped} had been ended while you were away and were dropped."
-                        : $"Restored {restored} pairing(s).";
+                        : $"Restored {restored} pairing(s).");
                     break;
                 case RestoreOutcome.NeedsConfirmation:
                     needsReplaceConfirm = true;
                     restoreMessage = null;
                     break;
                 case RestoreOutcome.InvalidCode:
-                    restoreMessage = "That isn't a recovery code - it's 26 letters and numbers.";
+                    restoreMessage = StatusMessage.Error("That isn't a recovery code - it's 26 letters and numbers.");
                     break;
                 case RestoreOutcome.NotFound:
-                    restoreMessage = "No backup was found for that code.";
+                    restoreMessage = StatusMessage.Error("No backup was found for that code.");
                     break;
                 default:
-                    restoreMessage = plugin.BackupService.LastError ?? "Restore failed.";
+                    restoreMessage = StatusMessage.Error(plugin.BackupService.LastError ?? "Restore failed.");
                     break;
             }
         }

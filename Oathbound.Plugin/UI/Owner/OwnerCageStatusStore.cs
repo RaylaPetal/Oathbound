@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Relay;
 
@@ -11,8 +12,11 @@ namespace Oathbound.Plugin.UI;
 public sealed class OwnerCageStatusStore
 {
     public sealed record Status(string State, DateTimeOffset StateAt, DateTimeOffset? EndsAt);
-    /// `Post` is the unsaved hitching post this was, or the one an open opens; posts have no saved id.
-    public sealed record Sent(Guid? CageId, string Name, DateTimeOffset At, bool Open, SavedCage? Post = null);
+    /// `Post` is the unsaved hitching post this was, or the one an open opens; posts have no saved id. `Seq` is the
+    /// command frame's, which its apply receipt names.
+    public sealed record Sent(Guid? CageId, string Name, DateTimeOffset At, bool Open, SavedCage? Post = null, long Seq = 0);
+    /// The Sub's client refused the cage command this Owner last sent; shown until the next send.
+    public sealed record Refusal(string Name, bool Open, bool Post, RefusalCode Code, DateTimeOffset At);
 
     private static readonly TimeSpan FastInterval = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan RefreshThrottle = TimeSpan.FromMinutes(1);
@@ -20,6 +24,9 @@ public sealed class OwnerCageStatusStore
     private readonly PluginConfig config;
     private readonly Dictionary<Guid, Status> statuses = new();
     private readonly Dictionary<Guid, Sent> sent = new();
+    /// What `sent` held before the latest send, so a refused send can be taken back.
+    private readonly Dictionary<Guid, Sent?> beforeSent = new();
+    private readonly Dictionary<Guid, Refusal> refusals = new();
     private DateTime lastCheckUtc = DateTime.MinValue;
     private bool refreshRequested;
 
@@ -53,6 +60,8 @@ public sealed class OwnerCageStatusStore
         {
             statuses.Remove(pairing.Id);
             sent.Remove(pairing.Id);
+            beforeSent.Remove(pairing.Id);
+            refusals.Remove(pairing.Id);
             return null;
         }
         return statuses.GetValueOrDefault(pairing.Id);
@@ -60,14 +69,31 @@ public sealed class OwnerCageStatusStore
 
     public Sent? LastSent(PairingState pairing) => sent.GetValueOrDefault(pairing.Id);
 
-    public void MarkSent(PairingState pairing, SavedCage? cage, bool open)
+    public void MarkSent(PairingState pairing, SavedCage? cage, bool open, long seq)
     {
         // An open keeps the cage it opens, so its bounds stop drawing once the Sub reports it gone.
         var previous = sent.GetValueOrDefault(pairing.Id);
         var post = cage is null ? previous?.Post : cage.Post ? cage : null;
         var cageId = cage is { Post: false } ? cage.Id : cage is null ? previous?.CageId : null;
-        sent[pairing.Id] = new Sent(cageId, cage?.Name ?? previous?.Name ?? "", DateTimeOffset.UtcNow, open, post);
+        beforeSent[pairing.Id] = previous;
+        sent[pairing.Id] = new Sent(cageId, cage?.Name ?? previous?.Name ?? "", DateTimeOffset.UtcNow, open, post, seq);
+        refusals.Remove(pairing.Id);
         refreshRequested = true;
+    }
+
+    public Refusal? RefusalFor(PairingState pairing) => refusals.GetValueOrDefault(pairing.Id);
+
+    /// A refused cage command was never applied: put back what was sent before it, which also ends the faster checks
+    /// and the drawing that waited on it. An applied one changes nothing; the relay report stays the cage's source.
+    public void OnCommandOutcome(CommandOutcome outcome)
+    {
+        if (outcome.Kind != CommandOutcomeKind.Refused || sent.GetValueOrDefault(outcome.PairingId) is not { } latest || latest.Seq != outcome.Seq)
+            return;
+        if (beforeSent.Remove(outcome.PairingId, out var previous) && previous is not null)
+            sent[outcome.PairingId] = previous;
+        else
+            sent.Remove(outcome.PairingId);
+        refusals[outcome.PairingId] = new Refusal(latest.Name, latest.Open, latest.Post is not null && !latest.Open, outcome.Code, DateTimeOffset.UtcNow);
     }
 
     /// The hitching post this Owner tied the Sub to, while it hasn't been opened or reported gone since.

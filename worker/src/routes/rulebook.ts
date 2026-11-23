@@ -28,6 +28,7 @@ import {
   isUnixSeconds,
   requireField,
 } from "../lib/validate";
+import type { MailboxStatusEnvelope, MailboxStatuses } from "./mailboxStatus";
 
 /**
  * collar/rulebook: a per-(pairIdHash, pairEpoch, channel) mailbox in each direction. Channel "rulebook" carries
@@ -114,6 +115,11 @@ interface RulebookMailboxRow {
   item_created_at: number | null;
   item_expires_at: number | null;
   last_consumed_sequence: number | null;
+  handed_sequence: number | null;
+  handed_r2_key: string | null;
+  handed_envelope: string | null;
+  handed_expires_at: number | null;
+  handed_next_key_id: string | null;
 }
 
 function isReceiveKeyId(value: unknown): value is string {
@@ -157,7 +163,15 @@ function waitingSequence(mailbox: RulebookMailboxRow): number | null {
 
 export type RulebookChannelSummary =
   | { exists: false }
-  | { exists: true; receiveKeyId: string; waitingSequence: number | null; lastConsumedSequence: number | null; lastUploadAt: number | null };
+  | {
+      exists: true;
+      receiveKeyId: string;
+      waitingSequence: number | null;
+      lastConsumedSequence: number | null;
+      lastUploadAt: number | null;
+      senderStatus: MailboxStatusEnvelope | null;
+      recipientStatus: MailboxStatusEnvelope | null;
+    };
 
 export interface RulebookMailboxSummary {
   rulebook: RulebookChannelSummary;
@@ -165,7 +179,7 @@ export interface RulebookMailboxSummary {
 }
 
 /** Rides on the pair status response, so neither side needs a separate poll to learn something is waiting. */
-export async function rulebookMailboxSummary(env: Env, pairIdHash: string, pairEpoch: number): Promise<RulebookMailboxSummary> {
+export async function rulebookMailboxSummary(env: Env, pairIdHash: string, pairEpoch: number, statuses: MailboxStatuses): Promise<RulebookMailboxSummary> {
   const rows = await env.RELAY_DB.prepare(`SELECT * FROM rulebook_mailboxes WHERE pair_id_hash = ?1 AND pair_epoch = ?2`)
     .bind(pairIdHash, pairEpoch)
     .all<RulebookMailboxRow>();
@@ -178,9 +192,31 @@ export async function rulebookMailboxSummary(env: Env, pairIdHash: string, pairE
       waitingSequence: waitingSequence(row),
       lastConsumedSequence: row.last_consumed_sequence,
       lastUploadAt: row.last_upload_at,
+      senderStatus: statuses[`${channel}:sender`] ?? null,
+      recipientStatus: statuses[`${channel}:recipient`] ?? null,
     };
   };
   return { rulebook: summarize("rulebook"), report: summarize("report") };
+}
+
+/** The highest item a receipt may name on this channel: the last one handed out. */
+export async function highestReceiptableItem(env: Env, pairIdHash: string, pairEpoch: number, channel: RulebookChannel): Promise<number> {
+  const mailbox = await loadMailbox(env, pairIdHash, pairEpoch, channel);
+  return Math.max(mailbox?.last_consumed_sequence ?? 0, mailbox?.handed_sequence ?? 0);
+}
+
+/** A receipt settled the handed-out item (or a later one), so no retry can need it again. */
+export async function releaseHandedRulebookItem(env: Env, pairIdHash: string, pairEpoch: number, channel: RulebookChannel, uptoSequence: number): Promise<void> {
+  const mailbox = await loadMailbox(env, pairIdHash, pairEpoch, channel);
+  if (!mailbox?.handed_r2_key || mailbox.handed_sequence === null || mailbox.handed_sequence > uptoSequence) return;
+  const released = await env.RELAY_DB.prepare(
+    `UPDATE rulebook_mailboxes SET handed_sequence = NULL, handed_r2_key = NULL, handed_envelope = NULL,
+       handed_expires_at = NULL, handed_next_key_id = NULL
+     WHERE pair_id_hash = ?1 AND pair_epoch = ?2 AND channel = ?3 AND handed_r2_key = ?4`,
+  )
+    .bind(pairIdHash, pairEpoch, channel, mailbox.handed_r2_key)
+    .run();
+  if ((released.meta.changes ?? 0) > 0) await deleteCiphertext(env, mailbox.handed_r2_key);
 }
 
 function readMailboxRef(body: Record<string, unknown>): { pairIdHash: string; pairEpoch: number; channel: RulebookChannel } {
@@ -220,7 +256,7 @@ async function parseKeyEnvelope(env: Env, raw: unknown, pair: PairRow, channel: 
 
 /**
  * Recipient: publish (or replace) this channel's receive key. Replacing it discards any waiting item, which
- * could only have been encrypted to the old key, and reopens the upload interval so the sender's republish
+ * could only have been encrypted to the old key, and the item held for a retried pickup, and reopens the upload interval so the sender's republish
  * isn't held back. last_sequence is kept, so a replay of an older item still can't land afterwards.
  */
 export async function publishRulebookKey(request: Request, env: Env): Promise<Response> {
@@ -243,11 +279,14 @@ export async function publishRulebookKey(request: Request, env: Env): Promise<Re
        key_published_at = excluded.key_published_at,
        last_upload_at = NULL,
        item_sequence = NULL, item_r2_key = NULL, item_envelope = NULL,
-       item_created_at = NULL, item_expires_at = NULL`,
+       item_created_at = NULL, item_expires_at = NULL,
+       handed_sequence = NULL, handed_r2_key = NULL, handed_envelope = NULL,
+       handed_expires_at = NULL, handed_next_key_id = NULL`,
   )
     .bind(pairIdHash, pairEpoch, channel, envelope.receiveKeyId, toCanonicalJson(envelope), nowSeconds())
     .run();
   if (existing?.item_r2_key) await deleteCiphertext(env, existing.item_r2_key);
+  if (existing?.handed_r2_key) await deleteCiphertext(env, existing.handed_r2_key);
 
   await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
@@ -389,8 +428,9 @@ export async function uploadRulebookItem(request: Request, env: Env): Promise<Re
 }
 
 /**
- * Recipient: one-use retrieval of the waiting item, atomically rotating the channel to the next receive key
- * carried in the body - after this, nothing can still be encrypted to the key that decrypts this item.
+ * Recipient: retrieval of the waiting item, atomically rotating the channel to the next receive key carried in the
+ * body - after this, nothing can still be encrypted to the key that decrypts this item. The item is kept until the
+ * recipient's receipt, so a consume whose response was lost can be repeated with the same next key.
  */
 export async function consumeRulebookItem(request: Request, env: Env): Promise<Response> {
   const { deviceKeyId, bodyJson } = await verifySignedRequest(request, env, resolverFromStoredDeviceKeys(env));
@@ -402,28 +442,43 @@ export async function consumeRulebookItem(request: Request, env: Env): Promise<R
   const pair = await requirePairSide(env, pairIdHash, pairEpoch, deviceKeyId, CHANNELS[channel].recipient);
   const nextKey = await parseKeyEnvelope(env, body.nextKey, pair, channel);
 
+  const now = nowSeconds();
   const mailbox = await loadMailbox(env, pairIdHash, pairEpoch, channel);
-  if (!mailbox?.item_envelope || !mailbox.item_r2_key || mailbox.item_sequence !== expectedSequence) throw new RelayError("not_found");
-  if ((mailbox.item_expires_at ?? 0) <= nowSeconds()) throw new RelayError("not_found");
+  if (!mailbox) throw new RelayError("not_found");
+  const waiting = !!mailbox.item_envelope && !!mailbox.item_r2_key && mailbox.item_sequence === expectedSequence
+    && (mailbox.item_expires_at ?? 0) > now;
+  if (!waiting) {
+    // Only the exact retry: same item, same next key, and the relay still on that key.
+    const retry = mailbox.handed_sequence === expectedSequence && !!mailbox.handed_envelope && !!mailbox.handed_r2_key
+      && mailbox.handed_next_key_id === nextKey.receiveKeyId && mailbox.receive_key_id === nextKey.receiveKeyId
+      && (mailbox.handed_expires_at ?? 0) > now;
+    if (!retry) throw new RelayError("not_found");
+    const heldBytes = await getCiphertext(env, mailbox.handed_r2_key!);
+    if (!heldBytes) throw new RelayError("not_found");
+    return Response.json({ envelope: JSON.parse(mailbox.handed_envelope!), ciphertextBase64Url: bytesToBase64Url(heldBytes) });
+  }
 
-  const ciphertextBytes = await getCiphertext(env, mailbox.item_r2_key);
+  const ciphertextBytes = await getCiphertext(env, mailbox.item_r2_key!);
   if (!ciphertextBytes) throw new RelayError("not_found");
 
   // Claim by exact item identity, so each item is handed out at most once and never with the wrong ciphertext.
   const claim = await env.RELAY_DB.prepare(
     `UPDATE rulebook_mailboxes SET
        receive_key_id = ?1, receive_key_envelope = ?2, key_published_at = ?3,
+       handed_sequence = item_sequence, handed_r2_key = item_r2_key, handed_envelope = item_envelope,
+       handed_expires_at = item_expires_at, handed_next_key_id = ?1,
        item_sequence = NULL, item_r2_key = NULL, item_envelope = NULL,
        item_created_at = NULL, item_expires_at = NULL, last_consumed_sequence = ?7
      WHERE pair_id_hash = ?4 AND pair_epoch = ?5 AND channel = ?6 AND item_sequence = ?7 AND item_r2_key = ?8`,
   )
-    .bind(nextKey.receiveKeyId, toCanonicalJson(nextKey), nowSeconds(), pairIdHash, pairEpoch, channel, mailbox.item_sequence, mailbox.item_r2_key)
+    .bind(nextKey.receiveKeyId, toCanonicalJson(nextKey), now, pairIdHash, pairEpoch, channel, mailbox.item_sequence, mailbox.item_r2_key)
     .run();
   if ((claim.meta.changes ?? 0) === 0) throw new RelayError("not_found");
-  await deleteCiphertext(env, mailbox.item_r2_key);
+  if (mailbox.handed_r2_key && mailbox.handed_r2_key !== mailbox.item_r2_key) await deleteCiphertext(env, mailbox.handed_r2_key);
 
+  await notifyPeer(env, pair, deviceKeyId);
   return Response.json({
-    envelope: JSON.parse(mailbox.item_envelope),
+    envelope: JSON.parse(mailbox.item_envelope!),
     ciphertextBase64Url: bytesToBase64Url(ciphertextBytes),
   });
 }

@@ -131,7 +131,7 @@ public static class TutorialCatalog
         ["moodles"] =
         [
             Help("moodles", "Put one of your Sub's own Moodles statuses on them, or clear it."),
-            new("Clear moodle", "Clears your Sub's moodles, except ones attached to something active.", S("moodlesQuickFixed"), n => n.Module("moodles")),
+            new("Clear moodles", "Clears your Sub's moodles, except ones attached to something active.", S("moodlesQuickFixed"), n => n.Module("moodles")),
             new("Moodles", "Your Sub's statuses, and moodles you write yourself. Pick one to send it, star it or edit it beside the list. + New moodle writes one: a title, description, icon and how long it lasts - your Sub has to allow moodles you write.", S("customMoodles"), n => n.Module("moodles")),
             SendRow("show that status"),
             Star(),
@@ -139,7 +139,7 @@ public static class TutorialCatalog
         ["restraints"] =
         [
             Help("restraints", "Restrain your Sub with gear or rules - forced pose, walk only, blocked actions, gagged chat, cuffs."),
-            new("Commands", "Restraint unlock takes every restraint you put on them off again.", S("restraintQuickCommands"), n => n.Module("restraints")),
+            new("Commands", "Unlock restraints takes every restraint you put on them off again.", S("restraintQuickCommands"), n => n.Module("restraints")),
             new("Your restraints", "Your saved restraint mods, the rules-only restraints your Sub shared, and the ones you saved yourself. Pick one to set it up and send it, or use + New to add one of your Sub's mods or build a rules-only restraint - send it once, or save it here.", S("restraintQuickConfigured"), n => n.Module("restraints")),
             new("Drawn restraints", "How drawn cuffs and chains look on your screen. Hiding them doesn't release the restraint.", S("restraintAppearance"), n => n.Module("restraints")),
             new("Lock timer", "Locked restraints stay on until you unlock them, or until a timer you set here runs out.", TutorialAnchors.QuickLock, n => n.Module("restraints"), "Appears on a restraint row."),
@@ -188,6 +188,12 @@ public static class TutorialCatalog
             new("Your strip order", "Which of your pieces come off first when you lose a strip round. Pieces held by restraints or locks are skipped.", S("gamesStrip"), n => n.Module("games")),
             new("Your cards", "Your own truths, dares and forfeits, and the starter cards you can turn off.", S("gamesDecks"), n => n.Module("games")),
         ],
+        ["achievements"] =
+        [
+            Help("achievements", "Private milestones for trying Oathbound's features."),
+            new("Your progress", "How many you've unlocked so far. They're private: never sent to anyone, shown to your partner or saved on the relay. Show picks all of them, only unlocked ones or only locked ones.", S("achievementsSummary"), n => n.Module("achievements")),
+            new("Achievements by category", "Each category folds open or shut. A locked achievement shows how close you are, a tiered one fills a dot per tier, and hovering an unlocked one shows when you earned it. Secret ones stay hidden until you unlock them.", S("achievementsList"), n => n.Module("achievements")),
+        ],
         ["reactions"] =
         [
             Help("reactions", "Make your own character react by itself when someone uses an emote on you or says a phrase."),
@@ -197,9 +203,9 @@ public static class TutorialCatalog
         ],
         ["rulebook"] =
         [
-            Help("rulebook", "Write rules that keep running while you're away: oaths, a deck of cards, places, your presence and a ledger."),
+            Help("rulebook", "Write rules that keep running while you're away: oaths, a deck of cards, places, your presence and points."),
             new("Publish", "Where your latest version is: your unpublished changes, sent, picked up by their plugin, and accepted. Publish sends it, encrypted; nothing runs until they accept it.", S("rbPublishBar"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
-            new("What's happening", "Their client reports back here by itself: oaths kept or broken, cards drawn, the ledger. Draw a card or award points from here too.", S("rbReport"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
+            new("What's happening", "Their client reports back here by itself: oaths kept or broken, cards drawn, their points. Draw a card or award points from here too.", S("rbReport"), n => n.RulebookTab(ModuleWindow.RulebookOverviewTab)),
             new("Rules", "Everything your Sub has to do, as one list - oaths, places, when you're near, times of day. Each reads as a sentence; pick one to change it.", S("rbRules"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab)),
             new("Add a rule", "+ Add rule walks you through it: what they should do, the details, what happens when they do or don't, then a last look before it's added.", S("rbRules"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab)),
             new("Templates", "Not sure where to start? A template fills an empty rulebook with a ready set you can change. Nothing is sent until you publish.", S("rbTemplates"), n => n.RulebookTab(ModuleWindow.RulebookRulesTab), "Shown while your rulebook is empty, or after Templates..."),
@@ -271,13 +277,13 @@ public static class TutorialCatalog
         ["animation"] =
         [
             Help("animation", "Animations your Owner can play on you, from your Penumbra animation mods. An animation holds you in place until your Owner stops it or you use your safeword."),
-            new("Your animations", "Every animation your scan found, grouped by mod. Pick one to see what it plays and which options it turns on, and to give it an alias your Owner can send.", S("gestureAliases"), n => n.Module("animation"), "Shown once animation mods are scanned in Settings."),
+            new("Your animations", "Every animation your scan found, grouped by mod. Pick one to see what it plays and which options it turns on, and to give it an alias your Owner can send.", S("gestureAliases"), n => n.Module("animation"), "Shown once animation mods are scanned in the Sync module."),
         ],
         ["moodles"] =
         [
             Help("moodles", "Moodles statuses your Owner can put on you."),
-            new("Fixed words", "Words your Owner can always use, like clearing a moodle.", S("moodleFixed"), n => n.Module("moodles")),
-            new("Your moodles", "Every status your scan found. Pick one to give it an alias your Owner can send.", S("moodleAliases"), n => n.Module("moodles"), "Shown once your Moodles statuses are scanned in Settings."),
+            new("Fixed words", "Words your Owner can always use, like clearing your moodles.", S("moodleFixed"), n => n.Module("moodles")),
+            new("Your moodles", "Every status your scan found. Pick one to give it an alias your Owner can send.", S("moodleAliases"), n => n.Module("moodles"), "Shown once your Moodles statuses are scanned in the Sync module."),
         ],
         ["restraints"] =
         [
@@ -322,18 +328,19 @@ public static class TutorialCatalog
             new("Your cage", "Where your Owner caged you and for how long. While it's closed you can't leave or change your permissions. Panic always opens it.", S("cageSub"), n => n.Module("cage")),
         ],
         ["reactions"] = OwnerTours["reactions"],
+        ["achievements"] = OwnerTours["achievements"],
         ["games"] = OwnerTours["games"],
         ["rulebook"] =
         [
             Help("rulebook", "Rules your Owner wrote for you. Nothing runs until you accept, and only they can change a rule after that."),
-            new("New version", "When your Owner publishes, review what changed here and accept or decline it.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
+            new("New version", "When your Owner publishes, review what changed here and accept or decline it. Your Owner is told which, with your reason if you give one. The Rulebook tile is marked until you look.", S("rbSubPending"), n => n.Module("rulebook"), "Shown when a new version arrives."),
             new("Oaths offered", "Each oath needs its own yes. Read what keeping and breaking it does first.", S("rbSubOffers"), n => n.Module("rulebook"), "Shown when an oath is offered."),
-            new("Today", "What's due now, what's about to break, and what you've already done today, with your balance.", S("rbSubToday"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
+            new("Today", "What's due now, what's about to break, and what you've already done today, with your points.", S("rbSubToday"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Your ladder", "Where you are on your Owner's ladder of restraints, and what moves it.", S("rbSubLadder"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook with a ladder."),
             new("Points", "How you earn and lose points, what you can buy with them, and the milestones ahead.", S("rbSubPoints"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Your oaths", "Oaths you swore, how far along they are, and how long they have left. Keeping one pays out when it ends.", S("rbSubOpen"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've accepted a rulebook."),
             new("Card draws", "The cards you drew recently.", S("rbSubLedger"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", once you've drawn a card."),
-            new("Shop", "Spend your ledger points on what your Owner put up for sale. Only you can buy.", S("rbSubShop"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", when your Owner's rulebook has a shop."),
+            new("Shop", "Spend your points on what your Owner put up for sale. Only you can buy.", S("rbSubShop"), n => n.Module("rulebook"), "Under \"Your oaths, all rules, the shop and activity\", when your Owner's rulebook has a shop."),
             new("Rules", "Every rule you accepted, laid out line by line. Only your Owner can change or remove one; your safeword pauses them all.", S("rbSubRules"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
             new("Activity", "Everything the rulebook did, newest first.", S("rbSubActivity"), n => n.Module("rulebook"), "Shown once you've accepted a rulebook."),
         ],

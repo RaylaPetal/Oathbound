@@ -291,6 +291,7 @@ public sealed class RevocationService
         {
             pairing.Paired = false;
             pairing.Rulebook = new();
+            pairing.CatalogDelivery = new();
             pairing.ClearCharacters();
             config.SaveNow();
             PairingRevoked?.Invoke();
@@ -315,6 +316,7 @@ public sealed class RevocationService
         pairing.IncomingRevocationSequence = revocation.Sequence;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.CatalogDelivery = new();
         pairing.ClearCharacters();
         PairingRevoked?.Invoke();
         config.SaveNow();

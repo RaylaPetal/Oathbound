@@ -61,45 +61,52 @@ public sealed partial class ModuleWindow : Window, IDisposable
 
         if (DependencyGates.ModuleBlockedReason(plugin, activeModule) is { } blockedReason)
         {
-            IconGlyph.WrappedColored(Theme.StatusMissing, blockedReason);
+            Status.Line(StatusKind.Error, blockedReason);
             IconGlyph.WrappedDisabled("Install or enable it from /xlplugins. This window updates once it's detected.");
             return;
         }
 
+        var chrome = ModuleChrome.GetValueOrDefault(activeModule, new ModuleChromeEntry(FontAwesomeIcon.Question, activeModule, activeModule, false));
+        DrawModuleHeading(chrome.Icon, isOwner ? chrome.OwnerTitle : chrome.SubTitle, isOwner ? OwnerHeadingAction() : null);
         DrawActiveBanner(isOwner);
+        var canSend = false;
+        if (isOwner && chrome.OwnerSends)
+        {
+            var target = SendReadiness.For(plugin);
+            canSend = target.CanSend;
+            if (target.BlockedReason is { } reason)
+                Status.Line(StatusKind.Caution, reason);
+        }
 
         switch (activeModule)
         {
             case "title":
-                if (isOwner) DrawTitleQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawTitleQuickSection(canSend);
                 else DrawTitleModule();
                 break;
             case "outfit":
-                if (isOwner) DrawOutfitQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawOutfitQuickSection(canSend);
                 else DrawWardrobeModule();
                 break;
             case "animation":
-                if (isOwner) DrawGestureQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawGestureQuickSection(canSend);
                 else DrawGestureModule();
                 break;
             case "moodles":
-                if (isOwner) DrawMoodlesQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawMoodlesQuickSection(canSend);
                 else DrawMoodlesModule();
                 break;
             case "restraints":
-                if (isOwner) DrawRestraintQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawRestraintQuickSection(canSend);
                 else DrawRestraintsModule();
                 break;
             case "toycontrol":
-                if (isOwner) DrawToyControlQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawToyControlQuickSection(canSend);
                 else DrawToyControlModule();
                 break;
             case "customtriggers":
                 if (isOwner)
                 {
-                    var canSend = DrawOwnerCanSendBanner();
-                    IconGlyph.Text(FontAwesomeIcon.BoltLightning, "Custom Triggers");
-                    ImGui.Separator();
                     DrawCommandRow("ctqRevert", canSend, new RowCommand("Revert custom triggers", "customtrigger revert", FixedActionIds.CustomTriggerRevert,
                         "Undoes the title, outfit, animation, moodles and restraints your Custom Triggers applied. Sent chat can't be taken back."));
                     using (Section.Begin("ctqSaved", "Bundles"))
@@ -111,25 +118,18 @@ public sealed partial class ModuleWindow : Window, IDisposable
                     DrawCustomTriggersModule();
                 break;
             case "collar":
-                if (isOwner) DrawCollarQuickSection(DrawOwnerCanSendBanner());
+                if (isOwner) DrawCollarQuickSection(canSend);
                 else DrawCollarModule();
                 break;
             case "follow":
-                // Heading and status span both columns, so the two columns' boxes start level.
+                // Status spans both columns, so the two columns' boxes start level.
                 if (isOwner)
                 {
-                    var canSendLeash = DrawOwnerCanSendBanner();
-                    IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
-                    ImGui.Separator();
                     OwnerStatusView.Draw(plugin);
-                    TwoColumns("followColumns", () => DrawFollowQuickSectionBody(canSendLeash), () => DrawLeashLineSection(plugin.Configuration));
+                    TwoColumns("followColumns", () => DrawFollowQuickSectionBody(canSend), () => DrawLeashLineSection(plugin.Configuration));
                 }
                 else
-                {
-                    IconGlyph.Text(FontAwesomeIcon.Link, "Follow / Leash");
-                    ImGui.Separator();
                     TwoColumns("followColumns", DrawFollowLeashModule, () => DrawLeashLineSection(plugin.Configuration));
-                }
                 break;
             case "sync":
                 DrawSyncTab(isOwner);
@@ -141,7 +141,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
                 DrawRulebookModule(isOwner);
                 break;
             case "cage":
-                DrawCageModule(isOwner);
+                DrawCageModule(isOwner, canSend);
                 break;
             case "games":
                 DrawGamesModule();
@@ -152,14 +152,80 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Returns whether Send should be enabled on that tab.
-    private bool DrawOwnerCanSendBanner()
+    /// `OwnerSends`: the Owner's view sends commands, so it shows why it can't when it can't.
+    private readonly record struct ModuleChromeEntry(FontAwesomeIcon Icon, string OwnerTitle, string SubTitle, bool OwnerSends);
+
+    /// Every module's heading, drawn by the window so heading, banner and send notice always sit in the same order.
+    private static readonly Dictionary<string, ModuleChromeEntry> ModuleChrome = new()
     {
-        var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
-        if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No Sub to send to yet - pick an Owner-side pairing in the header, or pair in Settings. Copy still works.");
-        return canSend;
+        ["title"] = new(FontAwesomeIcon.Heading, "Title", "Title Aliases", true),
+        ["outfit"] = new(FontAwesomeIcon.Tshirt, "Outfit", "Outfit", true),
+        ["animation"] = new(FontAwesomeIcon.TheaterMasks, "Animation", "Animation", true),
+        ["moodles"] = new(FontAwesomeIcon.Smile, "Moodles", "Moodles Aliases", true),
+        ["restraints"] = new(FontAwesomeIcon.Handcuffs, "Restraints", "Restraints", true),
+        ["toycontrol"] = new(FontAwesomeIcon.Plug, "Toy Control", "Toy Control (Intiface)", true),
+        ["customtriggers"] = new(FontAwesomeIcon.BoltLightning, "Custom Triggers", "Custom Triggers", true),
+        ["collar"] = new(FontAwesomeIcon.Lock, "Collar", "Collar", true),
+        ["follow"] = new(FontAwesomeIcon.Link, "Follow / Leash", "Follow / Leash", true),
+        ["cage"] = new(FontAwesomeIcon.Dungeon, "Cage", "Cage", true),
+        // The rulebook names its own pairing problems; its sends say why on hover.
+        ["rulebook"] = new(FontAwesomeIcon.Book, "Rulebook", "Rulebook", false),
+        ["sync"] = new(FontAwesomeIcon.CloudDownloadAlt, "Sync", "Sync", false),
+        ["reactions"] = new(FontAwesomeIcon.Magic, "Reactions", "Reactions", false),
+        ["games"] = new(FontAwesomeIcon.Dice, "Games", "Games", false),
+        ["achievements"] = new(FontAwesomeIcon.Trophy, "Achievements", "Achievements", false),
+    };
+
+    /// The action is right-aligned, or wraps under the heading when the window is too narrow.
+    private static void DrawModuleHeading(FontAwesomeIcon icon, string title, (float Width, Action Draw)? action)
+    {
+        IconGlyph.Text(icon, title);
+        if (action is { } a)
+        {
+            ImGui.SameLine();
+            var avail = ImGui.GetContentRegionAvail().X;
+            if (avail < a.Width)
+                ImGui.NewLine();
+            else if (avail > a.Width)
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + avail - a.Width);
+            a.Draw();
+        }
+        ImGui.Separator();
     }
+
+    /// Clear imported, on the Owner lists that hold what the Sub shared.
+    private (float Width, Action Draw)? OwnerHeadingAction()
+    {
+        var quick = plugin.Configuration.QuickCommands;
+        return activeModule switch
+        {
+            "outfit" => (ConfirmDelete.ClearImportedWidth, () => ClearImportedButton("outfitQuick", quick.Outfits, "outfits", QuickList("outfitQuick"))),
+            "moodles" => (ConfirmDelete.ClearImportedWidth, () => ClearImportedButton("moodlesQuick", quick.Moodles, "moodles", ownerMoodleList)),
+            "restraints" => (ConfirmDelete.ClearImportedWidth, () =>
+                ClearImportedButton("restraintsQuick", quick.Restraints, "restraints", ownerRestraintList, cmd => ImageTile.Delete(cmd.ImageFile))),
+            _ => null,
+        };
+    }
+
+    /// Removes only what came from the Sub; what the Owner made or saved stays.
+    private void ClearImportedButton(string id, List<QuickCommand> list, string noun, ListDetail listDetail, Action<QuickCommand>? onRemoved = null)
+    {
+        var imported = list.Where(IsImported).ToList();
+        if (!ConfirmDelete.ClearImported(id, imported.Count, noun))
+            return;
+        foreach (var cmd in imported)
+        {
+            list.Remove(cmd);
+            onRemoved?.Invoke(cmd);
+        }
+        if (ReferenceEquals(list, plugin.Configuration.QuickCommands.Restraints))
+            ImageTile.DeleteUnusedShared(list.Select(c => c.SharedImageFile));
+        CancelQuickCommandEdit();
+        listDetail.Deleted();
+        plugin.Configuration.Save();
+    }
+
+    private static bool IsImported(QuickCommand cmd) => cmd.Source == ImportSource.Imported;
 
     private bool ResolveOwnerModeView()
     {
@@ -172,10 +238,25 @@ public sealed partial class ModuleWindow : Window, IDisposable
         return isOwner;
     }
 
+    private void DrawOpenSettingsButton(string label, SettingsTab tab)
+    {
+        if (ImGui.Button(label))
+            plugin.SettingsWindow.ShowTab(tab);
+    }
+
+    /// A permission toggle stays disabled until its acknowledgement is given, so that's the tab to open first.
+    private void DrawOpenPermissionButton(bool acknowledged, string id)
+    {
+        if (!acknowledged)
+            DrawOpenSettingsButton($"Open acknowledgements##{id}", SettingsTab.Tos);
+        else if (ImGui.Button($"Open Permissions##{id}"))
+            plugin.SettingsWindow.ShowPermissionsTab();
+    }
+
     private void DrawGoToSyncTabPrompt(string message)
     {
         IconGlyph.WrappedDisabled(message);
-        if (ImGui.Button("Go to Sync tab"))
+        if (ImGui.Button("Go to Sync"))
             Show("sync");
     }
 
@@ -218,26 +299,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Wraps the button to its own line when the window is too narrow.
-    private static void DrawSectionTitleRow(FontAwesomeIcon icon, string title, bool showClearAll, string idSuffix, Action onClearAll)
-    {
-        IconGlyph.Text(icon, title);
-        if (showClearAll)
-        {
-            const string label = "Clear all";
-            var buttonWidth = ButtonWidth(label);
-            ImGui.SameLine();
-            var avail = ImGui.GetContentRegionAvail().X;
-            if (avail < buttonWidth)
-                ImGui.NewLine();
-            else if (avail > buttonWidth)
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + avail - buttonWidth);
-            if (ImGui.Button($"{label}##{idSuffix}"))
-                onClearAll();
-        }
-        ImGui.Separator();
-    }
-
     private readonly Dictionary<object, string> textInputDrafts = new();
 
     /// Returns true once, when editing ends with a changed value, so callers save once per edit, not per keystroke.
@@ -272,25 +333,6 @@ public sealed partial class ModuleWindow : Window, IDisposable
         }
     }
 
-    /// Kept under its old name for the many module rows that call it; there's nothing to copy any more.
-    private void DrawSendCopyButtons(string command, bool canSend, string idSuffix, string sendLabel = "Send")
-    {
-        DrawSendOnly(command, canSend, idSuffix, sendLabel);
-        TutorialService.Anchor(TutorialAnchors.QuickSend);
-    }
-
-    private void DrawSendOnly(string command, bool canSend, string idSuffix, string label)
-    {
-        var fits = CommandSelector.Fits(command);
-        using (ImRaii.Disabled(!canSend || !fits))
-        {
-            if (ImGui.Button($"{label}##{idSuffix}"))
-                plugin.SendCommand(command);
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
-    }
-
     private static int DrawItemSelector(string comboId, string[] labels, ref int? selectedIndex)
     {
         var index = Math.Clamp(selectedIndex ?? 0, 0, labels.Length - 1);
@@ -309,7 +351,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
     private static void DrawReservedWordWarning(string alias)
     {
         if (IsReserved(alias))
-            IconGlyph.WrappedColored(Theme.Warning, $"\"{alias.Trim()}\" is reserved for a fixed Owner command - pick a different alias.");
+            Status.Line(StatusKind.Caution, $"\"{alias.Trim()}\" is reserved for a fixed Owner command - pick a different alias.");
     }
 
     private static void DrawFixedWord(string label, string word)
@@ -334,7 +376,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
             using (ImRaii.Disabled())
                 if (ImGui.BeginCombo($"Moodle (optional)##{id}", preview))
                     ImGui.EndCombo();
-            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            Status.Line(StatusKind.Error, blocked);
             return false;
         }
 
@@ -348,7 +390,11 @@ public sealed partial class ModuleWindow : Window, IDisposable
             }
             var statuses = config.MoodlesMapping.LocalCatalog.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
             if (statuses.Count == 0)
-                ImGui.TextDisabled("No scanned Moodles statuses - rescan in Settings (gear icon).");
+            {
+                ImGui.TextDisabled("No scanned Moodles statuses yet.");
+                if (ImGui.Selectable($"Go to Sync to scan your Moodles##{id}_sync"))
+                    Show("sync");
+            }
             foreach (var status in statuses)
             {
                 if (!Guid.TryParse(status.StatusId, out var statusId))

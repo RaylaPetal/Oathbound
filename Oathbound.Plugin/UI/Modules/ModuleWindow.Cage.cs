@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
-using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
@@ -31,12 +30,10 @@ public sealed partial class ModuleWindow
     public System.Numerics.Vector2? NewCagePreviewHalf =>
         CagePreviewActive && plugin.Configuration.ShowCageBounds ? CageLimits.HalfExtents(newCagePinned ? 0 : newCageRadius, newCageRadiusZ) : null;
 
-    private void DrawCageModule(bool isOwner)
+    private void DrawCageModule(bool isOwner, bool canSend)
     {
-        IconGlyph.Text(FontAwesomeIcon.Dungeon, "Cage");
-        ImGui.Separator();
         if (isOwner)
-            DrawOwnerCage(DrawOwnerCanSendBanner());
+            DrawOwnerCage(canSend);
         else
         {
             using (Section.Begin("cageSub", "Your cage"))
@@ -88,21 +85,21 @@ public sealed partial class ModuleWindow
         var name = pairing.PeerName ?? "Your Sub";
         if (status is null)
             IconGlyph.WrappedDisabled(sent is { Open: false }
-                ? $"You sent \"{sent.Name}\" {Ago(sent.At)}. Waiting for {name}'s client to report it."
+                ? $"You sent \"{sent.Name}\" {TimeText.Ago(sent.At)}. Waiting for {name}'s client to report it."
                 : $"{name}'s client hasn't reported a cage.");
         else
         {
-            var since = Ago(status.StateAt);
+            var since = TimeText.Ago(status.StateAt);
             switch (status.State)
             {
                 case CageStatusReporter.Caged:
-                    IconGlyph.WrappedColored(Theme.Warning, status.EndsAt is { } end
-                        ? $"{name} is caged ({RestraintLock.Format(end - DateTimeOffset.UtcNow)} left), since {since}."
+                    Status.Line(StatusKind.Caution, status.EndsAt is { } end
+                        ? $"{name} is caged ({TimeText.Left(end - DateTimeOffset.UtcNow)}), since {since}."
                         : $"{name} is caged until you open it, since {since}.");
                     break;
                 case CageStatusReporter.Armed:
                     IconGlyph.WrappedDisabled(status.EndsAt is { } wait
-                        ? $"The cage is waiting for {name} to arrive (until {RestraintLock.Format(wait - DateTimeOffset.UtcNow)} from now), since {since}."
+                        ? $"The cage is waiting for {name} to arrive (for {TimeText.Duration(wait - DateTimeOffset.UtcNow)} more), since {since}."
                         : $"The cage is waiting for {name} to arrive, since {since}.");
                     break;
                 default:
@@ -110,14 +107,15 @@ public sealed partial class ModuleWindow
                     break;
             }
             if (sent is { Open: false } s && s.At > status.StateAt.AddSeconds(5))
-                IconGlyph.WrappedDisabled($"You sent \"{s.Name}\" {Ago(s.At)} - checking every few minutes until it's reported.");
+                IconGlyph.WrappedDisabled($"You sent \"{s.Name}\" {TimeText.Ago(s.At)} - checking every few minutes until it's reported.");
         }
 
-        using (ImRaii.Disabled(!canSend))
-        {
-            if (ImGui.Button("Open cage"))
-                ReportCageSend(CageSendAction.TryOpen(plugin));
-        }
+        if (plugin.OwnerCageStatus.RefusalFor(pairing) is { } refused)
+            Status.Line(StatusKind.Error, refused.Open
+                ? $"{name}'s client refused to open the cage {TimeText.Ago(refused.At)}: {refused.Code.ToOwnerText()}."
+                : $"{name}'s client refused \"{refused.Name}\" {TimeText.Ago(refused.At)}: {refused.Code.ToOwnerText()}.");
+
+        SendButton.Draw(plugin, new SendSpec("cageOpen", "Open cage") { Custom = SendNotice.Cage(() => CageSendAction.TryOpen(plugin)) });
         IconGlyph.HelpMarker("Opens the cage you put your Sub in, or calls off one that's still waiting for them. Only the Owner who caged them can open it.");
     }
 
@@ -156,7 +154,7 @@ public sealed partial class ModuleWindow
         ImGui.SameLine();
         DrawShowCageBounds();
         if (cageSaveError is not null)
-            IconGlyph.WrappedColored(Theme.Warning, cageSaveError);
+            Status.Line(StatusKind.Error, cageSaveError);
     }
 
     private void DrawSavedCage(SavedCage cage, bool canSend)
@@ -213,24 +211,19 @@ public sealed partial class ModuleWindow
         }
         IconGlyph.HelpMarker("If your Sub isn't there when you send it, the cage waits this long (1 hour to 7 days) for them to arrive, then gives up.");
 
-        using (ImRaii.Disabled(!canSend))
+        SendButton.Draw(plugin, new SendSpec($"cageSend_{cage.Id}", "Send")
         {
-            if (ImGui.Button("Send"))
-                ReportCageSend(CageSendAction.TrySend(plugin, cage));
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Cages your Sub here: it closes now if they're there, otherwise when they arrive.");
+            Help = "Cages your Sub here: it closes now if they're there, otherwise when they arrive.",
+            Custom = SendNotice.Cage(() => CageSendAction.TrySend(plugin, cage)),
+        });
         ImGui.SameLine();
         var apartment = CagePlaces.IsApartment(cage.Place);
-        using (ImRaii.Disabled(!canSend || apartment))
+        SendButton.Draw(plugin, new SendSpec($"cageBring_{cage.Id}", "Bring & lock")
         {
-            if (ImGui.Button("Bring & lock"))
-                ReportCageSend(CageSendAction.TrySend(plugin, cage, bring: true));
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(apartment
-                ? "Apartments can't be travelled to. Send it instead; it closes when your Sub walks in."
-                : "Like Send, but if your Sub is elsewhere their character travels here by itself (world, teleport, then walking) and is locked in on arrival. Needs their Teleport permission. For a house, they're also taken through the door and walked to the cage.");
+            Help = "Like Send, but if your Sub is elsewhere their character travels here by itself (world, teleport, then walking) and is locked in on arrival. Needs their Teleport permission. For a house, they're also taken through the door and walked to the cage.",
+            BlockedReason = apartment ? "Apartments can't be travelled to. Send it instead; it closes when your Sub walks in." : null,
+            Custom = SendNotice.Cage(() => CageSendAction.TrySend(plugin, cage, bring: true)),
+        });
         ImGui.SameLine();
         if (ImGui.Button("Move here"))
         {
@@ -248,7 +241,7 @@ public sealed partial class ModuleWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Moves this cage to where you're standing now.");
         ImGui.SameLine();
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", cage.Name))
         {
             config.SavedCages.Remove(cage);
             config.Save();
@@ -285,19 +278,6 @@ public sealed partial class ModuleWindow
         return changed;
     }
 
-    private static void ReportCageSend((bool Success, string? Error) result)
-    {
-        if (result.Success)
-            return;
-        Plugin.NotificationManager.AddNotification(new Notification
-        {
-            Title = "Oathbound",
-            Content = result.Error ?? "The cage command couldn't be sent.",
-            Type = NotificationType.Warning,
-            InitialDuration = TimeSpan.FromSeconds(5),
-        });
-    }
-
     private void DrawShowCageBounds()
     {
         var config = plugin.Configuration;
@@ -314,7 +294,10 @@ public sealed partial class ModuleWindow
     {
         var config = plugin.Configuration;
         if (!config.Permissions.Cage || !config.CageAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Your Cage permission is off, so no Owner can cage you. Turn it on in Settings > Permissions once you've read its acknowledgement on the ToS tab.");
+        {
+            Status.Line(StatusKind.Caution, "Your Cage permission is off, so no Owner can cage you. Turn it on in Settings > Permissions once you've read its acknowledgement in Settings > ToS.");
+            DrawOpenPermissionButton(config.CageAcknowledged, "cagePerm");
+        }
 
         if (plugin.CageService.Cage is not { } cage)
         {
@@ -323,21 +306,15 @@ public sealed partial class ModuleWindow
         }
 
         var caged = cage.Phase == CagePhase.Caged;
-        IconGlyph.WrappedColored(caged ? Theme.Warning : Theme.TextMuted,
+        IconGlyph.WrappedColored(caged ? Theme.Caution : Theme.Muted,
             caged ? $"{cage.OwnerName} has you in \"{cage.Name}\"." : $"{cage.OwnerName} set \"{cage.Name}\" - it closes when you're at {CagePlaces.Describe(cage.Place)}.");
         if (caged)
-            IconGlyph.WrappedDisabled(cage.EndsAtUtc is { } end ? $"{RestraintLock.Format(end - DateTime.UtcNow)} left." : "Until they open it.");
+            IconGlyph.WrappedDisabled(cage.EndsAtUtc is { } end ? $"{TimeText.Left(end)}." : "Until they open it.");
         else if (!cage.HasClosed)
-            IconGlyph.WrappedDisabled($"It waits {RestraintLock.Format(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more for you to arrive. Turning your Cage permission off calls it off.");
+            IconGlyph.WrappedDisabled($"It waits {TimeText.Duration(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more for you to arrive. Turning your Cage permission off calls it off.");
         IconGlyph.WrappedDisabled(cage.Post ? $"You're tied to a post: you can move within {cage.Radius:0} yalms of it." : cage.IsPinned ? "Pinned: you can't move while it's closed." : CageLimits.HalfExtents(cage.Radius, cage.RadiusZ) is var half && half.X == half.Y
             ? $"You can move within {half.X:0.#} yalms of its spot."
             : $"You can move within {half.X:0.#} yalms of its spot along X (east-west) and {half.Y:0.#} along Z (north-south).");
         IconGlyph.WrappedDisabled("While caged you can't leave, change your permissions, struggle, use keys or take restraints off. Panic always opens it.");
-    }
-
-    private static string Ago(DateTimeOffset at)
-    {
-        var span = DateTimeOffset.UtcNow - at;
-        return span < TimeSpan.FromMinutes(1) ? "just now" : $"{RestraintLock.Format(span)} ago";
     }
 }

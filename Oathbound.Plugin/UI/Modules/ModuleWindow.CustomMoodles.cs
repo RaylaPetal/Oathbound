@@ -84,7 +84,7 @@ public sealed partial class ModuleWindow
             if (ImGui.InputInt("minutes##cmMinutes", ref minutes, 15, 60))
                 d.Seconds = Math.Clamp(minutes, CustomMoodle.MinSeconds / 60, CustomMoodle.MaxSeconds / 60) * 60;
             ImGui.SameLine();
-            ImGui.TextDisabled($"= {RestraintLock.Format(TimeSpan.FromSeconds(d.Seconds))}");
+            ImGui.TextDisabled($"= {TimeText.Duration(TimeSpan.FromSeconds(d.Seconds))}");
         }
 
         Section.SubHeading("Icon");
@@ -97,16 +97,16 @@ public sealed partial class ModuleWindow
             ImGui.SameLine();
         }
         ImGui.BeginGroup();
-        ImGui.TextColored(d.Kind switch { 1 => Theme.Warning, 2 => Theme.AccentHover, _ => Theme.Success },
+        ImGui.TextColored(d.Kind switch { 1 => Theme.Caution, 2 => Theme.AccentHover, _ => Theme.Ok },
             d.Title.Length == 0 ? "(no title)" : MoodlesTextFormat.StripMarkup(d.Title));
         if (d.Description.Length > 0)
             IconGlyph.WrappedDisabled(d.Description);
-        ImGui.TextDisabled(d.Seconds == 0 ? "Until removed" : $"Lasts {RestraintLock.Format(TimeSpan.FromSeconds(d.Seconds))}");
+        ImGui.TextDisabled(d.Seconds == 0 ? "Until removed" : $"Lasts {TimeText.Duration(TimeSpan.FromSeconds(d.Seconds))}");
         ImGui.EndGroup();
 
         var problem = d.Problem() ?? (CommandSelector.Fits(d.ApplyCommand()) ? null : "Too long to send - shorten the title, description or color tags.");
         if (problem is not null)
-            IconGlyph.WrappedColored(Theme.Warning, problem);
+            Status.Line(StatusKind.Caution, problem);
         ImGui.Spacing();
         using (ImRaii.Disabled(problem is not null))
         {

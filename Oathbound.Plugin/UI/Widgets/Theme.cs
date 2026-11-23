@@ -13,12 +13,22 @@ public static class Theme
     public static readonly Vector4 TileBg = new(0.18f, 0.18f, 0.23f, 1f);
     public static readonly Vector4 TileBgHover = new(0.27f, 0.21f, 0.34f, 1f);
 
-    public static readonly Vector4 TextMuted = new(0.62f, 0.62f, 0.68f, 1f);
-    public static readonly Vector4 Success = new(0.35f, 0.85f, 0.35f, 1f);
-    public static readonly Vector4 Warning = new(0.9f, 0.72f, 0.25f, 1f);
-    public static readonly Vector4 Danger = new(0.65f, 0.42f, 0.42f, 1f);
-    /// Danger is too muted to read as red.
-    public static readonly Vector4 StatusMissing = new(0.92f, 0.32f, 0.32f, 1f);
+    /// Status colours, one meaning each (see Status): something failed or is missing.
+    public static readonly Vector4 Error = new(0.92f, 0.32f, 0.32f, 1f);
+    /// Needs the user's attention or a wait on someone else, but nothing failed.
+    public static readonly Vector4 Caution = new(0.9f, 0.72f, 0.25f, 1f);
+    /// A normal state or something in progress. Kept apart from the purple accent.
+    public static readonly Vector4 Info = new(0.48f, 0.72f, 0.95f, 1f);
+    /// Secondary explanation.
+    public static readonly Vector4 Muted = new(0.62f, 0.62f, 0.68f, 1f);
+    /// Done or connected.
+    public static readonly Vector4 Ok = new(0.35f, 0.85f, 0.35f, 1f);
+    /// Fill for a button that is asking to confirm an end, revert or delete. Not a status colour.
+    public static readonly Vector4 Destructive = new(0.65f, 0.42f, 0.42f, 1f);
+    /// Unread/attention dots.
+    public static readonly Vector4 Notify = Error;
+
+    public static readonly Vector4 TextMuted = Muted;
 
     public static readonly Vector4 Bronze = new(0.80f, 0.52f, 0.30f, 1f);
     public static readonly Vector4 Silver = new(0.78f, 0.80f, 0.86f, 1f);

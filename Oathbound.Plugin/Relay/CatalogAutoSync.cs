@@ -28,6 +28,7 @@ public sealed class CatalogAutoSync
     private readonly PluginConfig config;
     private readonly CatalogMailboxService mailbox;
     private readonly CatalogSyncService catalogSync;
+    private readonly MailboxStatusService statuses;
     private readonly Action[] rescanSteps;
     private readonly Func<CancellationToken> backgroundToken;
 
@@ -48,19 +49,24 @@ public sealed class CatalogAutoSync
     private readonly ConcurrentDictionary<Guid, byte> mailboxAware = new();
     /// Sub pairings with a change to compare against what was last published, once the upload interval allows.
     private readonly ConcurrentDictionary<Guid, byte> pendingChange = new();
-    /// Sub pairings whose last publish didn't arrive; sent again regardless of the local interval or digest.
-    private readonly ConcurrentDictionary<Guid, byte> pendingRedelivery = new();
+    /// Sub pairings whose last publish didn't arrive; sent again regardless of the local interval or digest. The value
+    /// is true when it is a resend after the Owner's plugin rejected the last copy, which counts toward the resend limit.
+    private readonly ConcurrentDictionary<Guid, bool> pendingRedelivery = new();
     /// Only a relay-requested wait survives a pair status poll; other holds are lifted when the poll shows a reason to retry.
     private readonly ConcurrentDictionary<Guid, (DateTime NotBefore, bool RateLimited)> subRetry = new();
     private readonly ConcurrentDictionary<Guid, DateTime> nextOwnerCheckUtc = new();
 
-    public CatalogAutoSync(PluginConfig config, CatalogMailboxService mailbox, CatalogSyncService catalogSync,
+    public CatalogAutoSync(PluginConfig config, CatalogMailboxService mailbox, CatalogSyncService catalogSync, MailboxStatusService statuses,
         OutfitCommand outfit, GestureCommand gesture, RestraintCommand restraints, MoodlesCommand moodles,
         Func<CancellationToken> backgroundToken)
     {
         this.config = config;
         this.mailbox = mailbox;
         this.catalogSync = catalogSync;
+        this.statuses = statuses;
+        // Requests from the retired catalog request flow can't be finished by this version.
+        if (config.PendingRelayOperations.RemoveAll(o => o.Kind == "catalog-request") > 0)
+            config.SaveNow();
         this.backgroundToken = backgroundToken;
         rescanSteps = [outfit.Rescan, gesture.Rescan, restraints.RescanCatalog, moodles.Rescan];
         config.Changed += MarkDirty;
@@ -125,20 +131,48 @@ public sealed class CatalogAutoSync
 
         if (!state.Exists)
             return; // No Owner receive key yet; a pending change stays pending.
+        var delivery = pairing.CatalogDelivery;
         var lastPublished = pairing.LastPublishedMailboxSnapshotId;
-        var delivered = (state.WaitingSnapshotId ?? 0) >= lastPublished || (state.LastConsumedSnapshotId ?? 0) >= lastPublished;
-        if (lastPublished > 0 && !delivered)
+        MailboxStatusService.ObserveReceiver(pairing, delivery, MailboxNames.Catalog, state.RecipientStatus, state.WaitingSnapshotId, state.LastConsumedSnapshotId);
+
+        if (state.RefreshRequestedAt is { } asked && asked > delivery.LastSeenRefreshAt)
         {
-            Plugin.Log.Debug($"Catalog sync for {pairing.PeerName}: snapshot #{lastPublished} never arrived, sending again.");
-            pendingRedelivery[pairing.Id] = 0;
+            delivery.LastSeenRefreshAt = asked;
+            delivery.ConsecutiveResends = 0;
+            Plugin.Log.Debug($"Catalog sync for {pairing.PeerName}: the Owner asked for the latest catalog.");
+            pendingRedelivery[pairing.Id] = false;
+            subRetry.TryRemove(pairing.Id, out _);
+            config.SaveDisplayState();
+            return;
         }
-        else
+
+        switch (MailboxStatusService.Evaluate(delivery, lastPublished))
         {
-            // Local compare only; covers a first publish and a change held back while no key existed.
-            pendingChange[pairing.Id] = 0;
+            case MailboxSentState.Lost:
+                Plugin.Log.Debug($"Catalog sync for {pairing.PeerName}: snapshot #{lastPublished} never arrived, sending again.");
+                pendingRedelivery[pairing.Id] = false;
+                break;
+            case MailboxSentState.Rejected when MailboxStatusService.ShouldResend(delivery, lastPublished):
+                Plugin.Log.Information($"Catalog sync for {pairing.PeerName}: the Owner's plugin couldn't read snapshot #{lastPublished} ({delivery.PeerReceiptCode}), sending again.");
+                pendingRedelivery[pairing.Id] = true;
+                break;
+            default:
+                // Local compare only; covers a first publish and a change held back while no key existed.
+                pendingChange[pairing.Id] = 0;
+                break;
         }
+        config.SaveDisplayState();
         if (subRetry.TryGetValue(pairing.Id, out var hold) && !hold.RateLimited)
             subRetry.TryRemove(pairing.Id, out _);
+    }
+
+    /// An Owner on an older plugin asked for the catalog through the retired request flow; answered through the mailbox.
+    public void RequestRedelivery(PairingState pairing)
+    {
+        if (pairing is not { Direction: PairingDirection.SubSide, IsPaired: true })
+            return;
+        Plugin.Log.Information($"Catalog sync for {pairing.PeerName}: their Owner asked for the catalog, publishing it to the mailbox.");
+        pendingRedelivery[pairing.Id] = false;
     }
 
     /// A new Sub may never have scanned anything; scanning now means its first upload carries the real catalog
@@ -211,7 +245,7 @@ public sealed class CatalogAutoSync
         {
             nextFallbackDeliveryUtc = now + Hourly + Jitter();
             foreach (var pairing in subPairings.Where(p => !mailboxAware.ContainsKey(p.Id)))
-                pendingRedelivery[pairing.Id] = 0;
+                pendingRedelivery[pairing.Id] = false;
         }
         foreach (var id in pendingChange.Keys.Concat(pendingRedelivery.Keys).Where(id => subPairings.All(p => p.Id != id)).ToList())
         {
@@ -226,22 +260,23 @@ public sealed class CatalogAutoSync
 
         if (!catalogSync.TryBuildBoundedExport(out var exportText, out var exportError, out var nothingToShare))
         {
-            // Not an error and not retried every second: the first scan saves the catalog, which marks it dirty again.
-            if (nothingToShare)
-            {
-                foreach (var pairing in due)
-                {
-                    pendingChange.TryRemove(pairing.Id, out _);
-                    pendingRedelivery.TryRemove(pairing.Id, out _);
-                }
-                return;
-            }
-            Plugin.Log.Warning(exportError ?? "Catalog export exceeded a local size limit; not published.");
+            // Not retried every second: the first scan saves the catalog, which marks it dirty again.
+            if (!nothingToShare)
+                Plugin.Log.Warning(exportError ?? "Catalog export exceeded a local size limit; not published.");
+            var code = nothingToShare ? MailboxStatusCodes.NotScanned : MailboxStatusCodes.TooLarge;
             foreach (var pairing in due)
             {
                 pendingChange.TryRemove(pairing.Id, out _);
                 pendingRedelivery.TryRemove(pairing.Id, out _);
+                pairing.LastPublishAttemptUnixSeconds = new DateTimeOffset(now).ToUnixTimeSeconds();
+                pairing.LastPublishOutcome = nothingToShare ? MailboxPublishOutcome.NotReady : MailboxPublishOutcome.Failed;
+                pairing.LastPublishError = nothingToShare
+                    ? "Nothing has been scanned yet - scan below and your catalog goes out by itself."
+                    : "Your catalog is too large to share - narrow the scanned folders below.";
+                pairing.NextPublishRetryUnixSeconds = 0;
+                statuses.SetSenderStatus(pairing, pairing.CatalogDelivery, MailboxNames.Catalog, code, 0, backgroundToken());
             }
+            config.SaveDisplayState();
             return;
         }
         var digest = RelayCrypto.Sha256Hex(exportText);
@@ -249,9 +284,10 @@ public sealed class CatalogAutoSync
         foreach (var pairing in due)
         {
             pendingChange.TryRemove(pairing.Id, out _);
-            if (!pendingRedelivery.TryRemove(pairing.Id, out _) && digest == pairing.LastPublishedCatalogDigest)
+            var redelivery = pendingRedelivery.TryRemove(pairing.Id, out var afterReject);
+            if (!redelivery && digest == pairing.LastPublishedCatalogDigest)
                 continue; // Saves that didn't change the export, or a change that was reverted.
-            Publish(pairing, exportText, digest);
+            Publish(pairing, exportText, digest, redelivery, redelivery && afterReject);
         }
     }
 
@@ -270,9 +306,9 @@ public sealed class CatalogAutoSync
     private static bool UploadWindowOpen(PairingState pairing, DateTime now) =>
         now >= DateTimeOffset.FromUnixTimeSeconds(pairing.LastPublishedCatalogUnixSeconds).UtcDateTime + UploadInterval;
 
-    private void Publish(PairingState pairing, string exportText, string digest)
+    private void Publish(PairingState pairing, string exportText, string digest, bool force, bool resendAfterReject)
     {
-        var task = mailbox.PublishAsync(pairing, exportText, digest, backgroundToken());
+        var task = mailbox.PublishAsync(pairing, exportText, digest, force, backgroundToken());
         Plugin.FireAndForget(task.ContinueWith(t =>
         {
             if (t.IsCanceled) return;
@@ -286,6 +322,7 @@ public sealed class CatalogAutoSync
             {
                 case MailboxPublishOutcome.Published:
                     subRetry.TryRemove(pairing.Id, out _);
+                    MailboxStatusService.RecordSent(pairing.CatalogDelivery, digest, resendAfterReject);
                     break;
                 case MailboxPublishOutcome.RateLimited:
                     retryAt = now.AddSeconds(result.RetryAfterSeconds + 1);
@@ -300,7 +337,13 @@ public sealed class CatalogAutoSync
             }
             pairing.LastPublishAttemptUnixSeconds = new DateTimeOffset(now).ToUnixTimeSeconds();
             pairing.LastPublishOutcome = result.Outcome;
-            pairing.LastPublishError = result.Error;
+            // A problem stays shown until the next successful publish; a rate limit or a busy retry doesn't hide it.
+            if (result.Outcome == MailboxPublishOutcome.Published)
+                pairing.LastPublishError = null;
+            else if (result.Error is not null)
+                pairing.LastPublishError = result.Error;
+            if (result.Outcome == MailboxPublishOutcome.Failed)
+                Plugin.Log.Warning($"Catalog sync for {pairing.PeerName}: publish failed: {result.Error}");
             pairing.NextPublishRetryUnixSeconds = retryAt is { } at ? new DateTimeOffset(at).ToUnixTimeSeconds() : 0;
             config.SaveDisplayState();
         }, TaskScheduler.Default));

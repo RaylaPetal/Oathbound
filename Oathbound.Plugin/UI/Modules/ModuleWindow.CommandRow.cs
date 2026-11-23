@@ -14,7 +14,7 @@ public sealed partial class ModuleWindow
 
     private readonly record struct FixedWordInfo(string Label, string Word, string Help);
 
-    /// Each command is one send button with a favorite star; right-click a button to copy its command.
+    /// Each command is one send button with a favorite star.
     private void DrawCommandRow(string sectionId, bool canSend, params RowCommand[] commands)
     {
         using var box = Section.Begin(sectionId);
@@ -27,7 +27,6 @@ public sealed partial class ModuleWindow
         foreach (var c in commands)
         {
             var command = OwnerMoodleOverride.ForSend(plugin.Configuration, c.Command, null);
-            var fits = CommandSelector.Fits(command);
             if (!first)
             {
                 ImGui.SameLine(0, ImGui.GetStyle().ItemSpacing.X * 2);
@@ -37,13 +36,12 @@ public sealed partial class ModuleWindow
             first = false;
 
             ImGui.BeginGroup();
-            using (ImRaii.Disabled(!canSend || !fits))
+            SendButton.Draw(plugin, new SendSpec($"cmdrow_{c.FavoriteId}", c.Label)
             {
-                if (ImGui.Button($"{c.Label}##cmdrow_{c.FavoriteId}"))
-                    plugin.SendCommand(command);
-            }
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip((c.Help is null ? "" : c.Help + "\n") + (canSend ? command : "Not paired with a Sub yet."));
+                Command = command,
+                Help = c.Help,
+                BlockedReason = canSend ? null : SendReadiness.NoSubReason,
+            });
             ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
             DrawFavoriteStar(c.FavoriteId);
             ImGui.EndGroup();

@@ -22,7 +22,12 @@ public enum PeerDelivery
     NotReady,
 }
 
-public readonly record struct PeerSendResult(Guid PairingId, string Kind, string Text, PeerDelivery Delivery);
+/// Seq and Epoch are 0 for a frame that never went out.
+public readonly record struct PeerSendResult(Guid PairingId, string Kind, string Text, PeerDelivery Delivery, long Seq = 0, int Epoch = 0);
+
+/// What a send did right away: why it couldn't go out, or the seq of the frame that did (its results follow through
+/// SendResult).
+public readonly record struct PeerSent(PeerDelivery? Failure, long Seq);
 
 /// What happened to one chat message. Stored is followed later by Delivered or Expired, possibly sessions later.
 public enum ChatDelivery
@@ -61,7 +66,7 @@ public sealed class PeerMessenger
     private const string ChatIdPrefix = "c";
     private int nextId;
 
-    private sealed record Pending(Guid PairingId, string Kind, string Text, DateTime SentUtc)
+    private sealed record Pending(Guid PairingId, string Kind, string Text, DateTime SentUtc, long Seq, int Epoch)
     {
         public bool Held { get; set; }
     }
@@ -77,8 +82,8 @@ public sealed class PeerMessenger
         socket.StateChanged += OnStateChanged;
     }
 
-    /// A frame accepted from a pairing's peer, with the confirmed-or-not character it names.
-    public event Action<PairingState, PeerMessagePlaintext>? FrameAccepted;
+    /// A frame accepted from a pairing's peer, with the confirmed-or-not character it names, and its seq.
+    public event Action<PairingState, PeerMessagePlaintext, long>? FrameAccepted;
 
     /// The relay says something on this pairing changed.
     public event Action<PairingState>? HintReceived;
@@ -94,14 +99,14 @@ public sealed class PeerMessenger
 
     public bool Connected => socket.State == RelaySocketState.Connected;
 
-    public PeerDelivery? SendCommand(PairingState pairing, string text) => Send(pairing, PeerMessagePlaintext.CommandKind, text, safety: false);
+    public PeerSent SendCommand(PairingState pairing, string text) => Send(pairing, PeerMessagePlaintext.CommandKind, text, safety: false);
 
-    public PeerDelivery? SendNotice(PairingState pairing, string text) => Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: false);
+    public PeerSent SendNotice(PairingState pairing, string text) => Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: false);
 
     /// The safeword ping: retried until accepted or too old to matter, and never held back by send limits.
     public void SendSafetyNotice(PairingState pairing, string text)
     {
-        if (Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: true) == PeerDelivery.RelayUnreachable)
+        if (Send(pairing, PeerMessagePlaintext.NoticeKind, text, safety: true).Failure == PeerDelivery.RelayUnreachable)
             safetyRetries.Add(new SafetyRetry(pairing.Id, text, DateTime.UtcNow.AddSeconds(PeerMessageCrypto.MaxAgeSeconds)));
     }
 
@@ -158,13 +163,12 @@ public sealed class PeerMessenger
         ChatResult?.Invoke(id, delivery);
     }
 
-    /// Null when the frame went out and its result will follow through SendResult; otherwise why it couldn't.
-    private PeerDelivery? Send(PairingState pairing, string kind, string text, bool safety)
+    private PeerSent Send(PairingState pairing, string kind, string text, bool safety)
     {
         if (!pairing.IsPaired || pairing.PairIdHash is null || pairing.PeerPublicKeyX is null || pairing.PeerPublicKeyY is null)
-            return Report(pairing, kind, text, PeerDelivery.NotReady);
+            return new PeerSent(Report(pairing, kind, text, PeerDelivery.NotReady), 0);
         if (!Connected)
-            return Report(pairing, kind, text, PeerDelivery.RelayUnreachable);
+            return new PeerSent(Report(pairing, kind, text, PeerDelivery.RelayUnreachable), 0);
 
         var me = CodePairingService.CurrentCharacter(null);
         var header = new PeerFrameHeader(pairing.PairIdHash, pairing.PairEpoch, SideOf(pairing.Direction), pairing.NextOutgoingFrameSeq(),
@@ -175,6 +179,7 @@ public sealed class PeerMessenger
             Kind = kind,
             Text = text,
             Character = me is null ? null : new CharacterRecordEntry { Name = me.Name, World = me.World },
+            Receipt = kind == PeerMessagePlaintext.CommandKind && pairing.Direction == PairingDirection.OwnerSide ? true : null,
         };
 
         string nonce, ciphertext;
@@ -185,11 +190,11 @@ public sealed class PeerMessenger
         catch (Exception ex) when (ex is InvalidOperationException or DeviceIdentityUnavailableException)
         {
             Plugin.Log.Warning($"Frame not sent: {ex.Message}");
-            return Report(pairing, kind, text, PeerDelivery.Refused);
+            return new PeerSent(Report(pairing, kind, text, PeerDelivery.Refused), 0);
         }
 
         var id = $"f{++nextId}";
-        pending[id] = new Pending(pairing.Id, kind, text, DateTime.UtcNow);
+        pending[id] = new Pending(pairing.Id, kind, text, DateTime.UtcNow, header.Seq, header.PairEpoch);
         var wire = JsonSerializer.Serialize(new
         {
             type = "send",
@@ -208,7 +213,7 @@ public sealed class PeerMessenger
             if (task.IsCompletedSuccessfully && task.Result) return;
             Plugin.Framework.RunOnFrameworkThread(() => Resolve(id, PeerDelivery.RelayUnreachable));
         });
-        return null;
+        return new PeerSent(null, header.Seq);
     }
 
     private PeerDelivery Report(PairingState pairing, string kind, string text, PeerDelivery delivery)
@@ -316,7 +321,7 @@ public sealed class PeerMessenger
             };
             SetRelayState(pairing, state);
         }
-        SendResult?.Invoke(new PeerSendResult(p.PairingId, p.Kind, p.Text, delivery));
+        SendResult?.Invoke(new PeerSendResult(p.PairingId, p.Kind, p.Text, delivery, p.Seq, p.Epoch));
     }
 
     public void SetRelayState(PairingState pairing, PeerRelayState state)
@@ -383,7 +388,7 @@ public sealed class PeerMessenger
             pairing.ResolveTarget();
         }
         config.Save();
-        FrameAccepted?.Invoke(pairing, message);
+        FrameAccepted?.Invoke(pairing, message, header.Seq);
     }
 
     /// Chat has no age limit (it may have waited days on the relay), but the same pairing, side and replay checks.

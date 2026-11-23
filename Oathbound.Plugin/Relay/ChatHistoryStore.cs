@@ -30,6 +30,8 @@ public sealed class ChatEntry
     public ChatEntryState State { get; set; }
     /// Why an outgoing message wasn't delivered.
     public string? Reason { get; set; }
+    /// It wasn't delivered because the partner's version can't receive chat yet.
+    public bool FailedNeedsUpdate { get; set; }
 
     /// A picture message: Text is then its caption, possibly empty.
     public ChatImageState Image { get; set; }

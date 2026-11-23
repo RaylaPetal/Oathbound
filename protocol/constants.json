@@ -31,7 +31,7 @@
     "kdfInfo": "\"oathbound-relay-message-v1\" || pairIdHash || pairEpoch (decimal), UTF-8 concatenation; salt is SHA-256(UTF-8 of pairIdHash + \"|\" + pairEpoch)",
     "aead": "AES-256-GCM, 12-byte random nonce, 16-byte tag",
     "aad": "JCS({pairIdHash, pairEpoch, from: \"owner\" | \"sub\", seq, sentAt}); these five travel in the clear in the frame",
-    "plaintext": "Plain JSON {v: 1, kind: \"command\" | \"notice\", text, character: {n, w} | null}",
+    "plaintext": "Plain JSON {v: 1, kind: \"command\" | \"notice\", text, character: {n, w} | null, receipt?: true}; receipt is written only when true and only on owner commands, and a reader that doesn't know it ignores it",
     "seq": "Strictly increasing per pairing and direction; a sender uses max(last + 1, unix milliseconds) so a restored config can't reuse one",
     "sentAt": "Unix seconds when sealed",
     "maxTextBytes": 4096,
@@ -40,7 +40,21 @@
     "heldFramesMax": 32,
     "deviceBurstFrames": 20,
     "deviceBurstWindowSeconds": 10,
-    "deviceHourlyFrames": 600
+    "deviceHourlyFrames": 600,
+    "receipts": {
+      "description": "collar/command-receipts and the rulebook/oath decision notice. Both are ordinary sub -> owner notices (kind \"notice\") under every peerMessage rule; the relay can't tell them from other notices.",
+      "receiptText": "collarreceipt <seq>:<a|r>[:<code>]( <seq>:<a|r>[:<code>])*; seq is the answered owner command frame's seq (decimal), a = applied, r = refused, and a refused entry carries exactly one code",
+      "reasonCodes": ["permission", "unknown", "unconfirmed", "caged", "unavailable", "unsupported", "failed", "other"],
+      "asking": "The sub answers only command frames whose plaintext has receipt: true, never notices or its own rulebook consequences",
+      "maxEntriesPerFrame": 50,
+      "coalesceSeconds": 1,
+      "overLimitRetryMaxAgeSeconds": 100,
+      "confirmTimeoutSeconds": 15,
+      "lateReceiptAcceptSeconds": 150,
+      "support": "Each client lists \"receipts\" in features of its pairCharacters plaintext; an owner also treats a sub as supporting receipts after accepting one receipt from it",
+      "decisionText": "collardecision rulebook accepted <version> | collardecision rulebook declined <version>[ <reason>] | collardecision oath accepted <oathId> | collardecision oath declined <oathId>; reason is whitespace-collapsed, at most 200 characters, and only on a declined version",
+      "decisionReasonMaxChars": 200
+    }
   },
   "peerChat": {
     "description": "collar/relay-chat: a chat message between the two devices of a pairing (channel \"chat\" in a send). Same transport, routing and static ECDH secret as peerMessage, but its own HKDF info, its own seq space, no 2-minute age limit, and stored by the recipient's hub while it is offline. A frame without channel is \"live\" (a peerMessage).",
@@ -68,6 +82,34 @@
       "storedPerPairMaxBytes": 33554432,
       "storedTtlSeconds": 604800
     }
+  },
+  "mailboxStatus": {
+    "description": "Delivery receipts and sender statuses for every relay mailbox (catalog, rulebook, report), posted to POST /v1/mailbox/status as a mailbox-status envelope. A receipt (role \"recipient\") names the item it settles; a sender status (role \"sender\") says whether the sender can currently send. Codes are a fixed list and never carry content; they are visible to the relay, which needs role and sequence to release a held item.",
+    "signing": "ECDSA-P256-SHA256 with the posting device's key over JCS of the envelope without signature (same rule as every signed envelope); the relay checks it and returns the envelope verbatim so the other member verifies it too.",
+    "sides": {
+      "catalog": { "sender": "sub", "recipient": "owner" },
+      "rulebook": { "sender": "owner", "recipient": "sub" },
+      "report": { "sender": "sub", "recipient": "owner" }
+    },
+    "recipientCodes": ["ok", "verify_failed", "decrypt_failed", "import_failed", "needs_update", "stale", "key_lost"],
+    "senderCodes": ["ok", "not_scanned", "key_unverified", "too_large", "export_failed", "upload_failed"],
+    "resendableCodes": ["verify_failed", "decrypt_failed", "key_lost", "stale"],
+    "maxConsecutiveResends": 2,
+    "capability": "A sender applies receipt rules for a mailbox only once the pair status carries a recipient status for it signed by the pair epoch's receiver device; otherwise a consumed item counts as delivered.",
+    "catalogMailboxRefreshMinIntervalSeconds": 60
+  },
+  "legacy": {
+    "description": "Entries kept only for clients from before mailbox receipts (0.3.2.2 and older), which still use the catalog request/response flow. They are removed once the relay has logged no legacy_catalog_request for 14 days and at least 30 days have passed since the first plugin release that stopped creating catalog requests.",
+    "entries": [
+      "schemas/catalog-request.schema.json",
+      "schemas/catalog-response.schema.json",
+      "sizeAndExpiryLimits.catalogRequestExpirySeconds",
+      "sizeAndExpiryLimits.catalogObjectExpirySeconds",
+      "crypto.keyAgreement.note",
+      "crypto.kdf.info",
+      "crypto.aead.additionalAuthenticatedData",
+      "vectors/crypto-vectors.json ecdhHkdfAesGcmCatalogEnvelope's catalog-response ciphertext case (its keys stay: the push and rulebook vectors reuse them)"
+    ]
   },
   "capabilitySecrets": {
     "sizeBits": 256,

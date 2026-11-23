@@ -70,9 +70,9 @@ public sealed partial class ModuleWindow
     private void DrawShopTab(RulebookDocument draft)
     {
         using var section = Section.Begin("rbShop", $"Shop ({draft.Shop.Count}/{RulebookLimits.MaxShopItems})");
-        IconGlyph.WrappedDisabled("Things your Sub can buy with ledger points, when they choose. Nothing - not you, not a rule - buys for them.");
+        IconGlyph.WrappedDisabled("Things your Sub can buy with their points, when they choose. Nothing - not you, not a rule - buys for them.");
         if (draft.Shop.Count > 0)
-            IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+            Status.Line(StatusKind.Caution, NewSubNote);
         DrawRuleListDetail("rbShopList", draft.Shop, i => i.Id, i => i.Name, "shop item", RuleText.Shop, x => DrawShopEditor(x),
             () =>
             {

@@ -20,6 +20,10 @@ public sealed class CharacterRecord
     [JsonPropertyName("unlinked")] public List<CharacterRecordEntry> Unlinked { get; set; } = new();
     [JsonPropertyName("current"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] public int? Current { get; set; }
     [JsonPropertyName("accepted"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<CharacterRecordEntry>? Accepted { get; set; }
+    /// What this client supports; read by the peer only, never by the relay.
+    [JsonPropertyName("features"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<string>? Features { get; set; }
+
+    public const string ReceiptsFeature = "receipts";
 }
 
 public sealed class CharacterRecordEntry

@@ -17,9 +17,9 @@ public sealed partial class ModuleWindow
     {
         using var section = Section.Begin(id, "Points");
         if (balance is { } b)
-            ImGui.TextUnformatted(sub ? $"You have {b} points." : $"Their balance: {b} points (as last reported).");
+            ImGui.TextUnformatted(sub ? $"You have {b} points." : $"They have {b} points (as last reported).");
         else
-            IconGlyph.WrappedDisabled("Their balance shows once their plugin reports in.");
+            IconGlyph.WrappedDisabled("Their points show once their plugin reports in.");
 
         if (summary.Empty)
         {
@@ -39,8 +39,8 @@ public sealed partial class ModuleWindow
                 IconGlyph.WrappedDisabled($"{l.Rule} - {l.When}");
             }
         }
-        Lines(sub ? "You earn points" : "They earn points", summary.Earn, Theme.Success);
-        Lines(sub ? "You lose points" : "They lose points", summary.Lose, Theme.StatusMissing);
+        Lines(sub ? "You earn points" : "They earn points", summary.Earn, Theme.Ok);
+        Lines(sub ? "You lose points" : "They lose points", summary.Lose, Theme.Caution);
 
         if (summary.Spend.Count > 0)
         {
@@ -48,7 +48,7 @@ public sealed partial class ModuleWindow
             foreach (var item in summary.Spend)
             {
                 var name = string.IsNullOrWhiteSpace(item.Name) ? "Shop item" : item.Name.Trim();
-                ImGui.TextColored(Theme.Warning, $"{item.Price}");
+                Status.Inline(StatusKind.Caution, $"{item.Price}");
                 ImGui.SameLine();
                 if (balance is { } have)
                     IconGlyph.WrappedDisabled(have >= item.Price ? $"{name} - can afford" : $"{name} - {item.Price - have} more needed");
@@ -78,16 +78,16 @@ public sealed partial class ModuleWindow
         using var section = Section.Begin("rbSubToday", "Today");
         var balance = pairing.Rulebook.LedgerScore;
         var affordable = accepted.Shop.Count(i => i.Price <= balance);
-        ImGui.TextUnformatted($"Balance: {balance} points");
+        ImGui.TextUnformatted($"Points: {balance}");
         if (accepted.Shop.Count > 0)
         {
             ImGui.SameLine();
-            ImGui.TextColored(affordable > 0 ? Theme.Success : Theme.TextMuted,
+            ImGui.TextColored(affordable > 0 ? Theme.Ok : Theme.TextMuted,
                 affordable == 0 ? "- nothing in the shop yet" : $"- {affordable} shop item{(affordable == 1 ? "" : "s")} you can afford");
         }
 
         if (accepted.Ladder is { Stages.Count: > 0 } ladder)
-            ImGui.TextColored(pairing.Rulebook.Ladder.Stage > 0 ? Theme.Warning : Theme.TextMuted,
+            ImGui.TextColored(pairing.Rulebook.Ladder.Stage > 0 ? Theme.Caution : Theme.TextMuted,
                 pairing.Rulebook.Ladder.Stage == 0 ? "Ladder: free" : $"Ladder: stage {pairing.Rulebook.Ladder.Stage} of {ladder.Stages.Count}, {RulebookService.LadderStageName(ladder, pairing.Rulebook.Ladder.Stage)}");
 
         if (today.Empty && today.DoneToday.Count == 0)
@@ -96,7 +96,7 @@ public sealed partial class ModuleWindow
             return;
         }
         if (today.Empty)
-            IconGlyph.WrappedColored(Theme.Success, "All done for now.");
+            Status.Line(StatusKind.Ok, "All done for now.");
 
         void Items(string heading, System.Collections.Generic.IReadOnlyList<TodayView.Item> items, Vector4 color, FontAwesomeIcon icon)
         {
@@ -108,20 +108,20 @@ public sealed partial class ModuleWindow
                 using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
                     ImGui.TextColored(color, icon.ToIconString());
                 ImGui.SameLine();
-                var when = item.When is { } at ? $" - {Until(at)}" : "";
+                var when = item.When is { } at ? $" - {TimeText.Until(at)}" : "";
                 var stake = item.Stake is null ? "" : $" ({item.Stake})";
                 IconGlyph.WrappedDisabled($"{item.Name}: {item.What}{when}{stake}");
             }
         }
-        Items("Due now", today.DueNow, Theme.Warning, FontAwesomeIcon.Circle);
-        Items("At risk", today.AtRisk, Theme.StatusMissing, FontAwesomeIcon.ExclamationTriangle);
+        Items("Due now", today.DueNow, Theme.Caution, FontAwesomeIcon.Circle);
+        Items("At risk", today.AtRisk, Theme.Error, FontAwesomeIcon.ExclamationTriangle);
         if (today.DoneToday.Count > 0)
         {
             Section.SubHeading("Done");
             foreach (var done in today.DoneToday)
             {
                 using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
-                    ImGui.TextColored(Theme.Success, FontAwesomeIcon.CheckCircle.ToIconString());
+                    Status.Inline(StatusKind.Ok, FontAwesomeIcon.CheckCircle.ToIconString());
                 ImGui.SameLine();
                 IconGlyph.WrappedDisabled(done);
             }
@@ -138,7 +138,7 @@ public sealed partial class ModuleWindow
         return draft.Count(r => !sent.TryGetValue(r.Key, out var old) || old != r.Value) + sent.Keys.Count(k => !draft.ContainsKey(k));
     }
 
-    /// Draft -> Sent -> Picked up -> Accepted, with the Publish button.
+    /// Draft -> Sent -> Delivered -> Accepted, with the Publish button.
     private void DrawPublishBar(PairingState pairing)
     {
         var state = pairing.Rulebook;
@@ -146,14 +146,18 @@ public sealed partial class ModuleWindow
         var unpublished = state.PublishedDigest != Relay.RulebookMailboxService.DraftDigest(state.Draft);
         var changes = unpublished ? Math.Max(1, UnpublishedChanges(state)) : 0;
         var sent = state.PublishedVersion > 0;
-        var pickedUp = sent && state.PickedUpVersion >= state.PublishedVersion;
-        var accepted = sent && report?.AcceptedVersion >= state.PublishedVersion;
-        var declined = sent && report?.DeclinedVersion is { } d && d >= state.PublishedVersion;
+        var delivery = Relay.MailboxStatusService.Evaluate(state.RulebookDelivery, state.PublishedVersion);
+        var delivered = delivery is Relay.MailboxSentState.Delivered or Relay.MailboxSentState.PickedUp;
+        var rejected = delivery == Relay.MailboxSentState.Rejected;
+        // The Sub's decision notice arrives ahead of the next report, which replaces it.
+        var decision = state.FreshDecision() is { } fresh && fresh.Version >= state.PublishedVersion ? fresh : null;
+        var accepted = sent && (decision is not null ? decision.Accepted : report?.AcceptedVersion >= state.PublishedVersion);
+        var declined = sent && (decision is not null ? !decision.Accepted : report?.DeclinedVersion is { } d && d >= state.PublishedVersion);
 
         using var card = Section.Begin("rbPublishBar");
         void Step(string text, bool doneStep, bool warn = false)
         {
-            ImGui.TextColored(warn ? Theme.Warning : doneStep ? Theme.Success : Theme.TextMuted, text);
+            ImGui.TextColored(warn ? Theme.Caution : doneStep ? Theme.Ok : Theme.TextMuted, text);
             ImGui.SameLine();
         }
         void Arrow()
@@ -165,27 +169,48 @@ public sealed partial class ModuleWindow
         Arrow();
         Step(sent ? $"Sent v{state.PublishedVersion}" : "Not sent yet", sent);
         Arrow();
-        Step("Picked up", pickedUp);
-        Arrow();
-        if (!state.SubSupportsRulebook)
-            Step($"{pairing.PeerName}'s plugin can't receive rulebooks yet", false, warn: true);
-        else if (declined)
-            Step("Declined", false, warn: true);
+        if (rejected)
+        {
+            Step($"Couldn't be read: {MailboxStatusText.Reject(state.RulebookDelivery.PeerReceiptCode)}", false, warn: true);
+        }
         else
-            Step(accepted ? "Accepted" : "Waiting to be accepted", accepted);
+        {
+            Step(delivery switch
+            {
+                Relay.MailboxSentState.AwaitingConfirmation => "Picked up, awaiting confirmation",
+                Relay.MailboxSentState.Lost => "Sending again",
+                _ => "Delivered",
+            }, delivered);
+            Arrow();
+            if (!state.SubSupportsRulebook)
+                Step($"{pairing.PeerName}'s plugin can't receive rulebooks yet", false, warn: true);
+            else if (declined)
+                Step(decision is { Reason: { } why } ? $"Declined v{decision.Version}: {why}" : "Declined", false, warn: true);
+            else
+                Step(accepted ? "Accepted" : "Waiting to be accepted", accepted);
+        }
         ImGui.NewLine();
 
         var invalid = RulebookValidation.Check(state.Draft);
         if (invalid is not null)
-            IconGlyph.WrappedColored(Theme.Warning, $"Fix this first: {invalid}");
+            Status.Line(StatusKind.Caution, $"Fix this first: {invalid}");
+        if (rejected)
+            Status.Line(StatusKind.Error, Relay.MailboxStatusService.ShouldResend(state.RulebookDelivery, state.PublishedVersion)
+                ? $"{pairing.PeerName}'s plugin couldn't read version {state.PublishedVersion} - it's sent again by itself."
+                : $"{pairing.PeerName}'s plugin couldn't read version {state.PublishedVersion}. Publish sends it again.");
+        if (state.PublishError is { } publishError)
+            Status.Line(StatusKind.Error, publishError);
 
         if (rbPublishTask is { IsCompleted: true } done)
         {
-            rbPublishResult = done.Result ?? $"Sent version {state.PublishedVersion}.";
+            // A send error is shown from PublishError until the next success; only other refusals are shown here.
+            rbPublishResult = done.Result is null ? StatusMessage.Ok($"Sent version {state.PublishedVersion}.")
+                : done.Result == state.PublishError ? null : StatusMessage.Error(done.Result);
             rbPublishTask = null;
         }
         var busy = rbPublishTask is { IsCompleted: false };
-        using (ImRaii.Disabled(busy || invalid is not null || !unpublished && sent))
+        var canResend = rejected || state.PublishError is not null;
+        using (ImRaii.Disabled(busy || invalid is not null || !unpublished && sent && !canResend))
         {
             if (ImGui.Button(busy ? "Sending..." : sent ? "Publish changes" : "Publish"))
             {
@@ -193,7 +218,6 @@ public sealed partial class ModuleWindow
                 rbPublishTask = plugin.RulebookService.PublishAsync(pairing);
             }
         }
-        if (rbPublishResult is not null)
-            IconGlyph.WrappedDisabled(rbPublishResult);
+        Status.Line(rbPublishResult);
     }
 }

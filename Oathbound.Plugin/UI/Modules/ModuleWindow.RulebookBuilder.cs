@@ -73,7 +73,7 @@ public sealed partial class ModuleWindow
         IconGlyph.WrappedDisabled("What your Sub has to do, and what happens when they do it or don't. They say yes to each oath on its own.");
         DrawSimpleAdvancedToggle();
         if (draft.Times.Count > 0)
-            IconGlyph.WrappedColored(Theme.Warning, $"Rules at a time of day or at login: {NewSubNote}");
+            Status.Line(StatusKind.Caution, $"Rules at a time of day or at login: {NewSubNote}");
         if (ShowTemplateCard(draft))
             DrawTemplateCard(draft);
 
@@ -112,12 +112,12 @@ public sealed partial class ModuleWindow
             if (ImGui.Button("Duplicate"))
                 entry.Duplicate();
             ImGui.SameLine();
-            if (ImGui.Button("Delete"))
+            if (ConfirmDelete.Button("delete", RuleSentence.Of(entry.Rule, "you")))
             {
                 entry.Remove();
                 rbEditingId = null;
                 plugin.Configuration.Save();
-                rbRulesList.Select(null);
+                rbRulesList.Deleted();
                 ImGui.PopID();
                 return;
             }
@@ -207,7 +207,7 @@ public sealed partial class ModuleWindow
             CloseTemplateCard();
         if (rbTemplateConfirm is { } pending)
         {
-            IconGlyph.WrappedColored(Theme.Warning, empty
+            Status.Line(StatusKind.Caution, empty
                 ? $"Apply the \"{pending.Name}\" template? Your draft's settings - shop, cards and milestones - are reset to the template's."
                 : $"Apply the \"{pending.Name}\" template? This resets your whole draft - every oath, rule, card, shop item and milestone you've made is deleted and replaced by the template. It can't be undone.");
             IconGlyph.WrappedDisabled("Your Sub keeps the rulebook you last published until you publish again.");
@@ -361,7 +361,7 @@ public sealed partial class ModuleWindow
             problem = RulebookValidation.Check(draft);
             RemoveFromDraft(draft, wizard.Rule!);
             if (problem is not null)
-                IconGlyph.WrappedColored(Theme.Warning, $"Fix this first: {problem}");
+                Status.Line(StatusKind.Caution, $"Fix this first: {problem}");
         }
         if (ImGui.Button("Cancel##wizard"))
         {

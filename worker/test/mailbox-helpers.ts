@@ -89,3 +89,62 @@ export async function consume(p: Pair, snapshotId: number) {
 export async function rewindUploadClock(p: Pair) {
   await env.RELAY_DB.prepare(`UPDATE catalog_mailboxes SET last_upload_at = last_upload_at - 3600 WHERE pair_id_hash = ?1`).bind(p.pairIdHash).run();
 }
+
+export interface StatusOpts {
+  mailbox?: "catalog" | "rulebook" | "report";
+  role?: "sender" | "recipient";
+  sequence?: number;
+  code?: string;
+  at?: number;
+  /** Which member signs the request and envelope; defaults to the side that posts this mailbox/role. */
+  as?: "owner" | "sub";
+  /** deviceKeyId written into the envelope, if not the signer's. */
+  claimedId?: string;
+  extra?: Record<string, unknown>;
+  tamper?: boolean;
+}
+
+const STATUS_SIDES = {
+  catalog: { sender: "sub", recipient: "owner" },
+  rulebook: { sender: "owner", recipient: "sub" },
+  report: { sender: "sub", recipient: "owner" },
+} as const;
+
+export async function signedStatus(p: Pair, opts: StatusOpts = {}) {
+  const mailbox = opts.mailbox ?? "catalog";
+  const role = opts.role ?? "recipient";
+  const as = opts.as ?? STATUS_SIDES[mailbox][role];
+  const signer = as === "owner" ? p.owner : p.sub;
+  const signerId = as === "owner" ? p.ownerId : p.subId;
+  const unsigned = {
+    type: "mailbox-status",
+    schemaVersion: 1,
+    pairIdHash: p.pairIdHash,
+    pairEpoch: 0,
+    mailbox,
+    role,
+    deviceKeyId: opts.claimedId ?? signerId,
+    sequence: opts.sequence ?? 0,
+    code: opts.code ?? "ok",
+    at: opts.at ?? Math.floor(Date.now() / 1000),
+    ...opts.extra,
+  };
+  const signature = await signEnvelope(signer.privateKey, unsigned);
+  const envelope = { ...unsigned, ...(opts.tamper ? { code: unsigned.code === "ok" ? "stale" : "ok" } : {}), signature };
+  return { envelope, signer, signerId };
+}
+
+export async function postStatus(p: Pair, opts: StatusOpts = {}) {
+  const { envelope, signer, signerId } = await signedStatus(p, opts);
+  const r = await signedFetch("/v1/mailbox/status", "POST", envelope, signer.privateKey, signerId);
+  return { r, envelope };
+}
+
+/** Consume with an explicit next key, so a test can repeat the exact request a lost response would be retried with. */
+export function consumeWith(p: Pair, snapshotId: number, nextKey: Awaited<ReturnType<typeof signedKeyEnvelope>>) {
+  return signedFetch("/v1/catalog/mailbox/consume", "POST", { pairIdHash: p.pairIdHash, pairEpoch: 0, snapshotId, nextKey }, p.owner.privateKey, p.ownerId);
+}
+
+export function publishRefreshKey(p: Pair, key: Awaited<ReturnType<typeof signedKeyEnvelope>>) {
+  return signedFetch("/v1/catalog/mailbox/key", "POST", { pairIdHash: p.pairIdHash, pairEpoch: 0, key, refresh: true }, p.owner.privateKey, p.ownerId);
+}

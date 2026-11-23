@@ -88,7 +88,7 @@ public sealed partial class ModuleWindow
     {
         var current = DurationOf(command);
         var index = Array.FindIndex(DurationPresets, p => p.Seconds == current);
-        var preview = index >= 0 ? DurationPresets[index].Label : RestraintLock.Format(TimeSpan.FromSeconds(current ?? 0));
+        var preview = index >= 0 ? DurationPresets[index].Label : TimeText.Duration(TimeSpan.FromSeconds(current ?? 0));
         string? result = null;
         ImGui.SetNextItemWidth(DurationComboWidth);
         if (ImGui.BeginCombo("##duration", preview))
@@ -287,7 +287,7 @@ public sealed partial class ModuleWindow
                 ItemWidth(120);
                 ImGui.InputInt("points", ref rbAddLedger, 1, 5);
                 rbAddLedger = Math.Clamp(rbAddLedger, -RulebookLimits.MaxLedgerChange, RulebookLimits.MaxLedgerChange);
-                ImGui.TextDisabled("Positive adds merits, negative adds demerits.");
+                ImGui.TextDisabled("Positive gives points, negative takes them away.");
                 command = rbAddLedger == 0 ? null : LedgerCommandText(rbAddLedger, "");
                 break;
             case ConsequenceKind.DeckDraw:
@@ -321,7 +321,7 @@ public sealed partial class ModuleWindow
         }
 
         if (error is not null)
-            IconGlyph.WrappedColored(Theme.Warning, error);
+            Status.Line(StatusKind.Error, error);
         if (command is not null && rbPickKind != ConsequenceKind.Typed)
             ImGui.TextDisabled($"Will: {ConsequenceText.Describe(command)}");
 
@@ -372,7 +372,13 @@ public sealed partial class ModuleWindow
         if (rbAddPick is not { } pick)
             return null;
         if (OwnerLockOption.Accepts(pick.Command))
-            OwnerLockOption.Draw("rbAdd", ref rbAddLock, OwnerLockOption.IsGesture(pick.Command), OwnerLockOption.IsOwnerLock(pick.Command));
+        {
+            // A consequence carries only the timer: no key or struggle, and an outfit's lock choice stays its own.
+            var lockKind = OwnerLockOption.KindOf(pick.Command) is LockKind.Outfit ? LockKind.OwnerLock : OwnerLockOption.KindOf(pick.Command);
+            var lockSettings = new LockSettings(rbAddLock);
+            if (OwnerLockOption.Draw("rbAdd", ref lockSettings, lockKind, LockLayout.Stacked, LockExtras.None))
+                rbAddLock = lockSettings.Seconds;
+        }
         return OwnerLockOption.Apply(OwnerMoodleOverride.ForSend(config, pick), rbAddLock);
     }
 

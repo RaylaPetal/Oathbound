@@ -85,6 +85,7 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
 
         listener.RulebookSink = this;
         listener.GrantLeaveReceived += OnGrantLeave;
+        listener.DecisionReceived += OnDecisionReceived;
         mailbox.RulebookReceived += OnRulebookReceived;
         mailbox.RulebookRejected += OnRulebookRejected;
         mailbox.ReportReceived += OnReportReceived;
@@ -106,6 +107,7 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
     {
         listener.RulebookSink = null;
         listener.GrantLeaveReceived -= OnGrantLeave;
+        listener.DecisionReceived -= OnDecisionReceived;
         mailbox.RulebookReceived -= OnRulebookReceived;
         mailbox.RulebookRejected -= OnRulebookRejected;
         mailbox.ReportReceived -= OnReportReceived;
@@ -309,9 +311,9 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         Notify("New rulebook", $"{pairing.PeerName} sent rulebook version {doc.Version}. Review it in Rulebook - nothing in it runs until you accept.");
     }
 
+    /// Refused before it could be offered; the receipt tells the Owner why, so this isn't recorded as the Sub declining it.
     private void OnRulebookRejected(PairingState pairing, int version, string reason)
     {
-        pairing.Rulebook.LastDeclinedVersion = version;
         Log(pairing, RulebookEventKind.VersionDeclined, null, $"Version {version} was refused automatically: {reason}.");
         Notify("Rulebook refused", $"Rulebook version {version} from {pairing.PeerName} was refused: {reason}.", NotificationType.Warning);
     }
@@ -336,6 +338,7 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         ReconcileOaths(pairing, previous, doc);
         Log(pairing, RulebookEventKind.VersionAccepted, null, $"Version {doc.Version} accepted.");
         config.SaveNow();
+        SendDecision(pairing, composer.ComposeRulebookDecision(true, doc.Version, null));
     }
 
     /// Clears everything the Sub's side built up, keeping only the relay plumbing (keys, sequences).
@@ -353,18 +356,70 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         state.ShopLastBought.Clear();
         ResetLadder(pairing);
         state.AppliedResetCount = resetCount;
-        Log(pairing, RulebookEventKind.VersionAccepted, null, $"{pairing.PeerName} started the rulebook over: oaths, ledger and history cleared.");
+        Log(pairing, RulebookEventKind.VersionAccepted, null, $"{pairing.PeerName} started the rulebook over: oaths, points and history cleared.");
     }
 
-    public void DeclinePending(PairingState pairing)
+    /// `reason` is the Sub's optional note for the Owner; it goes only into the decision notice and the activity log.
+    public void DeclinePending(PairingState pairing, string? reason = null)
     {
         var state = pairing.Rulebook;
         if (state.Pending is not { } doc)
             return;
         state.Pending = null;
         state.LastDeclinedVersion = doc.Version;
-        Log(pairing, RulebookEventKind.VersionDeclined, null, $"Version {doc.Version} declined.");
+        var clean = CommandComposer.CleanDecisionReason(reason);
+        Log(pairing, RulebookEventKind.VersionDeclined, null, clean is null ? $"Version {doc.Version} declined." : $"Version {doc.Version} declined: {clean}");
         config.SaveNow();
+        SendDecision(pairing, composer.ComposeRulebookDecision(false, doc.Version, clean));
+    }
+
+    /// Only the Sub's own click sends one; no retry, since the next report carries the same decision.
+    private void SendDecision(PairingState pairing, string text)
+    {
+        if (pairing is { IsPaired: true, Direction: PairingDirection.SubSide })
+            messenger.SendNotice(pairing, text);
+    }
+
+    /// Owner: the Sub's version or oath decision, ahead of the next report.
+    private void OnDecisionReceived(PairingState pairing, string body)
+    {
+        var parts = body.Split(' ', 4, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3)
+            return;
+        var accepted = parts[1].Equals(CommandComposer.DecisionAcceptedWord, StringComparison.OrdinalIgnoreCase);
+        if (!accepted && !parts[1].Equals(CommandComposer.DecisionDeclinedWord, StringComparison.OrdinalIgnoreCase))
+            return;
+        var who = pairing.PeerName ?? "Your Sub";
+        var state = pairing.Rulebook;
+
+        if (parts[0].Equals(CommandComposer.DecisionRulebookWord, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!int.TryParse(parts[2], out var version) || version <= 0 || version > state.PublishedVersion)
+                return;
+            var reason = accepted || parts.Length < 4 ? null : CommandComposer.CleanDecisionReason(parts[3]);
+            state.LastDecision = new RulebookDecisionNotice { Version = version, Accepted = accepted, Reason = reason, At = Now() };
+            config.Save();
+            var line = accepted ? $"{who} accepted rulebook v{version}." : reason is null ? $"{who} declined rulebook v{version}." : $"{who} declined rulebook v{version}: {reason}";
+            OathboundChat.Print(line);
+            Notify(accepted ? "Rulebook accepted" : "Rulebook declined", line, accepted ? NotificationType.Success : NotificationType.Warning);
+            return;
+        }
+
+        if (parts[0].Equals(CommandComposer.DecisionOathWord, StringComparison.OrdinalIgnoreCase))
+        {
+            var oathId = parts[2];
+            if (oathId.Length > 64)
+                return;
+            var name = (state.PublishedDocument?.Oaths.FirstOrDefault(o => o.Id == oathId) ?? state.Draft.Oaths.FirstOrDefault(o => o.Id == oathId))?.Name;
+            if (state.OathDecisions.Count >= 64 && !state.OathDecisions.ContainsKey(oathId))
+                state.OathDecisions.Remove(state.OathDecisions.MinBy(kv => kv.Value.At).Key);
+            state.OathDecisions[oathId] = new OathDecisionNotice { Accepted = accepted, At = Now() };
+            config.Save();
+            var what = string.IsNullOrWhiteSpace(name) ? "an oath" : $"the oath \"{name}\"";
+            var line = $"{who} {(accepted ? "accepted" : "declined")} {what}.";
+            OathboundChat.Print(line);
+            Notify(accepted ? "Oath accepted" : "Oath declined", line, accepted ? NotificationType.Success : NotificationType.Info);
+        }
     }
 
     // ---- Oaths ----
@@ -441,6 +496,13 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         StartOath(s, terms, Now());
         Log(pairing, RulebookEventKind.OathAccepted, oathId, $"Oath \"{terms.Name}\" accepted: {OathText.Describe(terms)}.");
         config.SaveNow();
+        SendOathDecision(pairing, true, oathId);
+    }
+
+    private void SendOathDecision(PairingState pairing, bool accepted, string oathId)
+    {
+        if (oathId.Length is > 0 and <= 64 && !oathId.Any(char.IsWhiteSpace))
+            SendDecision(pairing, composer.ComposeOathDecision(accepted, oathId));
     }
 
     private void StartOath(OathState s, Oath terms, long now)
@@ -492,6 +554,33 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         s.ChangedUnixSeconds = Now();
         Log(pairing, RulebookEventKind.OathDeclined, oathId, $"Oath \"{OathName(pairing, oathId)}\" declined.");
         config.SaveNow();
+        SendOathDecision(pairing, false, oathId);
+    }
+
+    // ---- Attention badge (Sub) ----
+
+    private static string OfferKey(string oathId, OathState s) => $"{oathId}:{s.OfferedUnixSeconds}";
+
+    /// A version or oath offer waits on the Sub and they haven't opened the Rulebook module on it since it arrived.
+    public bool NeedsAttention() => config.Pairings.Any(p => p is { IsPaired: true, Direction: PairingDirection.SubSide } && NeedsAttention(p));
+
+    private static bool NeedsAttention(PairingState pairing)
+    {
+        var state = pairing.Rulebook;
+        if (state.Pending is { } pending && state.SeenPendingVersion != pending.Version)
+            return true;
+        return state.Oaths.Any(kv => kv.Value.Status == OathStatus.Offered && !state.SeenOfferIds.Contains(OfferKey(kv.Key, kv.Value)));
+    }
+
+    /// The Sub's Rulebook module is showing this pairing; what it shows counts as seen.
+    public void MarkSeen(PairingState pairing)
+    {
+        if (!NeedsAttention(pairing))
+            return;
+        var state = pairing.Rulebook;
+        state.SeenPendingVersion = state.Pending?.Version ?? state.SeenPendingVersion;
+        state.SeenOfferIds = state.Oaths.Where(kv => kv.Value.Status == OathStatus.Offered).Select(kv => OfferKey(kv.Key, kv.Value)).ToHashSet();
+        config.Save();
     }
 
     private static string OathName(PairingState pairing, string oathId) =>
@@ -722,7 +811,7 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         Log(pairing, RulebookEventKind.RitualDone, id, $"\"{name}\": {what} ({s.PeriodCount}/{needed} this time).");
         if (terms.LedgerPerDone != 0)
             ChangeLedger(pairing, terms.LedgerPerDone, $"\"{name}\"", notify: false);
-        var ledger = terms.LedgerPerDone == 0 ? "" : $" ({(terms.LedgerPerDone > 0 ? "+" : "")}{terms.LedgerPerDone} ledger)";
+        var ledger = terms.LedgerPerDone == 0 ? "" : $" ({(terms.LedgerPerDone > 0 ? "+" : "")}{terms.LedgerPerDone} {ConsequenceText.Points(terms.LedgerPerDone)})";
         if (s.PeriodCount == needed)
             Notify("Oath", $"\"{name}\" done for now{ledger}.", NotificationType.Success);
         else if (ledger.Length > 0)
@@ -1426,9 +1515,9 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         var before = state.LedgerScore;
         state.LedgerScore = Math.Clamp(before + delta, RulebookLimits.MinLedger, RulebookLimits.MaxLedger);
         var text = $"{(delta > 0 ? "+" : "")}{delta}" + (reason.Length > 0 ? $": {reason}" : "");
-        Log(pairing, RulebookEventKind.LedgerChanged, null, $"Ledger {text} (now {state.LedgerScore}).");
+        Log(pairing, RulebookEventKind.LedgerChanged, null, $"Points {text} (now {state.LedgerScore}).");
         if (notify)
-            Notify("Ledger", $"{text} (now {state.LedgerScore})");
+            Notify("Points", $"{text} (now {state.LedgerScore})");
         EvaluateThresholds(pairing);
         config.SaveNow();
     }
@@ -1453,16 +1542,16 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
                 }
                 if (!state.ThresholdsMet.Add(t.Id))
                     continue;
-                var name = string.IsNullOrWhiteSpace(t.Name) ? $"Ledger {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}" : t.Name;
-                Log(pairing, RulebookEventKind.ThresholdCrossed, t.Id, $"Threshold \"{name}\" reached at {state.LedgerScore}.");
-                Fire(pairing, t.Id, $"Threshold \"{name}\"", t.Consequence, t.Id, t.CooldownSeconds);
+                var name = string.IsNullOrWhiteSpace(t.Name) ? $"Points {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}" : t.Name;
+                Log(pairing, RulebookEventKind.ThresholdCrossed, t.Id, $"Milestone \"{name}\" reached at {state.LedgerScore} points.");
+                Fire(pairing, t.Id, $"Milestone \"{name}\"", t.Consequence, t.Id, t.CooldownSeconds);
                 if (t.DrawCard)
-                    Draw(pairing, t.Pile, $"threshold \"{name}\"");
+                    Draw(pairing, t.Pile, $"milestone \"{name}\"");
                 if (t.ResetTo is { } to)
                 {
                     state.LedgerScore = to;
                     state.ThresholdsMet.Remove(t.Id);
-                    Log(pairing, RulebookEventKind.LedgerChanged, t.Id, $"Ledger reset to {to}.");
+                    Log(pairing, RulebookEventKind.LedgerChanged, t.Id, $"Points reset to {to}.");
                     reset = true;
                     break;
                 }
@@ -1492,7 +1581,7 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
         if (sourcePairing is null || !IsRunning(sourcePairing))
             return LocalTestResult.Fail("No running rulebook for this pairing.");
         ChangeLedger(sourcePairing, delta, reason, notify: true);
-        return LocalTestResult.Ok($"Ledger now {sourcePairing.Rulebook.LedgerScore}.");
+        return LocalTestResult.Ok($"Points now {sourcePairing.Rulebook.LedgerScore}.");
     }
 
     // ---- Owner side actions ----
@@ -1588,26 +1677,29 @@ public sealed partial class RulebookService : IRulebookCommandSink, IDisposable
 
         async System.Threading.Tasks.Task UploadAsync()
         {
-            var ok = false;
+            string? error = "Sending failed unexpectedly - see /xllog.";
             try
             {
-                ok = await mailbox.UploadReportAsync(pairing, report, backgroundToken()).ConfigureAwait(false);
+                error = await mailbox.UploadReportAsync(pairing, report, backgroundToken()).ConfigureAwait(false);
             }
             finally
             {
                 await Plugin.Framework.RunOnFrameworkThread(() =>
                 {
                     reportsInFlight.Remove(pairing.Id);
-                    if (ok)
+                    if (error is null)
                     {
                         pairing.Rulebook.LastUploadedReportDigest = digest;
+                        pairing.Rulebook.ReportUploadError = null;
                         reportRetryAfter.Remove(pairing.Id);
-                        config.Save();
                     }
                     else
                     {
+                        // Kept until the next upload, so the Rulebook window shows why reports aren't arriving.
+                        pairing.Rulebook.ReportUploadError = error;
                         reportRetryAfter[pairing.Id] = DateTime.UtcNow.AddMinutes(5);
                     }
+                    config.Save();
                 }).ConfigureAwait(false);
             }
         }

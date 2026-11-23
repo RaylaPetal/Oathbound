@@ -231,6 +231,14 @@ internal sealed class MailboxPublishKeyBody
     [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
     [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
     [JsonPropertyName("key")] public CatalogMailboxKeyEnvelope Key { get; set; } = new();
+    /// Get latest; absent (null) on an ordinary key publish so the body stays what older relays expect.
+    [JsonPropertyName("refresh")] public bool? Refresh { get; set; }
+}
+
+internal sealed class MailboxStatusAck
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+    [JsonPropertyName("stored")] public bool? Stored { get; set; }
 }
 
 internal sealed class MailboxUploadBody
@@ -445,9 +453,14 @@ public sealed class RelayClient : IDisposable
     // `not_found` from Fetch/Upload means no receive key was published; from Status it means a relay without the
     // mailbox, which callers treat as "automatic sync unsupported".
 
-    public Task<CatalogMailboxKeyEnvelope> PublishMailboxKeyAsync(CatalogMailboxKeyEnvelope key, CancellationToken ct) =>
+    /// `refresh` asks the Sub's plugin for its catalog now; the relay allows it once a minute per pair (`rate_limited`).
+    public Task<CatalogMailboxKeyEnvelope> PublishMailboxKeyAsync(CatalogMailboxKeyEnvelope key, CancellationToken ct, bool refresh = false) =>
         SendSignedAsync<CatalogMailboxKeyEnvelope>(HttpMethod.Post, "/v1/catalog/mailbox/key",
-            new MailboxPublishKeyBody { PairIdHash = key.PairIdHash, PairEpoch = key.PairEpoch, Key = key }, ct);
+            new MailboxPublishKeyBody { PairIdHash = key.PairIdHash, PairEpoch = key.PairEpoch, Key = key, Refresh = refresh ? true : null }, ct);
+
+    /// Every mailbox's receipts and sender statuses. `not_found` means a relay from before receipts.
+    public Task PostMailboxStatusAsync(MailboxStatusEnvelope status, CancellationToken ct) =>
+        SendSignedAsync<MailboxStatusAck>(HttpMethod.Post, "/v1/mailbox/status", status, ct);
 
     // ---- Catalog pictures ----
 

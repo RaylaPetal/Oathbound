@@ -266,7 +266,7 @@ public sealed partial class ModuleWindow
             if (ShowAdvanced(oath.Strikes > 0 || oath.LedgerPerStrike != 0 || oath.StreakEvery > 0 || oath.Recurrence != OathRecurrence.Once))
                 changed |= DrawOathRepeats(oath);
             if (oath.NeedsNewSub)
-                IconGlyph.WrappedColored(Theme.Warning, "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.");
+                Status.Line(StatusKind.Caution, "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.");
 
         }
         if (part == EditorPart.All)
@@ -355,7 +355,7 @@ public sealed partial class ModuleWindow
         if (changed)
             oath.DurationMinutes = Math.Clamp(hours * 60, RulebookLimits.MinOathMinutes, RulebookLimits.MaxOathMinutes);
         ImGui.SameLine();
-        ImGui.TextDisabled($"= {RestraintLock.Format(TimeSpan.FromMinutes(oath.DurationMinutes))}");
+        ImGui.TextDisabled($"= {TimeText.Duration(TimeSpan.FromMinutes(oath.DurationMinutes))}");
         return changed;
     }
 

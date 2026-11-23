@@ -7,7 +7,6 @@ using Oathbound.Plugin.Config;
 using Oathbound.Plugin.Relay;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
-using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 
@@ -66,12 +65,11 @@ public sealed class SubControlWindow : Window, IDisposable
             .Push(ImGuiCol.FrameBgHovered, Theme.TileBgHover);
         using var rounding = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding);
 
-        var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
         var pairing = plugin.Configuration.GetActivePairing();
         estimate = pairing is { Direction: PairingDirection.OwnerSide } ? plugin.OwnerStatusEstimates.ForBanner(pairing) : null;
         collarLocked = pairing is null || plugin.OwnerCollarStatus.For(pairing) is not { } collar || collar.State != CollarStatusReporter.Unlocked;
-        if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "Not paired with a Sub yet - every Send below is disabled until an Owner-side pairing is active.");
+        if (SendReadiness.For(plugin).BlockedReason is { } reason)
+            Status.Line(StatusKind.Caution, reason);
         else
             OwnerStatusView.Draw(plugin, includeRestraints: false);
         ImGui.Spacing();
@@ -82,25 +80,25 @@ public sealed class SubControlWindow : Window, IDisposable
             switch (label)
             {
                 case "Animation":
-                    DrawSearchableCategory(label, commands, canSend, ref animationSearch, MatchesGestureFilter);
+                    DrawSearchableCategory(label, commands, ref animationSearch, MatchesGestureFilter);
                     break;
                 case "Restraints":
-                    DrawSearchableCategory(label, commands, canSend, ref restraintsSearch, null);
+                    DrawSearchableCategory(label, commands, ref restraintsSearch, null);
                     break;
                 case "Moodles":
-                    DrawCategory(label, commands, canSend, MoodlesTextFormat.StripMarkup);
+                    DrawCategory(label, commands, MoodlesTextFormat.StripMarkup);
                     break;
                 default:
-                    DrawCategory(label, commands, canSend, null);
+                    DrawCategory(label, commands, null);
                     break;
             }
         }
 
-        DrawCollarSection(canSend);
-        DrawToyControlSection(canSend);
-        DrawRulebookSection(canSend);
-        DrawCageSection(canSend);
-        DrawTeleportRow(canSend);
+        DrawCollarSection();
+        DrawToyControlSection();
+        DrawRulebookSection();
+        DrawCageSection();
+        DrawTeleportRow();
     }
 
     /// This frame's estimate of what's on the Sub; null when nothing was sent.
@@ -119,7 +117,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ["restraint unlock"] = e => e.Restraints.Count > 0,
     };
 
-    private static readonly Vector4 ReleaseTint = Theme.Warning;
+    private static readonly Vector4 ReleaseTint = Theme.Caution;
 
     /// Releases that apply right now, and everything else.
     private (List<QuickCommand> Releases, List<QuickCommand> Others) SplitReleases(List<QuickCommand> commands)
@@ -129,8 +127,8 @@ public sealed class SubControlWindow : Window, IDisposable
         return (active, commands.Except(releases).ToList());
     }
 
-    private void DrawReleaseRow(string label, string command, bool canSend) =>
-        DrawSendRow(label, command, canSend, tint: ReleaseTint);
+    private void DrawReleaseRow(string label, string command) =>
+        DrawSendRow(label, command, tint: ReleaseTint);
 
     /// A collapsing header with the count as a small badge on its right edge instead of "(n)" in the title.
     private static bool CategoryHeader(string label, int? count = null)
@@ -155,22 +153,22 @@ public sealed class SubControlWindow : Window, IDisposable
     }
 
     /// Only does anything once the Sub has accepted a rulebook; their client ignores it otherwise.
-    private void DrawRulebookSection(bool canSend)
+    private void DrawRulebookSection()
     {
         if (!CategoryHeader("Rulebook"))
             return;
 
-        DrawSendRow("Draw a reward", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Reward), canSend);
-        DrawSendRow("Draw a punishment", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Punishment), canSend);
-        DrawSendRow("Merit +1", $"{Rulebook.ConsequenceValidator.LedgerWord} +1", canSend);
-        DrawSendRow("Demerit -1", $"{Rulebook.ConsequenceValidator.LedgerWord} -1", canSend);
+        DrawSendRow("Draw a reward", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Reward));
+        DrawSendRow("Draw a punishment", Rulebook.CardPiles.DrawCommand(Rulebook.CardPile.Punishment));
+        DrawSendRow("+1 point", $"{Rulebook.ConsequenceValidator.LedgerWord} +1");
+        DrawSendRow("-1 point", $"{Rulebook.ConsequenceValidator.LedgerWord} -1");
     }
 
     private static bool MatchesGestureFilter(QuickCommand cmd, string filter) =>
         (cmd.GestureModName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false)
         || (cmd.GestureGroupName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
 
-    private void DrawCategory(string label, List<QuickCommand> all, bool canSend, Func<string, string>? displayLabel)
+    private void DrawCategory(string label, List<QuickCommand> all, Func<string, string>? displayLabel)
     {
         var (releases, commands) = SplitReleases(all);
         if (releases.Count + commands.Count == 0)
@@ -179,13 +177,13 @@ public sealed class SubControlWindow : Window, IDisposable
             return;
 
         foreach (var cmd in releases)
-            DrawReleaseRow(cmd.Label, cmd.Command, canSend);
+            DrawReleaseRow(cmd.Label, cmd.Command);
         foreach (var cmd in commands)
-            DrawSendRow(displayLabel?.Invoke(cmd.Label) ?? cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend);
+            DrawSendRow(displayLabel?.Invoke(cmd.Label) ?? cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd));
     }
 
     /// Animation and Restraints get their own search, separate from the module windows'.
-    private void DrawSearchableCategory(string label, List<QuickCommand> all, bool canSend, ref string search, Func<QuickCommand, string, bool>? extraMatch)
+    private void DrawSearchableCategory(string label, List<QuickCommand> all, ref string search, Func<QuickCommand, string, bool>? extraMatch)
     {
         var (releases, commands) = SplitReleases(all);
         if (releases.Count + commands.Count == 0)
@@ -196,9 +194,9 @@ public sealed class SubControlWindow : Window, IDisposable
         // Each restraint the estimate has on, then unlock-all, above the search.
         if (label == "Restraints" && estimate is { } current)
             foreach (var restraint in current.Restraints.ToList())
-                DrawReleaseRow($"Unlock {restraint.Reference} ({LockText(restraint)})", $"restraint unlock {restraint.Reference}", canSend);
+                DrawReleaseRow($"Unlock {restraint.Reference} ({LockText(restraint)})", $"restraint unlock {restraint.Reference}");
         foreach (var cmd in releases)
-            DrawReleaseRow(cmd.Label, cmd.Command, canSend);
+            DrawReleaseRow(cmd.Label, cmd.Command);
 
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint($"##subControlSearch_{label}", $"Search {label}...", ref search, 128);
@@ -211,30 +209,30 @@ public sealed class SubControlWindow : Window, IDisposable
         if (visible.Count == 0)
             IconGlyph.WrappedDisabled("No commands match this search.");
         else if (label == "Animation")
-            DrawAnimationRows(visible, filter.Length > 0, canSend);
+            DrawAnimationRows(visible, filter.Length > 0);
         else
         {
             foreach (var cmd in visible)
             {
                 // Shares QuickCommand.LockSeconds with the module row.
                 var hasLock = OwnerLockOption.Accepts(cmd.Command);
-                DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend,
+                DrawSendRow(cmd.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd),
                     trailing: hasLock ? () => OwnerLockOption.DrawStacked($"subControl_{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration) : null);
             }
         }
     }
 
     private static string LockText(EstimatedRestraint restraint) =>
-        (restraint.ExpiresAtUtc is { } until ? $"unlocks in {RestraintLock.Format(until - DateTime.UtcNow)}" : "locked")
+        (restraint.ExpiresAtUtc is { } until ? $"unlocks {TimeText.Until(until)}" : "locked")
         + (restraint.HasKey ? ", key" : "");
 
     /// Grouped per mod like the Animation module, in the Sub's manifest order. Searching opens every matching mod.
-    private void DrawAnimationRows(List<QuickCommand> visible, bool searching, bool canSend)
+    private void DrawAnimationRows(List<QuickCommand> visible, bool searching)
     {
         // Fixed actions (Stop animation) aren't animations, so they go above the per-mod groups.
         var fixedCommands = QuickAccessMenu.FixedActions.Where(a => a.Category == "Animation").Select(a => a.Command).ToHashSet();
         foreach (var cmd in visible.Where(c => fixedCommands.Contains(c.Command)))
-            DrawSendRow(cmd.Label, cmd.Command, canSend);
+            DrawSendRow(cmd.Label, cmd.Command);
 
         foreach (var mod in visible.Where(c => !fixedCommands.Contains(c.Command)).GroupBy(c => c.GestureModName ?? "Other").OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
         {
@@ -272,17 +270,17 @@ public sealed class SubControlWindow : Window, IDisposable
                 {
                     var (cmd, entry) = list[0];
                     var shortLabel = entry is null ? cmd.Label : $"{entry.AnimationName} — {entry.Trigger!.Label}";
-                    DrawSendRow(shortLabel, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, fullLabel: cmd.Label);
+                    DrawSendRow(shortLabel, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), fullLabel: cmd.Label);
                     continue;
                 }
 
                 if (expandVariants)
                     ImGui.SetNextItemOpen(true);
-                var heading = FitWithEllipsis($"{variants.Key} ({list.Count})", ImGui.GetContentRegionAvail().X - ImGui.GetTreeNodeToLabelSpacing());
+                var heading = Layout.Ellipsize($"{variants.Key} ({list.Count})", ImGui.GetContentRegionAvail().X - ImGui.GetTreeNodeToLabelSpacing(), out _);
                 if (!ImGui.TreeNodeEx($"{heading}##subControlAnimVariants_{mod.Key}_{variants.Key}"))
                     continue;
                 foreach (var (cmd, entry) in list)
-                    DrawSendRow(entry!.Trigger!.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, fullLabel: cmd.Label);
+                    DrawSendRow(entry!.Trigger!.Label, OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), fullLabel: cmd.Label);
                 ImGui.TreePop();
             }
             ImGui.TreePop();
@@ -292,27 +290,27 @@ public sealed class SubControlWindow : Window, IDisposable
     private const int ModSearchThreshold = 15;
     private readonly Dictionary<string, string> modSearches = new();
 
-    private void DrawCollarSection(bool canSend)
+    private void DrawCollarSection()
     {
         if (!CategoryHeader("Collar"))
             return;
 
         if (collarLocked)
-            DrawReleaseRow("Collar unlock", "collar unlock", canSend);
-        DrawSendRow("Collar lock", "collar lock", canSend);
+            DrawReleaseRow("Collar unlock", "collar unlock");
+        DrawSendRow("Collar lock", "collar lock");
     }
 
     /// Discrete, one-shot commands only - no intensity/duration control.
-    private void DrawToyControlSection(bool canSend)
+    private void DrawToyControlSection()
     {
         if (!CategoryHeader("Toy Control"))
             return;
 
-        ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
+        ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing, plugin.OwnerToyStatus.MarkForActivePairing, plugin.Configuration.GetActivePairing()?.PeerName ?? "your Sub");
         if (estimate?.LastToy is not null)
-            DrawReleaseRow("Stop", ToyControlCommand.BuildStopCommand(), canSend);
+            DrawReleaseRow("Stop", ToyControlCommand.BuildStopCommand());
         foreach (var (label, command) in ToyControlQuickRows())
-            DrawSendRow(label, command, canSend);
+            DrawSendRow(label, command);
     }
 
     private IEnumerable<(string Label, string Command)> ToyControlQuickRows()
@@ -324,7 +322,7 @@ public sealed class SubControlWindow : Window, IDisposable
     }
 
     /// Saved cages with their own lock settings; those are edited in the Cage module.
-    private void DrawCageSection(bool canSend)
+    private void DrawCageSection()
     {
         var cages = plugin.Configuration.SavedCages;
         if (!CategoryHeader("Cage", cages.Count))
@@ -332,58 +330,42 @@ public sealed class SubControlWindow : Window, IDisposable
 
         foreach (var cage in cages.ToList())
         {
-            var lockText = cage.LockSeconds is { } s ? $"for {RestraintLock.Format(TimeSpan.FromSeconds(s))}" : "until you open it";
-            var tooltip = canSend
-                ? $"Cage your Sub in \"{cage.Name}\" ({cage.PlaceLabel}) {lockText}. If they aren't there, it waits for them."
-                : "Not paired with a Sub yet.";
-            if (DrawRow($"subControlCage_{cage.Id}", $"Cage: {cage.Name}", tooltip, canSend))
-                ReportCageResult(CageSendAction.TrySend(plugin, cage));
+            var lockText = cage.LockSeconds is { } s ? $"for {TimeText.Duration(s)}" : "until you open it";
+            DrawSpecRow(new SendSpec($"subControlCage_{cage.Id}", $"Cage: {cage.Name}")
+            {
+                Help = $"Cage your Sub in \"{cage.Name}\" ({cage.PlaceLabel}) {lockText}. If they aren't there, it waits for them.",
+                Custom = SendNotice.Cage(() => CageSendAction.TrySend(plugin, cage)),
+            });
         }
-        if (DrawRow("subControlCageOpen", "Open cage", canSend ? "Let your Sub out, or call off a cage still waiting for them." : "Not paired with a Sub yet.", canSend, tint: ReleaseTint))
-            ReportCageResult(CageSendAction.TryOpen(plugin));
-    }
-
-    private static void ReportCageResult((bool Success, string? Error) result)
-    {
-        if (result.Success)
-            return;
-        Plugin.NotificationManager.AddNotification(new Notification
+        DrawSpecRow(new SendSpec("subControlCageOpen", "Open cage")
         {
-            Title = "Oathbound",
-            Content = result.Error ?? "The cage command couldn't be sent.",
-            Type = NotificationType.Warning,
-            InitialDuration = TimeSpan.FromSeconds(5),
-        });
+            Help = "Let your Sub out, or call off a cage still waiting for them.",
+            Custom = SendNotice.Cage(() => CageSendAction.TryOpen(plugin)),
+        }, tint: ReleaseTint);
     }
 
     /// Teleport has no static command text; resolved live via TeleportSendAction.
-    private void DrawTeleportRow(bool canSend)
+    private void DrawTeleportRow()
     {
         if (!CategoryHeader("Teleport"))
             return;
-
-        var tooltip = canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.";
-        if (!DrawRow("subControlTeleport", "Teleport Sub to me", tooltip, canSend))
-            return;
-        var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
-        if (!success)
-            Plugin.NotificationManager.AddNotification(new Notification
-            {
-                Title = "Oathbound",
-                Content = error ?? "Teleport failed.",
-                Type = NotificationType.Warning,
-                InitialDuration = TimeSpan.FromSeconds(5),
-            });
+        DrawSpecRow(new SendSpec("subControlTeleport", "Teleport Sub to me")
+        {
+            Help = "Teleport your paired Sub to your current position.",
+            Custom = SendNotice.Teleport(plugin),
+        });
     }
 
     /// The label is shortened to fit; hovering shows the full label and the exact text that would be sent.
     /// `trailing` draws extra controls (the lock settings) on the lines below the label, inside the tile.
-    private void DrawSendRow(string label, string command, bool canSend, string? fullLabel = null, Action? trailing = null, Vector4? tint = null)
+    private void DrawSendRow(string label, string command, string? fullLabel = null, Action? trailing = null, Vector4? tint = null) =>
+        DrawSpecRow(new SendSpec($"subControl_{label}_{command}", label) { Command = command }, fullLabel, trailing, tint);
+
+    private void DrawSpecRow(SendSpec spec, string? fullLabel = null, Action? trailing = null, Vector4? tint = null)
     {
-        var fits = CommandSelector.Fits(command);
-        var status = !fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.";
-        if (DrawRow($"subControl_{label}_{command}", label, $"{fullLabel ?? label}\n\n{status}", canSend && fits, trailing, tint))
-            plugin.SendCommand(command);
+        var gate = SendGate.Evaluate(plugin, spec);
+        if (DrawRow(spec.Id, spec.Label, $"{fullLabel ?? spec.Label}\n\n{gate.Tooltip}", gate.Enabled, trailing, tint))
+            SendGate.Run(plugin, spec);
     }
 
     private static float SendButtonSize => ImGui.GetFrameHeight();
@@ -406,7 +388,7 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.SetCursorScreenPos(start + new Vector2(pad, margin));
         ImGui.AlignTextToFramePadding();
         var labelRoom = width - pad * 2 - SendButtonSize - ImGui.GetStyle().ItemSpacing.X;
-        ImGui.TextUnformatted(FitWithEllipsis(label, labelRoom));
+        ImGui.TextUnformatted(Layout.Ellipsize(label, labelRoom, out _));
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(tooltip);
 
@@ -448,26 +430,5 @@ public sealed class SubControlWindow : Window, IDisposable
         ImGui.SetCursorScreenPos(new Vector2(start.X, max.Y));
         ImGui.Dummy(Vector2.Zero);
         return clicked;
-    }
-
-    private const string Ellipsis = "...";
-
-    /// Binary search on length - labels can run past 100 characters.
-    private static string FitWithEllipsis(string text, float maxWidth)
-    {
-        if (ImGui.CalcTextSize(text).X <= maxWidth)
-            return text;
-
-        var ellipsisWidth = ImGui.CalcTextSize(Ellipsis).X;
-        int low = 0, high = text.Length;
-        while (low < high)
-        {
-            var mid = (low + high + 1) / 2;
-            if (ImGui.CalcTextSize(text[..mid]).X + ellipsisWidth <= maxWidth)
-                low = mid;
-            else
-                high = mid - 1;
-        }
-        return low == 0 ? Ellipsis : text[..low].TrimEnd() + Ellipsis;
     }
 }

@@ -27,7 +27,7 @@ public static class OwnerStatusView
             if (estimate.Blindfolded) parts.Add("blindfolded");
             if (estimate.Restrained) parts.Add("restrained");
             if (estimate.Leashed) parts.Add("leashed");
-            Layout.TextWithActions($"Estimated state: {string.Join(", ", parts)}", Layout.ActionsWidth("Clear estimate"), t => ImGui.TextColored(Theme.Success, t));
+            Layout.TextWithActions($"Estimated state: {string.Join(", ", parts)}", Layout.ActionsWidth("Clear estimate"), t => Status.Inline(StatusKind.Info, t));
             if (ImGui.Button("Clear estimate##ownerStatusClear"))
                 plugin.OwnerStatusEstimates.Clear(pairing.Id);
             if (includeRestraints)
@@ -35,7 +35,7 @@ public static class OwnerStatusView
         }
         if (plugin.OwnerStatusEstimates.ForBanner(pairing) is { } sent)
             DrawTimedLocks(plugin, sent);
-        IconGlyph.HelpMarker("Based on what you sent - your client can't see your Sub's side. Clear it if it's wrong.");
+        IconGlyph.HelpMarker(CommandMarkText.EstimateCaveat(pairing));
     }
 
     /// Titles, outfits and moodles sent with a timer, each with an End now.
@@ -43,9 +43,8 @@ public static class OwnerStatusView
     {
         void Row(string what, DateTime end, string command, string id)
         {
-            Layout.TextWithActions($"{what} (comes off in {Commands.RestraintLock.Format(end - DateTime.UtcNow)})", Layout.ActionsWidth("End now"));
-            if (ImGui.Button($"End now##ownerEnd_{id}"))
-                plugin.SendCommand(command);
+            Layout.TextWithActions($"{what} (comes off {TimeText.Until(end)})", Layout.ActionsWidth("End now"));
+            SendButton.Draw(plugin, new SendSpec($"ownerEnd_{id}", "End now") { Command = command, Small = true });
         }
         if (estimate.LastTitle is { } title && estimate.TitleEndsAtUtc is { } titleEnd)
             Row($"Title \"{title}\"", titleEnd, "title clear", "title");
@@ -61,13 +60,12 @@ public static class OwnerStatusView
         foreach (var restraint in estimate.Restraints.ToList())
         {
             var lockText = restraint.ExpiresAtUtc is { } until
-                ? $"unlocks in {Commands.RestraintLock.Format(until - DateTime.UtcNow)}"
+                ? $"unlocks {TimeText.Until(until)}"
                 : "locked";
             if (restraint.HasKey)
                 lockText += ", key";
             Layout.TextWithActions($"{restraint.Reference} ({lockText})", Layout.ActionsWidth("Unlock"));
-            if (ImGui.Button($"Unlock##ownerUnlock_{restraint.Reference}"))
-                plugin.SendCommand($"restraint unlock {restraint.Reference}");
+            SendButton.Draw(plugin, new SendSpec($"ownerUnlock_{restraint.Reference}", "Unlock") { Command = $"restraint unlock {restraint.Reference}", Small = true });
         }
     }
 }

@@ -28,7 +28,7 @@ public sealed partial class ModuleWindow
         using var section = Section.Begin("rbLadder", $"Ladder ({count}/{RulebookLimits.MaxLadderStages} stages)");
         IconGlyph.WrappedDisabled("Restraints that tighten and loosen a stage at a time. Each stage is one restraint, locked until the ladder moves. Once there's a stage, every outcome can Tighten or Loosen it.");
         if (count > 0)
-            IconGlyph.WrappedColored(Theme.Warning, NewSubNote);
+            Status.Line(StatusKind.Caution, NewSubNote);
 
         var changed = false;
         var restraintChoices = SavedConsequenceChoices().Where(c => c.Kind == "Restraints")
@@ -68,9 +68,9 @@ public sealed partial class ModuleWindow
             IconGlyph.HelpMarker("Double or nothing: escaping loosens the ladder a stage, failing tightens it a stage.");
 
             if (stage.Command.Length > 0 && ConsequenceValidator.CheckStageCommand(stage.Command) is { } problem)
-                IconGlyph.WrappedColored(Theme.Warning, RuleText.Cap(problem));
+                Status.Line(StatusKind.Caution, RuleText.Cap(problem));
             else if (stage.Struggle != StruggleLevel.None && stage.Command.Length > 0 && !RestraintStruggle.Accepts(stage.Command))
-                IconGlyph.WrappedColored(Theme.Warning, "This restraint can't carry a struggle setting, so it can't be struggled.");
+                Status.Line(StatusKind.Caution, "This restraint can't carry a struggle setting, so it can't be struggled.");
 
             using (ImRaii.Disabled(i == 0))
             {
@@ -161,10 +161,10 @@ public sealed partial class ModuleWindow
             var here = state.Stage == i + 1;
             var text = $"{(here ? "> " : "  ")}Stage {i + 1}: {RulebookService.LadderStageName(ladder, i + 1)} - {ConsequenceText.Describe(stage.Command)}" +
                 (stage.Struggle == StruggleLevel.None ? "" : $", {RestraintStruggle.LevelNames[(int)stage.Struggle].ToLowerInvariant()} struggle");
-            IconGlyph.WrappedColored(here ? Theme.Warning : Theme.TextMuted, text);
+            IconGlyph.WrappedColored(here ? Theme.Caution : Theme.Muted, text);
         }
         if (state.Stage == 0)
-            IconGlyph.WrappedColored(Theme.Success, "You're free of the ladder.");
+            Status.Line(StatusKind.Ok, "You're free of the ladder.");
         else if (!service.IsRunning(pairing))
             IconGlyph.WrappedDisabled("Paused: its restraint is off, and comes back on when your rulebook runs again.");
         else if (state.Released)
@@ -172,8 +172,8 @@ public sealed partial class ModuleWindow
         if (ladder.FailedStruggles > 1)
             IconGlyph.WrappedDisabled($"{state.FailedStruggles} of {ladder.FailedStruggles} failed struggles before it tightens.");
         if (service.LadderDecayLeft(pairing) is { } decay)
-            IconGlyph.WrappedDisabled($"Loosens by itself in {RestraintLock.Format(decay)} if nothing tightens it.");
+            IconGlyph.WrappedDisabled($"Loosens by itself {TimeText.Until(decay)} if nothing tightens it.");
         if (state.StruggleNextTryUtc is { } next && next > DateTime.UtcNow)
-            IconGlyph.WrappedDisabled($"Next struggle in {RestraintLock.Format(next - DateTime.UtcNow)}.");
+            IconGlyph.WrappedDisabled($"Next struggle {TimeText.Until(next)}.");
     }
 }

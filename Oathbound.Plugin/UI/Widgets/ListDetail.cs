@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.UI;
 
@@ -19,6 +20,9 @@ public sealed class ListDetail
     private string search = "";
     private string? pendingKey;
     private bool openDiscardPopup;
+    private Action<ListDetailItem?>? lastOnSelected;
+    /// After a delete nothing is picked for the user, so the detail pane shows its empty hint.
+    private bool holdEmpty;
 
     public string? Selected { get; private set; }
 
@@ -26,16 +30,31 @@ public sealed class ListDetail
     private static float ThumbWidth => Layout.Scaled(22);
 
     /// Selects without the unsaved-edit check, e.g. right after creating an item.
-    public void Select(string? key) => Selected = key;
+    public void Select(string? key)
+    {
+        Selected = key;
+        if (key is not null)
+            holdEmpty = false;
+    }
+
+    /// After a confirmed delete: clears the selection and runs the module's onSelected(null), so its drafts reset.
+    public void Deleted()
+    {
+        Selected = null;
+        pendingKey = null;
+        holdEmpty = true;
+        lastOnSelected?.Invoke(null);
+    }
 
     /// `isDirty` makes leaving the selected item ask first. `onSelected` loads drafts for the newly selected item.
     public void Draw(string id, IReadOnlyList<ListDetailItem> items, Action? toolbar, Action<ListDetailItem?> drawDetail,
         Func<bool>? isDirty = null, Action<ListDetailItem?>? onSelected = null, string emptyText = "Nothing here yet.")
     {
         ImGui.PushID(id);
+        lastOnSelected = onSelected;
         if (Selected is not null && items.All(i => i.Key != Selected))
             Selected = null;
-        if (Selected is null && items.Count > 0)
+        if (Selected is null && items.Count > 0 && !holdEmpty)
         {
             Selected = items[0].Key;
             onSelected?.Invoke(items[0]);
@@ -98,11 +117,7 @@ public sealed class ListDetail
         string? group = null;
         foreach (var item in filtered)
         {
-            if (item.Group is not null && item.Group != group)
-            {
-                group = item.Group;
-                ImGui.TextColored(Theme.AccentHover, group);
-            }
+            DrawGroupHeader(item, ref group);
             var hasTile = item.ImageFile is not null || item.Icon is not null;
             if (hasTile)
             {
@@ -132,15 +147,19 @@ public sealed class ListDetail
         string? group = null;
         foreach (var item in filtered)
         {
-            if (item.Group is not null && item.Group != group)
-            {
-                group = item.Group;
-                ImGui.TextColored(Theme.AccentHover, group);
-            }
+            DrawGroupHeader(item, ref group);
             if (ImGui.Selectable($"{RowText(item)}##{item.Key}", item.Key == Selected))
                 RequestSelect(item, isDirty, onSelected);
         }
         ImGui.EndCombo();
+    }
+
+    private static void DrawGroupHeader(ListDetailItem item, ref string? group)
+    {
+        if (item.Group is null || item.Group == group)
+            return;
+        group = item.Group;
+        ImGui.TextColored(Theme.AccentHover, group);
     }
 
     /// The label is cut short with an ellipsis rather than running under the column's edge; the badge and marker stay
@@ -157,22 +176,11 @@ public sealed class ListDetail
         var y = start.Y + (height - lineHeight) / 2f;
         var suffix = string.Join("  · ", new[] { item.Badge, item.Marker }.Where(x => x is not null));
         var suffixWidth = suffix.Length > 0 ? ImGui.CalcTextSize(suffix).X + ImGui.GetStyle().ItemSpacing.X : 0;
-        var label = Ellipsize(item.Label, width - suffixWidth, out truncated);
+        var label = Layout.Ellipsize(item.Label, width - suffixWidth, out truncated);
         draw.AddText(new Vector2(start.X, y), ImGui.GetColorU32(ImGuiCol.Text), label);
         if (suffix.Length > 0)
             draw.AddText(new Vector2(start.X + width - suffixWidth + ImGui.GetStyle().ItemSpacing.X, y), ImGui.GetColorU32(Theme.TextMuted), suffix);
         return clicked;
-    }
-
-    private static string Ellipsize(string text, float maxWidth, out bool truncated)
-    {
-        truncated = ImGui.CalcTextSize(text).X > maxWidth;
-        if (!truncated)
-            return text;
-        var length = text.Length;
-        while (length > 0 && ImGui.CalcTextSize(text[..length].TrimEnd() + "…").X > maxWidth)
-            length--;
-        return text[..length].TrimEnd() + "…";
     }
 
     private static string RowText(ListDetailItem item) =>
@@ -189,6 +197,7 @@ public sealed class ListDetail
             return;
         }
         Selected = item.Key;
+        holdEmpty = false;
         onSelected?.Invoke(item);
     }
 
@@ -207,6 +216,7 @@ public sealed class ListDetail
             if (items.FirstOrDefault(i => i.Key == pendingKey) is { } next)
             {
                 Selected = next.Key;
+                holdEmpty = false;
                 onSelected?.Invoke(next);
             }
             pendingKey = null;
@@ -219,5 +229,24 @@ public sealed class ListDetail
             ImGui.CloseCurrentPopup();
         }
         ImGui.EndPopup();
+    }
+}
+
+/// Owner lists that mix what came from the Sub with what the Owner wrote group them, Sub's first.
+public static class ListGroups
+{
+    public const string FromSub = "From your Sub";
+    public const string WrittenByYou = "Written by you";
+
+    public static string Of(QuickCommand cmd) => cmd.Source == ImportSource.Imported ? FromSub : WrittenByYou;
+
+    /// Stable order, FromSub first; a list with only one kind gets no headers. Keys are untouched, so selection holds.
+    public static List<ListDetailItem> Finish(IEnumerable<ListDetailItem> items)
+    {
+        var list = items.ToList();
+        var ordered = list.Where(i => i.Group == FromSub).Concat(list.Where(i => i.Group != FromSub)).ToList();
+        if (ordered.Where(i => i.Group is not null).Select(i => i.Group).Distinct().Count() > 1)
+            return ordered;
+        return ordered.Select(i => i with { Group = null }).ToList();
     }
 }

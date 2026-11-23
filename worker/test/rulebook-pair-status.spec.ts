@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { signedFetch } from "./helpers";
-import { freshPair, type Pair } from "./mailbox-helpers";
+import { deviceKeyId, genSigningKeyPair, signedFetch } from "./helpers";
+import { freshPair, type Pair, postStatus } from "./mailbox-helpers";
 import { consumeItem, publishRulebookKey, uploadItem } from "./rulebook-helpers";
 
 const pairStatus = (p: Pair) => signedFetch(`/v1/pairs/${p.pairIdHash}?epoch=0`, "GET", undefined, p.owner.privateKey, p.ownerId);
@@ -33,6 +33,32 @@ describe("rulebook mailbox: state on the pair status response", () => {
 
     const { nextKey } = await consumeItem(p, "rulebook", 3);
     expect((await pairStatus(p)).json.rulebookMailbox.rulebook).toMatchObject({ receiveKeyId: nextKey.receiveKeyId, waitingSequence: null, lastConsumedSequence: 3 });
+  });
+
+  it("carries each channel's latest signed receipt and sender status to both members, and nothing to outsiders", async () => {
+    const p = await freshPair();
+    const { envelope: rbKey } = await publishRulebookKey(p, "rulebook");
+    const { envelope: reportKey } = await publishRulebookKey(p, "report");
+    await uploadItem(p, "rulebook", rbKey.receiveKeyId, 4);
+    await uploadItem(p, "report", reportKey.receiveKeyId, 2);
+    await consumeItem(p, "rulebook", 4);
+    await consumeItem(p, "report", 2);
+
+    const rbReceipt = await postStatus(p, { mailbox: "rulebook", sequence: 4, code: "needs_update" });
+    const reportReceipt = await postStatus(p, { mailbox: "report", sequence: 2, code: "ok" });
+    const reportSender = await postStatus(p, { mailbox: "report", role: "sender", code: "upload_failed" });
+    for (const r of [rbReceipt, reportReceipt, reportSender]) expect(r.r.status).toBe(200);
+
+    const bySub = await signedFetch(`/v1/pairs/${p.pairIdHash}?epoch=0`, "GET", undefined, p.sub.privateKey, p.subId);
+    for (const json of [bySub.json, (await pairStatus(p)).json]) {
+      expect(json.rulebookMailbox.rulebook).toMatchObject({ recipientStatus: rbReceipt.envelope, senderStatus: null });
+      expect(json.rulebookMailbox.report).toMatchObject({ recipientStatus: reportReceipt.envelope, senderStatus: reportSender.envelope });
+    }
+
+    const outsider = await genSigningKeyPair();
+    const r = await signedFetch(`/v1/pairs/${p.pairIdHash}?epoch=0`, "GET", undefined, outsider.privateKey, await deviceKeyId(outsider.publicKeyJwk));
+    expect(r.status).toBe(401);
+    expect(r.json.rulebookMailbox).toBeUndefined();
   });
 
   it("stops reporting an item as waiting once it expired", async () => {

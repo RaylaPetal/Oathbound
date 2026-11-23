@@ -36,7 +36,9 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "POST /v1/catalog/mailbox/key/fetch": 6,
   "POST /v1/catalog/mailbox/upload": 16,
   "POST /v1/catalog/mailbox/status": 4,
-  "POST /v1/catalog/mailbox/consume": 9,
+  "POST /v1/catalog/mailbox/consume": 11,
+
+  "POST /v1/mailbox/status": 12,
 
   "POST /v1/pictures/sync": 8,
   "POST /v1/pictures/upload": 8,
@@ -48,7 +50,7 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "POST /v1/rulebook/key": 12,
   "POST /v1/rulebook/key/fetch": 4,
   "POST /v1/rulebook/upload": 13,
-  "POST /v1/rulebook/consume": 9,
+  "POST /v1/rulebook/consume": 11,
 };
 
 /** Unknown paths only cost the global counter write. */

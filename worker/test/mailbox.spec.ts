@@ -148,8 +148,12 @@ describe("catalog mailbox: consume", () => {
     expect(stale.r.status).toBe(410);
     expect((await upload(p, nextKey.receiveKeyId, 3)).r.status).toBe(200);
 
+    // Snapshot 1 is held for a retried pickup until a receipt, the next pickup, a key publish or its expiry.
     const listed = await env.RELAY_CATALOG_BUCKET.list({ prefix: `mailbox/${p.pairIdHash}/` });
-    expect(listed.objects.map((o) => o.key)).toEqual([`mailbox/${p.pairIdHash}/0/3`]);
+    expect(listed.objects.map((o) => o.key).sort()).toEqual([`mailbox/${p.pairIdHash}/0/1`, `mailbox/${p.pairIdHash}/0/3`]);
+    await consume(p, 3);
+    const afterNext = await env.RELAY_CATALOG_BUCKET.list({ prefix: `mailbox/${p.pairIdHash}/` });
+    expect(afterNext.objects.map((o) => o.key)).toEqual([`mailbox/${p.pairIdHash}/0/3`]);
   });
 
   it("refuses to consume a snapshot id that isn't the one waiting", async () => {

@@ -254,7 +254,7 @@ public sealed class TutorialService : IDisposable
         if (step.Anchor is not null && !anchored)
         {
             ImGui.Spacing();
-            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Warning);
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Caution);
             ImGui.TextUnformatted(step.MissingText ?? "This part isn't on screen right now - it may need a plugin, a pairing, or something added first. Next keeps going.");
             ImGui.PopStyleColor();
         }

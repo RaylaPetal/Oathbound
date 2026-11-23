@@ -23,12 +23,10 @@ public sealed partial class ModuleWindow
     {
         var config = plugin.Configuration;
         var locked = plugin.RuntimeState.CollarForceLocked;
-        IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
-        ImGui.Separator();
         IconGlyph.WrappedDisabled("Choose a Neck collar, a left ring, or both. They lock on when you accept a pairing.");
 
         if (locked)
-            IconGlyph.WrappedColored(Theme.Danger, "Locked - applied at pairing. Only your Owner's \"collar unlock\" or ending that pairing releases it. Your safeword leaves the collar on.");
+            Status.Line(StatusKind.Info, "Locked - applied at pairing. Only your Owner's \"collar unlock\" or ending that pairing releases it. Your safeword leaves the collar on.");
 
         using var disabled = ImRaii.Disabled(locked);
 
@@ -86,11 +84,11 @@ public sealed partial class ModuleWindow
             // Clearing an existing assignment stays available without Moodles.
             if (DependencyGates.FeatureBlockedReason(plugin, DependencyId.Moodles) is { } collarMoodleBlocked)
             {
-                IconGlyph.WrappedColored(Theme.StatusMissing, collarMoodleBlocked);
+                Status.Line(StatusKind.Error, collarMoodleBlocked);
             }
             else if (collarMoodleStatuses.Count == 0)
             {
-                IconGlyph.WrappedDisabled("No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
+                DrawGoToSyncTabPrompt("No scanned Moodles statuses yet.");
             }
             else
             {
@@ -124,8 +122,6 @@ public sealed partial class ModuleWindow
     /// The collar applies at pairing acceptance or via `collar lock`; only the fixed rows are needed.
     private void DrawCollarQuickSection(bool canSend)
     {
-        IconGlyph.Text(FontAwesomeIcon.Lock, "Collar");
-        ImGui.Separator();
         DrawCommandRow("collarQuick", canSend,
             new RowCommand("Collar lock", "collar lock", FixedActionIds.CollarLock, "Puts your Sub's collar on and locks it."),
             new RowCommand("Collar unlock", "collar unlock", FixedActionIds.CollarUnlock, "Unlocks your Sub's collar. It stays on, just unlocked."));

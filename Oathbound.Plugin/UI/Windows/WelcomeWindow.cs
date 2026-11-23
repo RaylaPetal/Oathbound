@@ -33,7 +33,7 @@ public sealed class WelcomeWindow : Window, IDisposable
     {
         var config = plugin.Configuration;
 
-        ImGui.TextWrapped("Welcome! Before you get started, choose your role and the trigger phrase your commands will use - you can change either later in Settings.");
+        ImGui.TextWrapped("Welcome! Before you get started, choose your role and the trigger phrase that starts your chat Reactions - you can change either later in Settings.");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -45,7 +45,7 @@ public sealed class WelcomeWindow : Window, IDisposable
 
         ImGui.Spacing();
         ImGui.InputTextWithHint("Trigger phrase", "e.g. command", ref triggerPhraseInput, 32);
-        IconGlyph.HelpMarker("The word that must start every ongoing command tell, e.g. \"command strip\".");
+        IconGlyph.HelpMarker("Starts a chat phrase for your Reactions, e.g. \"collar kneel\". Commands from an Owner don't use it.");
 
         ImGui.Spacing();
         ImGui.Separator();

@@ -55,11 +55,12 @@ public sealed partial class ModuleWindow
 
     private void DrawToyControlModule()
     {
-        IconGlyph.Text(FontAwesomeIcon.Plug, "Toy Control (Intiface)");
-        ImGui.Separator();
         var config = plugin.Configuration;
         if (!config.ToyControlAcknowledged)
-            IconGlyph.WrappedColored(Theme.Warning, "Needs the Toy Control acknowledgement and permission in Settings first.");
+        {
+            Status.Line(StatusKind.Caution, "Needs the Toy Control acknowledgement in Settings > ToS, then its permission in Settings > Permissions.");
+            DrawOpenPermissionButton(false, "toyPerm");
+        }
 
         if (toyIntifaceAddress.Length == 0)
             toyIntifaceAddress = config.IntifaceAddress;
@@ -93,7 +94,7 @@ public sealed partial class ModuleWindow
         var status = intiface.IsConnected ? $"Connected - {intiface.ConnectedDeviceCount} device(s)" : intiface.IsConnecting ? "Connecting..." : "Not connected";
         IconGlyph.WrappedDisabled(status);
         if (intiface.LastError is { Length: > 0 } error)
-            IconGlyph.WrappedColored(Theme.Warning, error);
+            Status.Line(StatusKind.Error, error);
 
         ImGui.Spacing();
         using (ImRaii.Disabled(!intiface.IsConnected || plugin.CageService.IsCaged))
@@ -166,7 +167,9 @@ public sealed partial class ModuleWindow
                     ImGui.AlignTextToFramePadding();
                     ImGui.TextColored(Theme.AccentHover, pattern.Name);
                     ImGui.SameLine();
-                    if (ImGui.Button($"Delete##toyPattern{pattern.Id}"))
+                    var usedBy = config.ToyTriggerRules.Count(r => string.Equals(r.PatternName, pattern.Name, StringComparison.OrdinalIgnoreCase));
+                    if (ConfirmDelete.Button($"deleteToyPattern{pattern.Id}", pattern.Name,
+                            detail: usedBy == 0 ? null : $"{usedBy} automatic trigger{(usedBy == 1 ? "" : "s")} using it will be turned off."))
                     {
                         config.ToyPatterns.Remove(pattern);
                         // Disable, rather than orphan, triggers that named this pattern.
@@ -174,13 +177,13 @@ public sealed partial class ModuleWindow
                             rule.Enabled = false;
                         config.Save();
                         ResetToyPatternInput();
-                        toyPatternList.Select(null);
+                        toyPatternList.Deleted();
                         return;
                     }
                     if (ownerCanSend is { } canSend)
                     {
                         ImGui.SameLine();
-                        DrawSendOnly(ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop), canSend, $"toyPatternSend{pattern.Id}", "Send");
+                        SendButton.Draw(plugin, new SendSpec($"toyPatternSend{pattern.Id}", "Send") { Command = ToyControlCommand.BuildCustomSequenceCommand(pattern.Steps, pattern.Loop) });
                         IconGlyph.HelpMarker("Sends this pattern to your Sub. They don't need it saved.");
                     }
                 }
@@ -318,7 +321,7 @@ public sealed partial class ModuleWindow
             }
         }
         if (toyPatternError is { Length: > 0 } error)
-            IconGlyph.WrappedColored(Theme.Warning, error);
+            Status.Line(StatusKind.Error, error);
     }
 
     private void ResetToyPatternInput()
@@ -339,14 +342,15 @@ public sealed partial class ModuleWindow
 
         if (!config.ToyTriggersAcknowledged)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Needs the Automatic Triggers acknowledgement in Settings first.");
+            Status.Line(StatusKind.Caution, "Needs the Automatic Triggers acknowledgement in Settings > ToS first.");
+            DrawOpenSettingsButton("Open acknowledgements##toyTriggersAck", SettingsTab.Tos);
             return;
         }
 
         var runtimeState = plugin.RuntimeState;
         if (runtimeState.ToyTriggersSuspended)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Triggers are suspended (panic was triggered). They will not fire again until you resume them.");
+            Status.Line(StatusKind.Caution, "Triggers are suspended (panic was triggered). They will not fire again until you resume them.");
             if (ImGui.Button("Resume triggers##toyTriggers"))
                 runtimeState.ToyTriggersSuspended = false;
             IconGlyph.HelpMarker("Turns triggers back on after a panic.");
@@ -382,16 +386,16 @@ public sealed partial class ModuleWindow
                         config.Save();
                     }
                     ImGui.SameLine();
-                    if (ImGui.Button($"Delete##toyTrigger{rule.Id}"))
+                    if (ConfirmDelete.Button($"deleteToyTrigger{rule.Id}", item.Label))
                     {
                         config.ToyTriggerRules.Remove(rule);
                         config.Save();
                         ResetToyTriggerDraft();
-                        toyTriggerList.Select(null);
+                        toyTriggerList.Deleted();
                         return;
                     }
                     if (rule.PatternName is { Length: > 0 } targetPattern && !IsKnownPatternName(config, targetPattern))
-                        IconGlyph.WrappedColored(Theme.Warning, $"\"{targetPattern}\" no longer exists - this trigger needs reconfiguration.");
+                        Status.Line(StatusKind.Caution, $"\"{targetPattern}\" no longer exists - this trigger needs reconfiguration.");
                 }
                 DrawToyTriggerForm();
             },
@@ -442,7 +446,7 @@ public sealed partial class ModuleWindow
         }
         else if (toyTriggerKindInput == ToyTriggerKind.RestrictionActive)
         {
-            var restrictionNames = Enum.GetNames<RestraintRuleKind>();
+            var restrictionNames = Enum.GetValues<RestraintRuleKind>().Select(CommandPresentation.RuleName).ToArray();
             var restrictionIndex = (int)toyTriggerRestrictionKindInput;
             ItemWidth(200);
             if (ImGui.Combo("Restriction##toyTriggerRestriction", ref restrictionIndex, restrictionNames, restrictionNames.Length))
@@ -470,11 +474,14 @@ public sealed partial class ModuleWindow
 
         ImGui.Checkbox("Named pattern (instead of a fixed intensity)##toyTriggerUsePattern", ref toyTriggerUsePatternInput);
         IconGlyph.HelpMarker("Off: a plain vibration. On: play a named pattern.");
+        var patternMissing = false;
         if (toyTriggerUsePatternInput)
         {
-            ItemWidth(180);
-            ImGui.InputText("Pattern name##toyTriggerPattern", ref toyTriggerPatternNameInput, 64);
-            IconGlyph.HelpMarker("A built-in (weak/medium/strong/pulse) or saved pattern name. Unknown names never fire.");
+            if (toyTriggerPatternNameInput.Trim().Length == 0)
+                toyTriggerPatternNameInput = ToyControlCommand.BuiltInPatternNames[0];
+            patternMissing = !IsKnownPatternName(config, toyTriggerPatternNameInput.Trim());
+            DrawToyTriggerPatternCombo(config, patternMissing);
+            IconGlyph.HelpMarker("A built-in pattern (weak, medium, strong, intense, pulse) or one of your saved patterns.");
         }
         else
         {
@@ -499,25 +506,71 @@ public sealed partial class ModuleWindow
         ImGui.Spacing();
         if (editingRule is not null)
         {
-            if (ImGui.Button("Save trigger##toyTrigger"))
+            using (ImRaii.Disabled(patternMissing))
             {
-                ApplyToyTriggerDraft(editingRule);
-                config.Save();
-                LoadToyTriggerDraft(editingRule);
+                if (ImGui.Button("Save trigger##toyTrigger"))
+                {
+                    ApplyToyTriggerDraft(editingRule);
+                    config.Save();
+                    LoadToyTriggerDraft(editingRule);
+                }
             }
+            DrawMissingPatternTooltip(patternMissing);
             ContinueRowOrWrap(ButtonWidth("Cancel"));
             if (ImGui.Button("Cancel##toyTrigger"))
                 LoadToyTriggerDraft(editingRule);
         }
-        else if (ImGui.Button("Add trigger##toyTrigger"))
+        else
         {
-            var rule = new ToyTriggerRule { Enabled = true };
-            ApplyToyTriggerDraft(rule);
-            config.ToyTriggerRules.Add(rule);
-            config.Save();
-            LoadToyTriggerDraft(rule);
-            toyTriggerList.Select($"trigger:{rule.Id}");
+            using (ImRaii.Disabled(patternMissing))
+            {
+                if (ImGui.Button("Add trigger##toyTrigger"))
+                {
+                    var rule = new ToyTriggerRule { Enabled = true };
+                    ApplyToyTriggerDraft(rule);
+                    config.ToyTriggerRules.Add(rule);
+                    config.Save();
+                    LoadToyTriggerDraft(rule);
+                    toyTriggerList.Select($"trigger:{rule.Id}");
+                }
+            }
+            DrawMissingPatternTooltip(patternMissing);
         }
+    }
+
+    private static void DrawMissingPatternTooltip(bool patternMissing)
+    {
+        if (patternMissing && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Pick a pattern that exists.");
+    }
+
+    /// Stores the picked name, so a renamed pattern keeps working through the existing rename handling.
+    private void DrawToyTriggerPatternCombo(PluginConfig config, bool missing)
+    {
+        var current = toyTriggerPatternNameInput.Trim();
+        var preview = missing ? $"{current} (missing)" : current;
+        ItemWidth(180);
+        if (missing)
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Caution);
+        var open = ImGui.BeginCombo("Pattern##toyTriggerPattern", preview);
+        if (missing)
+            ImGui.PopStyleColor();
+        if (!open)
+            return;
+        foreach (var name in ToyControlCommand.BuiltInPatternNames)
+        {
+            if (ImGui.Selectable($"{name}##toyTriggerBuiltIn_{name}", string.Equals(name, current, StringComparison.OrdinalIgnoreCase)))
+                toyTriggerPatternNameInput = name;
+        }
+        if (config.ToyPatterns.Count > 0)
+            ImGui.Separator();
+        for (var i = 0; i < config.ToyPatterns.Count; i++)
+        {
+            var name = config.ToyPatterns[i].Name;
+            if (ImGui.Selectable($"{name}##toyTriggerSaved_{i}", string.Equals(name, current, StringComparison.OrdinalIgnoreCase)))
+                toyTriggerPatternNameInput = name;
+        }
+        ImGui.EndCombo();
     }
 
     /// Keeps the rule's Id and Enabled state so the evaluator's cooldown tracking carries over.
@@ -733,7 +786,7 @@ public sealed partial class ModuleWindow
         {
             ToyTriggerKind.HealthPercent => $"Health <= {rule.HealthPercentThreshold}%",
             ToyTriggerKind.PlayerDamage => "Hit",
-            ToyTriggerKind.RestrictionActive => $"{rule.RestrictionKind} active",
+            ToyTriggerKind.RestrictionActive => $"{CommandPresentation.RuleName(rule.RestrictionKind)} active",
             ToyTriggerKind.SpellCastOnYou => DescribeSpellFilter(rule, full),
             ToyTriggerKind.EmoteOnYou => DescribeEmoteFilter(rule, full),
             _ => rule.Kind.ToString(),
@@ -771,12 +824,10 @@ public sealed partial class ModuleWindow
 
     private void DrawToyControlQuickSection(bool canSend)
     {
-        IconGlyph.Text(FontAwesomeIcon.Plug, "Toy Control");
-        ImGui.Separator();
         IconGlyph.WrappedDisabled($"Commands stop after at most {ToyControlCommand.MaxDurationSeconds} seconds.");
 
         using (Section.Begin("toyQuickStatus", "Status"))
-            ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing);
+            ToyStatusView.DrawOwner(plugin.OwnerToyStatus.ForActivePairing, plugin.OwnerToyStatus.MarkForActivePairing, plugin.Configuration.GetActivePairing()?.PeerName ?? "your Sub");
 
         var vibrateBox = Section.Begin("toyQuickVibrate", "Vibrate");
         ItemWidth(200);
@@ -799,7 +850,7 @@ public sealed partial class ModuleWindow
 
         var duration = toyVibrateIsPermanent ? ToyDuration.Permanent : toyVibrateHasDuration ? ToyDuration.Bounded(toyVibrateDurationSeconds) : ToyDuration.Unspecified;
         var vibrateCommand = ToyControlCommand.BuildVibrateCommand(toyVibrateIntensity, duration);
-        DrawSendOnly(vibrateCommand, canSend, "toyControlVibrate", "Send vibrate");
+        SendButton.Draw(plugin, new SendSpec("toyControlVibrate", "Send vibrate") { Command = vibrateCommand });
         vibrateBox.Dispose();
 
         var patternsBox = Section.Begin("toyQuickPatterns", "Patterns & stop");
@@ -808,11 +859,11 @@ public sealed partial class ModuleWindow
             var name = ToyControlCommand.BuiltInPatternNames[i];
             var label = char.ToUpperInvariant(name[0]) + name[1..];
             if (i > 0) ContinueRowOrWrap(ButtonWidth(label));
-            DrawSendOnly(ToyControlCommand.BuildPatternCommand(name), canSend, $"toyControl{label}", label);
+            SendButton.Draw(plugin, new SendSpec($"toyControl{label}", label) { Command = ToyControlCommand.BuildPatternCommand(name) });
         }
 
         ImGui.Spacing();
-        DrawSendOnly(ToyControlCommand.BuildStopCommand(), canSend, "toyControlStop", "Send stop");
+        SendButton.Draw(plugin, new SendSpec("toyControlStop", "Send stop") { Command = ToyControlCommand.BuildStopCommand() });
         patternsBox.Dispose();
 
         using (Section.Begin("toyQuickCustomPatterns"))

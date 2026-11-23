@@ -9,6 +9,7 @@ import { RelayError } from "../lib/errors";
 import { sha256Hex, toCanonicalJson } from "../lib/json";
 import { pairAtEpoch } from "../lib/pairs";
 import { lookupDeviceKey } from "../lib/deviceKeys";
+import { logEvent } from "../lib/log";
 import { assertCircuitBreakerClosed, enforceQuota } from "../lib/quotas";
 import { deleteCiphertext, getCiphertext, putCiphertext, r2KeyForRequest } from "../lib/r2";
 import {
@@ -180,6 +181,8 @@ export async function createCatalogRequest(request: Request, env: Env): Promise<
     .first<{ status: string }>();
   if (own?.status !== "pending") throw new RelayError("cooldown_active", 1);
 
+  // Only clients from before mailbox receipts create requests; this event tells when the routes can be retired.
+  logEvent("legacy_catalog_request");
   await notifyPeer(env, pair, deviceKeyId);
   return Response.json(envelope);
 }

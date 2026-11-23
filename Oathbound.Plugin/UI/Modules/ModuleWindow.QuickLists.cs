@@ -26,7 +26,7 @@ public sealed partial class ModuleWindow
     {
         var listDetail = QuickList(id);
         var newKey = $"{id}:new";
-        var items = list.Select((cmd, i) => toItem(cmd) with { Key = $"{id}:{i}" }).ToList();
+        var items = ListGroups.Finish(list.Select((cmd, i) => toItem(cmd) with { Key = $"{id}:{i}", Group = ListGroups.Of(cmd) }));
         if (listDetail.Selected == newKey && newLabel is not null)
             items.Add(new ListDetailItem(newKey, newLabel));
 
@@ -75,16 +75,16 @@ public sealed partial class ModuleWindow
         ContinueRowOrWrap(StarWidth);
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
         ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", cmd.Label))
         {
             list.Remove(cmd);
             CancelQuickCommandEdit();
             plugin.Configuration.Save();
-            listDetail.Select(null);
+            listDetail.Deleted();
             ImGui.PopID();
             return;
         }
-        if (cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase))
+        if (OwnerLockOption.IsOutfitNotLocked(cmd))
             ImGui.TextDisabled("Not locked");
         if (cmd.MoodleOverride is { } moodle && OwnerMoodleOverride.Accepts(cmd.Command))
             ImGui.TextDisabled($"Moodle: {moodle}");
@@ -92,7 +92,7 @@ public sealed partial class ModuleWindow
 
         Section.SubHeading("Send");
         ImGui.BeginGroup();
-        DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
+        SendButton.Draw(plugin, new SendSpec($"{cmd.Label}_{cmd.Command}", "Send") { Command = OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), AnchorQuickSend = true });
         if (OwnerLockOption.Accepts(cmd.Command))
             OwnerLockOption.DrawInline($"{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
         ImGui.EndGroup();

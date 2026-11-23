@@ -59,7 +59,7 @@ public static class IconGlyph
         Vector2 glyphSize;
         using (ImRaii.PushFont(font))
             glyphSize = ImGui.CalcTextSize(glyph) * (fontSize / ImGui.GetFontSize());
-        var color = on ? Theme.Warning : hovered ? Theme.TextMuted : Theme.TextMuted * new Vector4(1, 1, 1, 0.6f);
+        var color = on ? Theme.Caution : hovered ? Theme.TextMuted : Theme.TextMuted * new Vector4(1, 1, 1, 0.6f);
         draw.AddText(font, fontSize, pos + (size - glyphSize) / 2f, ImGui.GetColorU32(color), glyph);
         if (hovered)
             ImGui.SetTooltip(tooltip);

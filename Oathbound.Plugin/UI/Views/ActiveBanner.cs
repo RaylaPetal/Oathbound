@@ -47,15 +47,5 @@ public static class ActiveBanner
     }
 
     /// A small rounded label on the current line, e.g. "locked 42m".
-    public static void Pill(string text, Vector4? color = null)
-    {
-        ImGui.SameLine();
-        var pos = ImGui.GetCursorScreenPos();
-        var size = ImGui.CalcTextSize(text);
-        var padX = Layout.Scaled(5);
-        var box = new Vector2(size.X + padX * 2, ImGui.GetTextLineHeight());
-        ImGui.GetWindowDrawList().AddRectFilled(pos, pos + box, ImGui.GetColorU32(Theme.TileBg), box.Y / 2);
-        ImGui.GetWindowDrawList().AddText(pos + new Vector2(padX, 0), ImGui.GetColorU32(color ?? Theme.TextMuted), text);
-        ImGui.Dummy(box);
-    }
+    public static void Pill(string text, StatusKind kind = StatusKind.Muted) => Status.Pill(kind, text);
 }

@@ -25,9 +25,6 @@ public sealed partial class ModuleWindow
     private string editingQuickOriginalTarget = "";
     private bool editingQuickTitleIsPrefix;
     private bool editingQuickOriginalTitleIsPrefix;
-    private bool editingQuickOutfitLocked = true;
-    private bool editingQuickOriginalOutfitLocked = true;
-    private static readonly string[] OutfitLockModeNames = ["Locked", "Not locked"];
 
     private Vector3 editingQuickTitleColor = new(1, 1, 1);
 
@@ -51,16 +48,17 @@ public sealed partial class ModuleWindow
         ContinueRowOrWrap(StarWidth);
         DrawFavoriteStar(favoriteId);
         ContinueRowOrWrap(ButtonWidth("Send"));
-        DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, command, null), canSend, $"fixed_{label}");
+        SendButton.Draw(plugin, new SendSpec($"fixed_{label}", "Send") { Command = OwnerMoodleOverride.ForSend(plugin.Configuration, command, null), AnchorQuickSend = true });
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.Fixed(favoriteId));
     }
 
     /// `displayLabel` changes display only; IDs and the command keep the raw label.
-    private void DrawSavedQuickRow(QuickCommand cmd, List<QuickCommand> list, bool canSend, Func<string, string>? displayLabel = null)
+    /// `listDetail` is the list this row is the detail of, so a delete clears its selection.
+    private void DrawSavedQuickRow(QuickCommand cmd, List<QuickCommand> list, bool canSend, Func<string, string>? displayLabel = null, ListDetail? listDetail = null)
     {
         var shownLabel = displayLabel?.Invoke(cmd.Label) ?? cmd.Label;
-        if (cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase))
+        if (OwnerLockOption.IsOutfitNotLocked(cmd))
             shownLabel += "  · not locked";
         if (cmd.MoodleOverride is { } rowMoodle && OwnerMoodleOverride.Accepts(cmd.Command))
             shownLabel += $"  · moodle: {rowMoodle}";
@@ -70,7 +68,7 @@ public sealed partial class ModuleWindow
         ContinueRowOrWrap(StarWidth);
         DrawFavoriteToggle(cmd, $"{cmd.Label}_{cmd.Command}");
         ContinueRowOrWrap(ButtonWidth("Send"));
-        DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, $"{cmd.Label}_{cmd.Command}");
+        SendButton.Draw(plugin, new SendSpec($"{cmd.Label}_{cmd.Command}", "Send") { Command = OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), AnchorQuickSend = true });
         if (OwnerLockOption.Accepts(cmd.Command))
             OwnerLockOption.DrawInline($"{cmd.Label}_{cmd.Command}", cmd, plugin.Configuration);
         ImGui.EndGroup();
@@ -89,13 +87,14 @@ public sealed partial class ModuleWindow
             else
                 BeginQuickCommandEdit(cmd, list);
         }
-        ContinueRowOrWrap(ButtonWidth("Remove"));
-        if (ImGui.Button($"Remove##{cmd.Label}_{cmd.Command}"))
+        ContinueRowOrWrap(ButtonWidth("Delete"));
+        if (ConfirmDelete.Button($"delete_{cmd.Label}_{cmd.Command}", cmd.Label))
         {
             list.Remove(cmd);
             if (ReferenceEquals(editingQuickCommand, cmd))
                 CancelQuickCommandEdit();
             plugin.Configuration.Save();
+            listDetail?.Deleted();
             return;
         }
 
@@ -134,8 +133,6 @@ public sealed partial class ModuleWindow
         }
         editingQuickOriginalTarget = editingQuickTarget;
         editingQuickOriginalTitleIsPrefix = editingQuickTitleIsPrefix;
-        editingQuickOutfitLocked = !command.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase);
-        editingQuickOriginalOutfitLocked = editingQuickOutfitLocked;
         editingQuickOriginalTitleColor = editingQuickTitleColor;
         editingQuickOriginalTitleHasGlow = editingQuickTitleHasGlow;
         editingQuickOriginalTitleGlow = editingQuickTitleGlow;
@@ -189,10 +186,6 @@ public sealed partial class ModuleWindow
             case QuickEditCategory.Outfit:
                 ImGui.SetNextItemWidth(-1);
                 ImGui.InputText("Outfit name##quickEdit", ref editingQuickTarget, 96);
-                var lockMode = editingQuickOutfitLocked ? 0 : 1;
-                if (ImGui.Combo("Lock##quickEdit", ref lockMode, OutfitLockModeNames, OutfitLockModeNames.Length))
-                    editingQuickOutfitLocked = lockMode == 0;
-                IconGlyph.HelpMarker("Locked: your Sub can't change it until you unlock it. Not locked: they can change it freely.");
                 OwnerMoodleOverride.Draw("quickEditOutfit", plugin.Configuration, ref editingQuickMoodle);
                 break;
             case QuickEditCategory.Gesture:
@@ -223,10 +216,10 @@ public sealed partial class ModuleWindow
         var reserved = aliasList && IsReserved(draftCommand);
         var safe = CommandSelector.Fits(draftCommand);
         var validTarget = draftCommand.Length > 0 && (editingQuickCategory != QuickEditCategory.Gesture || draftTarget is not null);
-        if (stale) IconGlyph.WrappedColored(Theme.Warning, "This entry was removed while it was being edited.");
-        else if (duplicate) IconGlyph.WrappedColored(Theme.Warning, "Another saved entry already uses this label or command.");
-        else if (reserved) IconGlyph.WrappedColored(Theme.Warning, "This alias is reserved for a direct Owner command.");
-        else if (!safe) IconGlyph.WrappedColored(Theme.Warning, "This command is too long to send.");
+        if (stale) Status.Line(StatusKind.Caution, "This entry was removed while it was being edited.");
+        else if (duplicate) Status.Line(StatusKind.Caution, "Another saved entry already uses this label or command.");
+        else if (reserved) Status.Line(StatusKind.Caution, "This alias is reserved for a direct Owner command.");
+        else if (!safe) Status.Line(StatusKind.Caution, "This command is too long to send.");
 
         using (ImRaii.Disabled(stale || duplicate || reserved || !safe || !validTarget || editingQuickLabel.Trim().Length == 0))
         {
@@ -236,7 +229,8 @@ public sealed partial class ModuleWindow
                 source.Command = draftCommand;
                 source.Target = draftTarget;
                 if (editingQuickCategory == QuickEditCategory.Outfit)
-                    source.MoodleOverride = editingQuickMoodle;                if (editingQuickCategory == QuickEditCategory.Title)
+                    source.MoodleOverride = editingQuickMoodle;
+                if (editingQuickCategory == QuickEditCategory.Title)
                 {
                     source.TitleIsPrefix = editingQuickTitleIsPrefix;
                     source.TitleColor = editingQuickTitleColor;
@@ -284,15 +278,16 @@ public sealed partial class ModuleWindow
         var targetChanged = !string.Equals(target, editingQuickOriginalTarget.Trim(), StringComparison.Ordinal) ||
             (editingQuickCategory == QuickEditCategory.Title &&
              (editingQuickTitleIsPrefix != editingQuickOriginalTitleIsPrefix || editingQuickTitleColor != editingQuickOriginalTitleColor ||
-              editingQuickTitleHasGlow != editingQuickOriginalTitleHasGlow || editingQuickTitleGlow != editingQuickOriginalTitleGlow)) ||
-            (editingQuickCategory == QuickEditCategory.Outfit && editingQuickOutfitLocked != editingQuickOriginalOutfitLocked);
+              editingQuickTitleHasGlow != editingQuickOriginalTitleHasGlow || editingQuickTitleGlow != editingQuickOriginalTitleGlow));
         if (!targetChanged && editingQuickCategory != QuickEditCategory.Raw)
             return (source.Command, source.Target);
         return editingQuickCategory switch
         {
             QuickEditCategory.Title when target.Length > 0 =>
                 (TitleCommand.BuildStyleCommand(target, editingQuickTitleIsPrefix, editingQuickTitleColor, editingQuickTitleHasGlow ? editingQuickTitleGlow : null), null),
-            QuickEditCategory.Outfit when target.Length > 0 => ($"outfit {(editingQuickOutfitLocked ? "lock" : "wear")} {target}", target),
+            // The lock control on the send row owns lock vs wear; editing the name keeps it.
+            QuickEditCategory.Outfit when target.Length > 0 =>
+                ($"outfit {(source.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase) ? "wear" : "lock")} {target}", target),
             QuickEditCategory.Gesture when plugin.Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(target, out var entry) =>
                 ($"gesture {CommandSelector.Quote(CommandSelector.GestureSelector(entry, plugin.Configuration.GestureMapping.ImportedPeerCatalog.Values))}", entry.Id),
             QuickEditCategory.Follow when target.Length > 0 => (target, null),

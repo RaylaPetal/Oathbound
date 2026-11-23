@@ -16,20 +16,23 @@ namespace Oathbound.Plugin.UI;
 
 public sealed partial class ModuleWindow
 {
-    private string? importResult;
+    private StatusMessage? importResult;
     private string? resetImportsResult;
-    private string? subExportResult;
+    private StatusMessage? subExportResult;
     private string penumbraFolderSearch = "";
     private string newWardrobeAllowlistFolder = "";
 
     /// A gap means the tab was just (re)opened.
     private int lastSyncTabFrame = -10;
 
+    private System.Threading.Tasks.Task<string?>? getLatestTask;
+    private StatusMessage? getLatestResult;
+
     private void DrawPicturesNotShared()
     {
         var failed = plugin.RestraintThumbnailWorker.Failed(plugin.RestraintCommand.ThumbnailTargetBytes());
         if (failed.Count > 0)
-            IconGlyph.WrappedColored(Theme.Warning, $"Shared without their picture (couldn't be made small enough): {string.Join(", ", failed)}.");
+            Status.Line(StatusKind.Error, $"Shared without their picture (couldn't be made small enough): {string.Join(", ", failed)}.");
         var pending = plugin.RestraintCommand.PicturesLeftOut.Except(failed).ToList();
         if (pending.Count > 0)
             IconGlyph.WrappedDisabled($"Picture still being prepared for sharing: {string.Join(", ", pending)}.");
@@ -71,14 +74,11 @@ public sealed partial class ModuleWindow
     private void DrawSubExportSection()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.CloudDownloadAlt, "Catalog sync");
-        ImGui.Separator();
-
         using (Section.Begin("subRelayInfo", "Cloud catalog sync"))
             DrawSubAutoSyncInfo(config);
 
         var scanBox = Section.Begin("subScan", "Scan");
-        IconGlyph.WrappedDisabled("Scan every catalog at once below, then export your resulting catalog for your Owner.");
+        IconGlyph.WrappedDisabled("Scanning updates what's shared with your Owner. Sharing happens by itself.");
 
         if (ImGui.Button("Scan all"))
         {
@@ -104,7 +104,7 @@ public sealed partial class ModuleWindow
         if (tooLong.Count > 0)
         {
             using (Section.Begin("subShareLimits", "Not shared"))
-                IconGlyph.WrappedColored(Theme.Warning, $"{tooLong.Count} custom trigger(s) too long to share: {string.Join(", ", tooLong)}. Each action has to fit in one chat message - shorten the long ones (e.g. shorter restraint, animation or preset names, or chat text) to share them with your Owner.");
+                Status.Line(StatusKind.Caution, $"{tooLong.Count} custom trigger(s) too long to share: {string.Join(", ", tooLong)}. Each action has to fit in one chat message - shorten the long ones (e.g. shorter restraint, animation or preset names, or chat text) to share them with your Owner.");
         }
 
         using var exportBox = Section.Begin("subExport", "Offline / manual export");
@@ -116,33 +116,32 @@ public sealed partial class ModuleWindow
         {
             if (ImGui.Button("Export..."))
             {
-                plugin.FileDialogManager.SaveFileDialog("Export Collar catalog", ".txt", "collar-export", ".txt", (ok, path) =>
+                plugin.FileDialogManager.SaveFileDialog("Export Oathbound catalog", ".txt", "collar-export", ".txt", (ok, path) =>
                 {
                     if (!ok)
                         return;
                     try
                     {
                         System.IO.File.WriteAllText(path, plugin.CatalogSyncService.BuildExport());
-                        subExportResult = $"Exported to {path} - send this file to your Owner.";
+                        subExportResult = StatusMessage.Ok($"Exported to {path} - send this file to your Owner.");
                     }
                     catch (Exception ex)
                     {
-                        subExportResult = $"Export failed: {ex.Message}";
+                        subExportResult = StatusMessage.Error($"Export failed: {ex.Message}");
                     }
                 });
             }
         }
         if (!hasAnythingToExport)
             IconGlyph.HelpMarker("Scan at least one category above, or tag a Restraints device, before exporting.");
-        if (subExportResult is not null)
-            IconGlyph.WrappedColored(subExportResult.StartsWith("Export failed", StringComparison.Ordinal) ? Theme.Danger : Theme.Success, subExportResult);
+        Status.Line(subExportResult);
     }
 
     private void DrawSubAutoSyncInfo(PluginConfig config)
     {
         IconGlyph.WrappedDisabled("Your catalog is shared with your Owner automatically whenever it changes.");
 
-        if (ImGuiCheckbox("Automatically rescan every 15 minutes", config.AutoRescanCatalogs, out var autoRescan))
+        if (Layout.WrappedCheckbox("Automatically rescan every 15 minutes", config.AutoRescanCatalogs, out var autoRescan))
         {
             config.AutoRescanCatalogs = autoRescan;
             config.Save();
@@ -153,31 +152,60 @@ public sealed partial class ModuleWindow
         {
             var name = pairing.PeerName ?? "your Owner";
             if (pairing.LastPublishedCatalogUnixSeconds > 0)
-                IconGlyph.WrappedDisabled($"Last shared with {name}: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastPublishedCatalogUnixSeconds).LocalDateTime:g}.");
+                IconGlyph.WrappedDisabled($"Last shared with {name}: {TimeText.Date(pairing.LastPublishedCatalogUnixSeconds)}.");
             else
-                IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out once their plugin checks in.");
+                IconGlyph.WrappedDisabled($"Not shared with {name} yet - it goes out by itself after your next scan.");
             DrawSubPublishStatus(pairing, name);
         }
     }
 
     private void DrawSubPublishStatus(PairingState pairing, string name)
     {
-        var retry = pairing.NextPublishRetryUnixSeconds > 0 ? DateTimeOffset.FromUnixTimeSeconds(pairing.NextPublishRetryUnixSeconds).LocalDateTime : (DateTime?)null;
-        switch (pairing.LastPublishOutcome)
+        var delivery = pairing.CatalogDelivery;
+        switch (Relay.MailboxStatusService.Evaluate(delivery, pairing.LastPublishedMailboxSnapshotId))
         {
-            case Relay.MailboxPublishOutcome.Failed:
-                IconGlyph.WrappedColored(Theme.Warning, $"Last automatic share with {name} failed: {pairing.LastPublishError ?? "unknown error"}{(retry is { } failRetry ? $" Trying again around {failRetry:t}." : "")}");
-                return;
-            case Relay.MailboxPublishOutcome.NotReady:
-                IconGlyph.WrappedDisabled(pairing.LastPublishError ?? $"Waiting for {name}'s plugin to set up automatic sync.");
-                return;
-            case Relay.MailboxPublishOutcome.RateLimited when retry is { } r:
-                IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {r:t}.");
-                return;
+            case Relay.MailboxSentState.Delivered:
+                Status.Line(StatusKind.Ok, $"Delivered: {name}'s plugin confirmed it {TimeText.Date(delivery.PeerReceiptAt)}.");
+                break;
+            case Relay.MailboxSentState.PickedUp:
+                IconGlyph.WrappedDisabled($"Picked up by {name}'s plugin.");
+                break;
+            case Relay.MailboxSentState.AwaitingConfirmation:
+                IconGlyph.WrappedDisabled($"Picked up, waiting for {name}'s plugin to confirm it.");
+                break;
+            case Relay.MailboxSentState.Waiting:
+                IconGlyph.WrappedDisabled($"Waiting for {name}'s plugin to pick it up.");
+                break;
+            case Relay.MailboxSentState.Rejected:
+                var resending = Relay.MailboxStatusService.ShouldResend(delivery, pairing.LastPublishedMailboxSnapshotId);
+                Status.Line(StatusKind.Error, $"{name}'s plugin couldn't read your last catalog: {MailboxStatusText.Reject(delivery.PeerReceiptCode)}. "
+                    + (resending ? "Sending it again." : "It isn't sent again until your catalog changes."));
+                break;
+            case Relay.MailboxSentState.Lost:
+                IconGlyph.WrappedDisabled($"Your last catalog didn't reach {name} - sending it again.");
+                break;
+        }
+
+        var retry = pairing.NextPublishRetryUnixSeconds > 0 ? TimeText.Date(pairing.NextPublishRetryUnixSeconds) : null;
+        if (pairing.LastPublishError is { } error)
+        {
+            if (pairing.LastPublishOutcome == Relay.MailboxPublishOutcome.NotReady)
+                IconGlyph.WrappedDisabled(error);
+            else
+                Status.Line(StatusKind.Error, $"Last automatic share with {name} failed: {error}{(retry is { } failRetry ? $" Trying again around {failRetry}." : "")}");
+        }
+        else if (pairing.LastPublishOutcome == Relay.MailboxPublishOutcome.NotReady)
+        {
+            IconGlyph.WrappedDisabled($"Waiting for {name}'s plugin to set up automatic sync.");
+        }
+        if (pairing.LastPublishOutcome == Relay.MailboxPublishOutcome.RateLimited && retry is { } r)
+        {
+            IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {r}.");
+            return;
         }
         var (pending, opensAtUtc) = plugin.CatalogAutoSync.PendingChange(pairing);
         if (pending && opensAtUtc > DateTime.UtcNow)
-            IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {opensAtUtc.ToLocalTime():t}.");
+            IconGlyph.WrappedDisabled($"A change is waiting for the relay's upload interval - it goes out around {TimeText.Date(opensAtUtc)}.");
         else if (pending)
             IconGlyph.WrappedDisabled("A change goes out in a few minutes.");
     }
@@ -189,7 +217,7 @@ public sealed partial class ModuleWindow
         using (ImRaii.Disabled(blocked is not null))
             draw();
         if (blocked is not null)
-            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            Status.Line(StatusKind.Error, blocked);
     }
 
     private void DrawWardrobeScanBody(PluginConfig config)
@@ -215,7 +243,7 @@ public sealed partial class ModuleWindow
         var lastScanTotal = plugin.OutfitCommand.LastScanTotalDesigns;
 
         if (plugin.OutfitCommand.LastScanError is { } scanError)
-            IconGlyph.WrappedColored(Theme.Danger, scanError);
+            Status.Line(StatusKind.Error, scanError);
 
         if (lastScanTotal is null)
         {
@@ -224,7 +252,7 @@ public sealed partial class ModuleWindow
         }
 
         var matched = wardrobe.LocalDesigns.Count;
-        var color = matched > 0 ? Theme.Success : Theme.Warning;
+        var color = matched > 0 ? Theme.Ok : Theme.Caution;
         var scope = plugin.Configuration.WardrobeFolderAllowlist.Count == 0 ? "all-design mode" : "folder-filtered mode";
         IconGlyph.WrappedColored(color, $"Found {lastScanTotal} saved design(s); {matched} available ({scope}).");
 
@@ -281,12 +309,12 @@ public sealed partial class ModuleWindow
         DrawPenumbraFolderPicker("Restraint folders", config.SelectedRestraintFolders, config);
         if (ImGui.Button("Rescan restraints")) plugin.RestraintCommand.RescanCatalog();
         var command = plugin.RestraintCommand;
-        if (command.LastScanError is { } error) IconGlyph.WrappedColored(Theme.Danger, error);
+        if (command.LastScanError is { } error) Status.Line(StatusKind.Error, error);
         else if (command.LastScanTotalMods is not null)
-            IconGlyph.WrappedColored(config.RestraintMapping.LocalCatalog.Count > 0 ? Theme.Success : Theme.Warning,
+            IconGlyph.WrappedColored(config.RestraintMapping.LocalCatalog.Count > 0 ? Theme.Ok : Theme.Caution,
                 $"Matched {command.LastScanMatchedMods} mod(s); found {config.RestraintMapping.LocalCatalog.Count} restraint option(s).");
         if (config.SelectedRestraintFolders.Count == 0)
-            IconGlyph.WrappedColored(Theme.Warning, "No folders selected: the shared Penumbra restraint catalog is empty.");
+            Status.Line(StatusKind.Caution, "No folders selected: the shared Penumbra restraint catalog is empty.");
         using var child = ImRaii.Child("restraintCatalogPreview", new Vector2(0, Scaled(100)), true);
         foreach (var entry in config.RestraintMapping.LocalCatalog.Values.OrderBy(x => x.ModName))
             ImGui.BulletText(entry.ModName);
@@ -343,11 +371,11 @@ public sealed partial class ModuleWindow
 
         if (plugin.GestureCommand.LastScanError is { } error)
         {
-            IconGlyph.WrappedColored(Theme.Danger, error);
+            Status.Line(StatusKind.Error, error);
             return;
         }
         var matched = gestureMapping.LocalCatalog.Count;
-        var color = matched > 0 ? Theme.Success : Theme.Warning;
+        var color = matched > 0 ? Theme.Ok : Theme.Caution;
         var selectionCount = plugin.Configuration.SelectedGestureMods.Count;
         var scope = selectionCount == 0 ? "all-mod mode" : $"{selectionCount} explicitly selected";
         IconGlyph.WrappedColored(color, $"Found {lastScanTotal} installed mod(s); {scope}; {matched} animation trigger(s) discovered.");
@@ -395,7 +423,7 @@ public sealed partial class ModuleWindow
 
         if (plugin.MoodlesCommand.LastScanStatus is MoodlesScanStatus.Unavailable or MoodlesScanStatus.Failed)
         {
-            IconGlyph.WrappedColored(Theme.Danger, plugin.MoodlesCommand.LastScanError ?? "Moodles status scan failed.");
+            Status.Line(StatusKind.Error, plugin.MoodlesCommand.LastScanError ?? "Moodles status scan failed.");
             if (moodlesMapping.LocalCatalog.Count > 0)
                 IconGlyph.WrappedDisabled($"Keeping {moodlesMapping.LocalCatalog.Count} status(es) from the last successful scan.");
             return;
@@ -407,7 +435,7 @@ public sealed partial class ModuleWindow
             return;
         }
 
-        IconGlyph.WrappedColored(Theme.Success, $"Scan succeeded: found {lastScanTotal} registered status(es).");
+        Status.Line(StatusKind.Ok, $"Scan succeeded: found {lastScanTotal} registered status(es).");
 
         if (lastScanTotal == 0)
             return;
@@ -467,7 +495,7 @@ public sealed partial class ModuleWindow
 
         if (ImGui.Button(importLabel))
         {
-            plugin.FileDialogManager.OpenFileDialog("Import Collar catalog", ".txt", (ok, path) =>
+            plugin.FileDialogManager.OpenFileDialog("Import Oathbound catalog", ".txt", (ok, path) =>
             {
                 if (!ok)
                     return;
@@ -477,20 +505,21 @@ public sealed partial class ModuleWindow
                     // Paired with this Sub: re-importing their file replaces what they shared before, like a relay refresh.
                     if (plugin.CatalogSyncService.TryApplyFileAsPairSnapshot(text, plugin.Configuration.ActivePairing) is { } shared)
                     {
-                        importResult = shared.Error ?? $"Updated from your Sub's file: {shared.Added} added, {shared.Updated} updated, {shared.Removed} removed. Your own commands were left as they were.";
+                        importResult = shared.Error is { } sharedError ? StatusMessage.Error(sharedError)
+                            : StatusMessage.Ok($"Updated from your Sub's file: {shared.Added} added, {shared.Updated} updated, {shared.Removed} removed. Your own commands were left as they were.");
                         resetImportsResult = null;
                         return;
                     }
                     var result = plugin.CatalogSyncService.ParseImport(text);
                     var duplicateNote = result.Duplicates > 0 ? $" {result.Duplicates} duplicate(s) skipped." : "";
-                    importResult = result.Error ?? (result.TotalAdded == 0
+                    importResult = result.Error is { } parseError ? StatusMessage.Error(parseError) : StatusMessage.Ok(result.TotalAdded == 0
                         ? $"Nothing new - everything in that file was already imported or a duplicate.{duplicateNote}"
                         : $"Imported {result.TotalAdded} new command(s): {result.Title} title, {result.Wardrobe} outfit, {result.Gesture} animation, {result.Moodles} moodles, {result.Restraints} restraint, {result.Bundles} bundle.{duplicateNote}");
                     resetImportsResult = null;
                 }
                 catch (Exception ex)
                 {
-                    importResult = $"Import failed: {ex.Message}";
+                    importResult = StatusMessage.Error($"Import failed: {ex.Message}");
                 }
             });
         }
@@ -511,19 +540,15 @@ public sealed partial class ModuleWindow
             plugin.Configuration.RestraintMapping.ImportedPeerCatalog.Clear();
             plugin.CatalogStore.Save(plugin.Configuration);
             plugin.Configuration.Save();
-            restraintRuleEdits.Clear();
+            ownerRestraintDraft = null;
             resetImportsResult = "All imports reset to a blank slate.";
             importResult = null;
         }
         IconGlyph.HelpMarker("Clears everything imported from your Sub, including every bundle. Commands you added yourself stay.");
 
-        if (importResult is not null)
-        {
-            var isError = importResult.StartsWith("Import failed", StringComparison.Ordinal) || importResult.Contains("doesn't look like", StringComparison.Ordinal) || importResult.Contains("is empty", StringComparison.Ordinal);
-            IconGlyph.WrappedColored(isError ? Theme.Danger : Theme.Success, importResult);
-        }
+        Status.Line(importResult);
         if (resetImportsResult is not null)
-            IconGlyph.WrappedColored(Theme.Success, resetImportsResult);
+            Status.Line(StatusKind.Ok, resetImportsResult);
     }
 
     private static void RemoveImportedEntries(List<QuickCommand> list) =>
@@ -531,7 +556,6 @@ public sealed partial class ModuleWindow
 
     private void DrawCatalogRelaySection()
     {
-        var relayService = plugin.CatalogSyncRelayService;
         var mailbox = plugin.CatalogMailboxService;
         var pairing = plugin.Configuration.ActivePairing;
         IconGlyph.Text(FontAwesomeIcon.CloudDownloadAlt, "Cloud catalog sync");
@@ -544,57 +568,70 @@ public sealed partial class ModuleWindow
 
         var (stateColor, stateText) = DescribeCatalogSyncState(pairing, mailbox);
         IconGlyph.WrappedColored(stateColor, stateText);
+        if (pairing.LastMailboxCheckError is { Length: > 0 } checkError)
+            Status.Line(StatusKind.Error, $"Last check: {checkError}");
 
-        using (ImRaii.Disabled(mailbox.IsChecking(pairing.Id)))
+        if (getLatestTask is { IsCompleted: true } done)
         {
-            if (ImGui.Button(mailbox.IsChecking(pairing.Id) ? "Checking..." : "Check now"))
-                plugin.CatalogAutoSync.RequestOwnerCheck(pairing, force: true);
+            // GetLatestAsync returns null once it has asked, so anything it returns is why it couldn't.
+            getLatestResult = !done.IsCompletedSuccessfully ? StatusMessage.Error("The check failed unexpectedly - see /xllog.")
+                : done.Result is { } latestError ? StatusMessage.Error(latestError) : null;
+            getLatestTask = null;
         }
-        IconGlyph.HelpMarker("Checks for a newer catalog from your Sub now.");
-
-        ImGui.SameLine();
-        using (ImRaii.Disabled(relayService.RequestCreating))
+        var busy = getLatestTask is not null || mailbox.IsChecking(pairing.Id);
+        using (ImRaii.Disabled(busy))
         {
-            var label = relayService.RequestCreating ? "Requesting..." : relayService.RequestInFlight ? "Request again" : "Request refresh";
-            if (ImGui.Button($"{label}###requestRefresh"))
-                Plugin.FireAndForget(relayService.RequestRefreshAsync(pairing, System.Threading.CancellationToken.None));
+            if (ImGui.Button(busy ? "Checking..." : "Get latest"))
+            {
+                getLatestResult = null;
+                getLatestTask = mailbox.GetLatestAsync(pairing, System.Threading.CancellationToken.None);
+            }
         }
-        IconGlyph.HelpMarker("Asks your Sub's plugin to send its catalog now. They need to be online. Asking again replaces a request that's still waiting.");
+        IconGlyph.HelpMarker("Collects anything waiting, then asks your Sub's plugin to send its catalog now. If they're offline, it goes out at their next login.");
+        Status.Line(getLatestResult);
 
         if (pairing.SubLastPublishedUnixSeconds is { } published)
-            IconGlyph.WrappedDisabled($"Your Sub last shared changes: {DateTimeOffset.FromUnixTimeSeconds(published).LocalDateTime:g}.");
+            IconGlyph.WrappedDisabled($"Your Sub last shared changes: {TimeText.Date(published)}.");
         if (pairing.LastAcceptedCatalogSyncUnixSeconds > 0)
-            IconGlyph.WrappedDisabled($"Last imported: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastAcceptedCatalogSyncUnixSeconds).LocalDateTime:g}.");
+            IconGlyph.WrappedDisabled($"Last imported: {TimeText.Date(pairing.LastAcceptedCatalogSyncUnixSeconds)}.");
         if (pairing.LastMailboxCheckOkUnixSeconds > 0)
-            IconGlyph.WrappedDisabled($"Last checked: {DateTimeOffset.FromUnixTimeSeconds(pairing.LastMailboxCheckOkUnixSeconds).LocalDateTime:g}.");
+            IconGlyph.WrappedDisabled($"Last checked: {TimeText.Date(pairing.LastMailboxCheckOkUnixSeconds)}.");
 
-        if (relayService.RequestInFlight)
-            IconGlyph.WrappedDisabled($"Manual refresh: {relayService.Phase}.");
-        if (relayService.LastError is { Length: > 0 } lastError)
-            IconGlyph.WrappedColored(Theme.Danger, $"Manual refresh: {lastError}");
-
-        var lastResult = mailbox.LastAutoImport is { } auto && auto.PairingId == pairing.Id ? auto.Result : relayService.LastImportResult;
-        if (lastResult is { Error: null } result && result.Added + result.Updated + result.Removed > 0)
-            IconGlyph.WrappedColored(Theme.Success, $"Last sync: {result.Added} added, {result.Updated} updated, {result.Removed} removed.");
+        if (mailbox.LastAutoImport is { } auto && auto.PairingId == pairing.Id && auto.Result is { Error: null } result && result.Added + result.Updated + result.Removed > 0)
+            Status.Line(StatusKind.Ok, $"Last sync: {result.Added} added, {result.Updated} updated, {result.Removed} removed.");
     }
 
-    /// Priority order: Syncing > Last sync failed > Out of date (no successful check in ~2h) > No automatic updates > Up to date.
+    /// Priority order: Syncing > Last sync failed > Sub can't share > Asked for latest > Out of date (no successful
+    /// check in ~2h) > No catalog yet > Up to date.
     private static (Vector4 Color, string Text) DescribeCatalogSyncState(PairingState pairing, Relay.CatalogMailboxService mailbox)
     {
         if (mailbox.IsSyncing(pairing.Id))
-            return (Theme.Warning, "Syncing: your Sub's catalog changed - importing it now...");
-        if (pairing.LastMailboxCheckError is { Length: > 0 } error)
-            return (Theme.Warning, $"Last sync failed: {error}");
+            return (Theme.Info, "Syncing: your Sub's catalog changed - importing it now...");
+        if (pairing.LastSyncFailure is { Length: > 0 } failure)
+            return (Theme.Error, $"Last sync failed: {failure}");
+        if (MailboxStatusText.IsProblem(pairing.CatalogDelivery.PeerSenderCode))
+        {
+            var code = pairing.CatalogDelivery.PeerSenderCode;
+            var fix = code switch
+            {
+                Relay.MailboxStatusCodes.KeyUnverified => " Get latest replaces it.",
+                Relay.MailboxStatusCodes.NotScanned => " It shares once they scan.",
+                _ => "",
+            };
+            return (Theme.Error, $"Your Sub can't share: their plugin {MailboxStatusText.SenderProblem(code, "catalog")}.{fix}");
+        }
+        if (pairing.CatalogRefreshRequestedUnixSeconds > Math.Max(pairing.SubLastPublishedUnixSeconds ?? 0, pairing.LastAcceptedCatalogSyncUnixSeconds))
+            return (Theme.Caution, $"Asked for the latest catalog at {TimeText.Date(pairing.CatalogRefreshRequestedUnixSeconds)} - waiting for your Sub's plugin to send it.");
 
         var lastOk = pairing.LastMailboxCheckOkUnixSeconds;
         if (lastOk == 0)
-            return (Theme.Warning, "Out of date: not checked yet since this update - checking shortly.");
+            return (Theme.Caution, "Out of date: not checked yet since this update - checking shortly.");
         var sinceOk = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(lastOk);
         if (sinceOk > TimeSpan.FromHours(2))
-            return (Theme.Warning, $"Out of date: couldn't check for updates since {DateTimeOffset.FromUnixTimeSeconds(lastOk).LocalDateTime:g}.");
+            return (Theme.Error, $"Out of date: couldn't check for updates since {TimeText.Date(lastOk)}.");
         // A key replacement clears the relay's upload time, so a past import also counts as having heard from them.
         if (pairing.SubLastPublishedUnixSeconds is null && pairing.LastAcceptedCatalogSyncUnixSeconds == 0)
-            return (Theme.Warning, "No catalog from your Sub yet - it arrives on its own once their plugin has scanned. Request refresh to ask now.");
-        return (Theme.Success, "Up to date.");
+            return (Theme.Caution, "No catalog from your Sub yet - it arrives on its own once their plugin has scanned. Get latest asks now.");
+        return (Theme.Ok, "Up to date.");
     }
 }

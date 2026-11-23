@@ -22,7 +22,7 @@ public sealed partial class ModuleWindow
         var total = forRole.Sum(a => a.Tiers.Length);
         var unlocked = forRole.Sum(service.UnlockedTiers);
 
-        using (Section.Begin("achievementsSummary", "Achievements"))
+        using (Section.Begin("achievementsSummary", "Progress"))
         {
             ImGui.TextUnformatted($"{unlocked} / {total} unlocked");
             ImGui.ProgressBar(total == 0 ? 0f : (float)unlocked / total, new Vector2(-1, Layout.Scaled(8f)), "");
@@ -33,16 +33,19 @@ public sealed partial class ModuleWindow
                 achievementFilter = (AchievementFilter)filter;
         }
 
-        foreach (var group in forRole.Where(Visible).GroupBy(a => a.Category))
+        using (Section.Begin("achievementsList"))
         {
-            var defs = group.ToList();
-            var done = defs.Count(d => service.UnlockedTiers(d) == d.Tiers.Length);
-            using (ImRaii.PushId($"achCat_{group.Key}"))
+            foreach (var group in forRole.Where(Visible).GroupBy(a => a.Category))
             {
-                if (!ImGui.CollapsingHeader($"{group.Key} ({done}/{defs.Count})###achCat", ImGuiTreeNodeFlags.DefaultOpen))
-                    continue;
-                foreach (var def in defs)
-                    DrawAchievementRow(def);
+                var defs = group.ToList();
+                var done = defs.Count(d => service.UnlockedTiers(d) == d.Tiers.Length);
+                using (ImRaii.PushId($"achCat_{group.Key}"))
+                {
+                    if (!ImGui.CollapsingHeader($"{group.Key} ({done}/{defs.Count})###achCat", ImGuiTreeNodeFlags.DefaultOpen))
+                        continue;
+                    foreach (var def in defs)
+                        DrawAchievementRow(def);
+                }
             }
         }
     }

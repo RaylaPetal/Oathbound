@@ -29,14 +29,12 @@ public sealed partial class ModuleWindow
     private void DrawWardrobeModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Tshirt, "Outfit");
-        ImGui.Separator();
-        IconGlyph.WrappedDisabled("Design folder allowlist and scanning live in Settings (gear icon). Define your outfit aliases below.");
+        IconGlyph.WrappedDisabled("Design folders and scanning live in the Sync module. Define your outfit aliases below.");
 
         using (Section.Begin("outfitFixed", "Fixed words"))
         {
-            DrawFixedWord("Release outfit", ControlWords.Unlock);
-            IconGlyph.HelpMarker("For example: kae unlock. Releases the current outfit's locks and its attached moodle - your look stays as it is.");
+            DrawFixedWord("Unlock outfit", ControlWords.Unlock);
+            IconGlyph.HelpMarker("The word your Owner sends to unlock your outfit. Releases the current outfit's locks and its attached moodle - your look stays as it is. It can't be renamed.");
         }
 
         var outfits = config.Aliases.Outfits;
@@ -92,11 +90,11 @@ public sealed partial class ModuleWindow
         ImGui.AlignTextToFramePadding();
         ImGui.TextColored(Theme.AccentHover, o.Alias);
         ImGui.SameLine();
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", o.Alias))
         {
             outfits.RemoveAt(index);
             config.Save();
-            outfitList.Select(null);
+            outfitList.Deleted();
             ImGui.PopID();
             return;
         }
@@ -106,7 +104,7 @@ public sealed partial class ModuleWindow
             o.Alias = aliasBuffer.Trim();
             config.Save();
         }
-        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this outfit.");
+        IconGlyph.HelpMarker("Short word your Owner sends to apply this outfit.");
 
         var designIndex = designs.FindIndex(d => d.DesignId == o.DesignId);
         if (designs.Count > 0 && ImGui.Combo("Design##outfitAliasEdit", ref designIndex, designNames, designNames.Length) && designIndex >= 0)
@@ -138,7 +136,7 @@ public sealed partial class ModuleWindow
     {
         if (designs.Count == 0)
         {
-            IconGlyph.WrappedDisabled("No scanned designs yet - rescan in Settings (gear icon) first.");
+            DrawGoToSyncTabPrompt("No scanned designs yet.");
             return;
         }
 
@@ -146,7 +144,7 @@ public sealed partial class ModuleWindow
         {
             newOutfitDesignIndex = Math.Clamp(newOutfitDesignIndex, 0, designNames.Length - 1);
             ImGui.InputText("Alias##newOutfit", ref newOutfitAlias, 32);
-            IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this outfit.");
+            IconGlyph.HelpMarker("Short word your Owner sends to apply this outfit.");
             ImGui.Combo("Design##newOutfit", ref newOutfitDesignIndex, designNames, designNames.Length);
             IconGlyph.HelpMarker("The Glamourer design this alias applies. Rescan if it's missing.");
             if (DrawAttachedMoodlePicker("newOutfit", newOutfitMoodle, config, out var pickedOutfitMoodle, width: null))
@@ -182,12 +180,6 @@ public sealed partial class ModuleWindow
     private void DrawOutfitQuickSectionBody(bool canSend)
     {
         var quick = plugin.Configuration.QuickCommands.Outfits;
-        DrawSectionTitleRow(FontAwesomeIcon.Tshirt, "Outfit", quick.Count > 0, "outfitQuick", () =>
-        {
-            quick.Clear();
-            plugin.Configuration.Save();
-        });
-
         DrawCommandRow("outfitQuickFixed", canSend, new RowCommand("Unlock outfit", "outfit unlock", FixedActionIds.UnlockOutfit, "Lets your Sub change outfits again."));
 
         if (quick.Count == 0)
@@ -198,7 +190,7 @@ public sealed partial class ModuleWindow
 
         using var _ = Section.Begin("outfitQuickList", "Your Sub's outfits");
         DrawSavedQuickListDetail("outfitQuick", quick, canSend,
-            cmd => new ListDetailItem("", cmd.Label, cmd.Command.StartsWith("outfit wear ", StringComparison.OrdinalIgnoreCase) ? "not locked" : null),
+            cmd => new ListDetailItem("", cmd.Label, OwnerLockOption.IsOutfitNotLocked(cmd) ? "not locked" : null),
             "No outfits imported yet.");
     }
 }

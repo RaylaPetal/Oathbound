@@ -20,9 +20,10 @@ public static class NavBar
         return rows * ButtonHeight + (rows - 1) * spacing.Y + padding.Y * 2;
     }
 
-    /// Non-null for an id draws that tile dimmed and unclickable, with the reason as its tooltip.
+    /// Non-null for an id draws that tile dimmed and unclickable, with the reason as its tooltip. `badge` non-null for
+    /// an id draws that text as an attention badge on the tile, with `badgeTooltip`'s text added to its tooltip.
     public static string? Draw((string Id, FontAwesomeIcon Icon, string Tooltip)[] items, System.Func<string, string?>? disabledReason = null,
-        System.Func<string, string?>? tutorialAnchor = null)
+        System.Func<string, string?>? tutorialAnchor = null, System.Func<string, (string Text, string Tooltip)?>? badge = null)
     {
         string? clicked = null;
         // The card's inner margin comes from WindowPadding; using ItemSpacing clipped the last row.
@@ -36,7 +37,8 @@ public static class NavBar
 
         for (var i = 0; i < items.Length; i++)
         {
-            var itemClicked = DrawItem(items[i], buttonSize, disabledReason?.Invoke(items[i].Id));
+            var itemBadge = badge?.Invoke(items[i].Id);
+            var itemClicked = DrawItem(items[i], buttonSize, disabledReason?.Invoke(items[i].Id), itemBadge);
             if (tutorialAnchor?.Invoke(items[i].Id) is { } anchor)
                 TutorialService.Anchor(anchor);
             if (clicked is null && itemClicked is not null)
@@ -50,7 +52,7 @@ public static class NavBar
     }
 
     /// Grouped so ImGui treats the cell as one item; without it, the next SameLine anchors to the label and cells drift.
-    private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason)
+    private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason, (string Text, string Tooltip)? badge)
     {
         string? result = null;
         using (ImRaii.PushColor(ImGuiCol.Button, Theme.TileBg))
@@ -73,8 +75,11 @@ public static class NavBar
                 ImGui.EndGroup();
             }
 
+            if (badge is { } b)
+                Badge.OnLastItem(b.Text);
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip(disabledReason is null ? item.Tooltip : $"{item.Tooltip} - unavailable. {disabledReason}");
+                ImGui.SetTooltip((disabledReason is null ? item.Tooltip : $"{item.Tooltip} - unavailable. {disabledReason}")
+                    + (badge is { } tip ? $"\n{tip.Tooltip}" : ""));
         }
 
         return result;

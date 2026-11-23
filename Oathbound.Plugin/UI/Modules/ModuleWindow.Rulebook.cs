@@ -73,7 +73,7 @@ public sealed partial class ModuleWindow
     [
         (ConsequenceKind.Title, "Title"), (ConsequenceKind.Outfit, "Outfit"), (ConsequenceKind.Animation, "Animation"),
         (ConsequenceKind.Moodle, "Moodle"), (ConsequenceKind.Restraint, "Restraint"), (ConsequenceKind.CustomTrigger, "Custom Trigger"),
-        (ConsequenceKind.Toy, "Toy pattern"), (ConsequenceKind.Ledger, "Ledger"), (ConsequenceKind.DeckDraw, "Draw a card"),
+        (ConsequenceKind.Toy, "Toy pattern"), (ConsequenceKind.Ledger, "Points"), (ConsequenceKind.DeckDraw, "Draw a card"),
         (ConsequenceKind.RestraintTimer, "Restraint timer"), (ConsequenceKind.UnlockRestraints, "Unlock restraints"), (ConsequenceKind.UnlockOutfit, "Unlock outfit"),
         (ConsequenceKind.RevertAll, "Revert everything"), (ConsequenceKind.Typed, "Typed command"),
         (ConsequenceKind.Tighten, "Tighten the ladder"), (ConsequenceKind.Loosen, "Loosen the ladder"),
@@ -84,7 +84,7 @@ public sealed partial class ModuleWindow
     private string? rbEditingId;
     private string? rbRequestedTab;
     private Task<string?>? rbPublishTask;
-    private string? rbPublishResult;
+    private StatusMessage? rbPublishResult;
     private int rbLedgerAward = 1;
     private string rbLedgerReason = "";
     private int lastRulebookTabFrame = -10;
@@ -123,9 +123,6 @@ public sealed partial class ModuleWindow
 
     private void DrawRulebookModule(bool isOwner)
     {
-        IconGlyph.Text(FontAwesomeIcon.Book, "Rulebook");
-        ImGui.Separator();
-
         var pairing = plugin.Configuration.ActivePairing;
         var direction = isOwner ? PairingDirection.OwnerSide : PairingDirection.SubSide;
         if (pairing is null || pairing.Direction != direction)
@@ -200,14 +197,14 @@ public sealed partial class ModuleWindow
         IconGlyph.WrappedDisabled($"Your rules run on {pairing.PeerName}'s own client, only after they accept them, and only with their Rulebook permission on. Edit them in the tabs above.");
 
         if (state.PublishedVersion > 0)
-            IconGlyph.WrappedDisabled($"Version {state.PublishedVersion} sent {Ago(state.PublishedAtUnixSeconds)}. A lost copy is sent again by itself.");
+            IconGlyph.WrappedDisabled($"Version {state.PublishedVersion} sent {TimeText.Ago(state.PublishedAtUnixSeconds)}. A lost copy is sent again by itself.");
         if (state.Draft.RequiredSchemaVersion >= 3)
-            IconGlyph.WrappedColored(Theme.Warning, $"A title, outfit or moodle here lasts a set time. {NewSubNote}");
+            Status.Line(StatusKind.Caution, $"A title, outfit or moodle here lasts a set time. {NewSubNote}");
 
         var sentResets = state.PublishedDocument?.ResetCount ?? 0;
         var startingOver = state.Draft.ResetCount > sentResets;
         if (startingOver)
-            IconGlyph.WrappedColored(Theme.Warning, $"Your next send starts over: when {pairing.PeerName} accepts it, their oaths, ledger score, switched-off rules and history are cleared, and every oath is offered again.");
+            Status.Line(StatusKind.Caution, $"Your next send starts over: when {pairing.PeerName} accepts it, their oaths, points, switched-off rules and history are cleared, and every oath is offered again.");
         if (ImGui.Button(startingOver ? "Don't start over" : "Start over"))
         {
             state.Draft.ResetCount = startingOver ? sentResets : sentResets + 1;
@@ -220,6 +217,11 @@ public sealed partial class ModuleWindow
     {
         var state = pairing.Rulebook;
         using var section = Section.Begin("rbReport", $"What's happening with {pairing.PeerName}");
+        var reportDelivery = state.ReportDelivery;
+        if (MailboxStatusText.IsProblem(reportDelivery.PeerSenderCode))
+            Status.Line(StatusKind.Error, $"{pairing.PeerName}'s reports aren't arriving: their plugin {MailboxStatusText.SenderProblem(reportDelivery.PeerSenderCode, "report")}.");
+        if (reportDelivery.LastFailureCode is { } reportFailure)
+            Status.Line(StatusKind.Error, $"{pairing.PeerName}'s last report couldn't be read: {MailboxStatusText.OwnFailure(reportFailure)}. Their plugin sends the next one by itself.");
 
         if (state.LastReport is not { } report)
         {
@@ -227,19 +229,23 @@ public sealed partial class ModuleWindow
         }
         else
         {
-            ImGui.TextUnformatted($"Ledger: {report.LedgerScore}");
+            ImGui.TextUnformatted($"Points: {report.LedgerScore}");
             ImGui.SameLine();
             ImGui.TextDisabled(report.AcceptedVersion == 0 ? "- no version accepted yet" : $"- running version {report.AcceptedVersion}");
             if (report.LadderStage is { } stage)
                 IconGlyph.WrappedDisabled(stage == 0 ? "Ladder: free." : $"Ladder: stage {stage}, \"{report.LadderStageName}\".");
             if (report.PendingVersion is { } pending)
                 IconGlyph.WrappedDisabled($"Version {pending} is waiting for them to review it.");
-            if (report.DeclinedVersion is { } declined && declined > report.AcceptedVersion)
-                IconGlyph.WrappedColored(Theme.Warning, $"They declined version {declined}.");
+            if (state.FreshDecision() is { Accepted: false } decision)
+                Status.Line(StatusKind.Caution, decision.Reason is { } why ? $"They declined version {decision.Version}: {why}" : $"They declined version {decision.Version}.");
+            else if (state.FreshDecision() is { Accepted: true } acceptedNow)
+                IconGlyph.WrappedDisabled($"They accepted version {acceptedNow.Version}; the next report shows it running.");
+            else if (report.DeclinedVersion is { } declined && declined > report.AcceptedVersion)
+                Status.Line(StatusKind.Caution, $"They declined version {declined}.");
             if (!report.PermissionOn)
-                IconGlyph.WrappedColored(Theme.Warning, "Their Rulebook permission is off - nothing fires.");
+                Status.Line(StatusKind.Caution, "Their Rulebook permission is off - nothing fires.");
             if (report.Suspended)
-                IconGlyph.WrappedColored(Theme.Warning, "Paused after panic - nothing fires until they resume.");
+                Status.Line(StatusKind.Caution, "Paused after panic - nothing fires until they resume.");
             if (report.DisabledRuleIds.Count > 0)
             {
                 var names = report.DisabledRuleIds.Select(id => state.Draft.AllRules().FirstOrDefault(r => r.Id == id).Name ?? "a removed rule").ToList();
@@ -249,54 +255,67 @@ public sealed partial class ModuleWindow
             using (Section.List("rbReportEvents", Scaled(160)))
             {
                 foreach (var e in Enumerable.Reverse(report.Events).Take(40))
-                    IconGlyph.WrappedDisabled($"{Ago(e.At)} - {e.Text}");
+                    IconGlyph.WrappedDisabled($"{TimeText.Ago(e.At)} - {e.Text}");
             }
-            ImGui.TextDisabled($"Reported {Ago(report.GeneratedAt)}.");
+            ImGui.TextDisabled($"Reported {TimeText.Ago(report.GeneratedAt)}.");
         }
 
         Section.SubHeading("Right now");
-        using (ImRaii.Disabled(plugin.Configuration.ActivePairing?.Id != pairing.Id))
+        // The rulebook shown is the active pairing's, so this only blocks while the header switches.
+        var notActive = plugin.Configuration.ActivePairing?.Id != pairing.Id ? "Pick this pairing in the header first." : null;
+        void RightNow(string id, string label, string command, string? blocked = null) =>
+            SendButton.Draw(plugin, new SendSpec(id, label)
+            {
+                Command = command,
+                Pairing = pairing,
+                BlockedReason = notActive ?? blocked,
+                Custom = () =>
+                {
+                    plugin.RulebookService.SendOwnerCommand(command);
+                    return null;
+                },
+            });
+
+        RightNow("rbDrawReward", "Draw a reward", CardPiles.DrawCommand(CardPile.Reward));
+        ContinueRowOrWrap(ButtonWidth("Draw a punishment"));
+        RightNow("rbDrawPunishment", "Draw a punishment", CardPiles.DrawCommand(CardPile.Punishment));
+
+        ItemWidth(90);
+        ImGui.InputInt("##rbAward", ref rbLedgerAward, 1, 5);
+        rbLedgerAward = Math.Clamp(rbLedgerAward, -RulebookLimits.MaxLedgerChange, RulebookLimits.MaxLedgerChange);
+        ContinueRowOrWrap(Scaled(160));
+        ItemWidth(160);
+        ImGui.InputTextWithHint("##rbAwardReason", "reason (optional)", ref rbLedgerReason, 60);
+        ContinueRowOrWrap(ButtonWidth("Penalize"));
+        RightNow("rbAward", rbLedgerAward < 0 ? "Penalize" : "Award", LedgerCommandText(rbLedgerAward, rbLedgerReason),
+            rbLedgerAward == 0 ? "Set how many points first." : null);
+        IconGlyph.HelpMarker("Changes their points. Milestones you set in the Points tab fire when the points reach them.");
+
+        if (state.PublishedDocument?.Ladder is { Stages.Count: > 0 })
         {
-            if (ImGui.Button("Draw a reward"))
-                plugin.RulebookService.SendOwnerCommand(CardPiles.DrawCommand(CardPile.Reward));
-            ContinueRowOrWrap(ButtonWidth("Draw a punishment"));
-            if (ImGui.Button("Draw a punishment"))
-                plugin.RulebookService.SendOwnerCommand(CardPiles.DrawCommand(CardPile.Punishment));
+            RightNow("rbLadderUp", "Tighten", LadderCommand.UpCommand);
+            ImGui.SameLine();
+            RightNow("rbLadderDown", "Loosen", LadderCommand.DownCommand);
+            ImGui.SameLine();
+            RightNow("rbLadderFree", "Free", $"{ConsequenceValidator.LadderWord} {LadderCommand.Set} 0");
+            IconGlyph.HelpMarker("Moves their ladder a stage, or takes them off it. Each stage's restraint still needs their Restraints permission.");
+        }
 
-            ItemWidth(90);
-            ImGui.InputInt("##rbAward", ref rbLedgerAward, 1, 5);
-            rbLedgerAward = Math.Clamp(rbLedgerAward, -RulebookLimits.MaxLedgerChange, RulebookLimits.MaxLedgerChange);
-            ContinueRowOrWrap(Scaled(160));
-            ItemWidth(160);
-            ImGui.InputTextWithHint("##rbAwardReason", "reason (optional)", ref rbLedgerReason, 60);
-            ContinueRowOrWrap(ButtonWidth("Penalize"));
-            using (ImRaii.Disabled(rbLedgerAward == 0))
+        // The words their client knows are the ones in the version it has, not the draft.
+        if ((state.PublishedDocument?.Oaths ?? []).Any(o => o.Condition == OathCondition.AskBeforeLogoff))
+        {
+            SendButton.Draw(plugin, new SendSpec("rbGrantLeave", "Grant leave")
             {
-                if (ImGui.Button(rbLedgerAward < 0 ? "Penalize" : "Award"))
-                    plugin.RulebookService.SendOwnerCommand(LedgerCommandText(rbLedgerAward, rbLedgerReason));
-            }
-            IconGlyph.HelpMarker("Changes their ledger score. Thresholds you set in the Ledger tab fire when it crosses them.");
-
-            if (state.PublishedDocument?.Ladder is { Stages.Count: > 0 })
-            {
-                if (ImGui.Button("Tighten##rbLadderUp"))
-                    plugin.RulebookService.SendOwnerCommand(LadderCommand.UpCommand);
-                ImGui.SameLine();
-                if (ImGui.Button("Loosen##rbLadderDown"))
-                    plugin.RulebookService.SendOwnerCommand(LadderCommand.DownCommand);
-                ImGui.SameLine();
-                if (ImGui.Button("Free##rbLadderFree"))
-                    plugin.RulebookService.SendOwnerCommand($"{ConsequenceValidator.LadderWord} {LadderCommand.Set} 0");
-                IconGlyph.HelpMarker("Moves their ladder a stage, or takes them off it. Each stage's restraint still needs their Restraints permission.");
-            }
-
-            // The words their client knows are the ones in the version it has, not the draft.
-            if ((state.PublishedDocument?.Oaths ?? []).Any(o => o.Condition == OathCondition.AskBeforeLogoff))
-            {
-                if (ImGui.Button("Grant leave"))
+                Pairing = pairing,
+                BlockedReason = notActive,
+                Help = $"Lets {pairing.PeerName} log off for the time their oath says.",
+                Custom = () =>
+                {
                     plugin.RulebookService.SendGrantLeave(pairing);
-                IconGlyph.HelpMarker($"Lets {pairing.PeerName} log off for the time their oath says.");
-            }
+                    return null;
+                },
+            });
+            IconGlyph.HelpMarker($"Lets {pairing.PeerName} log off for the time their oath says.");
         }
     }
 
@@ -336,12 +355,12 @@ public sealed partial class ModuleWindow
                 ImGui.AlignTextToFramePadding();
                 ImGui.TextColored(Theme.AccentHover, Name(rule));
                 ImGui.SameLine();
-                if (ImGui.Button("Delete"))
+                if (ConfirmDelete.Button("delete", Name(rule)))
                 {
                     list.Remove(rule);
                     rbEditingId = null;
                     plugin.Configuration.Save();
-                    listDetail.Select(null);
+                    listDetail.Deleted();
                     ImGui.PopID();
                     return;
                 }
@@ -366,9 +385,10 @@ public sealed partial class ModuleWindow
     }
 
     private static string? StatusOf(RulebookPairingState state, string oathId) =>
-        state.LastReport?.Oaths.FirstOrDefault(o => o.Id == oathId) is { } reported ? OathStatusText(reported.Status, reported.ScopeEndsAt) : null;
+        state.FreshOathDecision(oathId) is { } decided ? OathStatusText(decided, null)
+        : state.LastReport?.Oaths.FirstOrDefault(o => o.Id == oathId) is { } reported ? OathStatusText(reported.Status, reported.ScopeEndsAt) : null;
 
-    private static readonly string[] SubRuleTabs = ["Oaths", "Deck", "Places", "Presence", "Schedule", "Shop", "Ledger"];
+    private static readonly string[] SubRuleTabs = ["Oaths", "Deck", "Places", "Presence", "Schedule", "Shop", "Points"];
 
     private static string SubRuleTab(string kind) => kind switch
     {
@@ -378,7 +398,7 @@ public sealed partial class ModuleWindow
         "Presence rule" => "Presence",
         "Time rule" => "Schedule",
         "Shop item" => "Shop",
-        _ => "Ledger",
+        _ => "Points",
     };
 
     /// Label column on the left, wrapped text on the right, so each part of a rule reads on its own line.
@@ -435,7 +455,7 @@ public sealed partial class ModuleWindow
         if (ImGui.Button(editing ? "Close" : "Edit"))
             rbEditingId = editing ? null : id;
         ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", string.IsNullOrWhiteSpace(name) ? $"(unnamed {kind})" : name))
         {
             remove();
             if (editing) rbEditingId = null;
@@ -477,19 +497,5 @@ public sealed partial class ModuleWindow
         ImGui.Spacing();
         if (ImGui.Button("Done"))
             rbEditingId = null;
-    }
-
-    private static string Ago(long unixSeconds)
-    {
-        if (unixSeconds <= 0)
-            return "never";
-        var span = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
-        return span.TotalSeconds < 60 ? "just now" : $"{RestraintLock.Format(span)} ago";
-    }
-
-    private static string Until(long unixSeconds)
-    {
-        var span = DateTimeOffset.FromUnixTimeSeconds(unixSeconds) - DateTimeOffset.UtcNow;
-        return span <= TimeSpan.Zero ? "now" : $"in {RestraintLock.Format(span)}";
     }
 }

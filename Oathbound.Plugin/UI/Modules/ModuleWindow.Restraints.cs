@@ -16,20 +16,11 @@ namespace Oathbound.Plugin.UI;
 
 public sealed partial class ModuleWindow
 {
-    private string newDeviceName = "";
-    private AttachedMoodleRef? newDeviceMoodle;
-    private bool newDeviceRedraw;
-    private ApiEquipSlot? newDeviceSlot;
-    private ulong? newDeviceItemId;
-
-    private readonly RestraintRuleEditState newDeviceRuleEdit = new();
-    private string? editingDeviceId;
-
     private string subRestraintSearch = "";
 
-    /// Keyed by the quick command's Label; transient.
-    private string? expandedSubModKey;
-    private string? restraintActionResult;
+    /// The selected restraint's settings until Save.
+    private RestraintDraft? subRestraintDraft;
+    private StatusMessage? restraintActionResult;
 
     private readonly Dictionary<string, string> restraintKeyGuesses = new();
 
@@ -48,8 +39,8 @@ public sealed partial class ModuleWindow
         }
         if (!any && plugin.RestraintCommand.Worn.Count == 0)
             restraintActionResult = null;
-        if (any && restraintActionResult is not null)
-            IconGlyph.WrappedDisabled(restraintActionResult);
+        if (any)
+            Status.Line(restraintActionResult);
     }
 
     private void DrawStruggleButton(WornRestraint worn, StruggleSetting setting)
@@ -58,13 +49,16 @@ public sealed partial class ModuleWindow
         var caged = plugin.CageService.IsCaged;
         using (ImRaii.Disabled(wait is not null || caged))
         {
-            if (ImGui.Button(wait is { } w ? $"Struggle: {worn.Reference} (again in {RestraintLock.Format(w)})" : $"Struggle: {worn.Reference}"))
-                restraintActionResult = plugin.RestraintCommand.Struggle(worn.RuntimeId).Message;
+            if (ImGui.Button(wait is { } w ? $"Struggle: {worn.Reference} (again {TimeText.Until(w)})" : $"Struggle: {worn.Reference}"))
+                restraintActionResult = ResultMessage(plugin.RestraintCommand.Struggle(worn.RuntimeId));
         }
         IconGlyph.HelpMarker(caged
             ? $"You can't struggle while you're caged. {RestraintStruggle.Describe(setting)} once the cage opens."
             : $"Your Owner lets you try to get free: {RestraintStruggle.Describe(setting)}. Getting free takes this restraint off, and your Owner is told.");
     }
+
+    private static StatusMessage ResultMessage(LocalTestResult result) =>
+        new(result.Success ? StatusKind.Ok : StatusKind.Error, result.Message);
 
     private void DrawRestraintKeyRow(WornRestraint worn)
     {
@@ -77,9 +71,9 @@ public sealed partial class ModuleWindow
         ImGui.SameLine();
         using (ImRaii.Disabled(wait is not null || guess.Trim().Length == 0 || caged))
         {
-            if (ImGui.Button(wait is { } w ? $"Unlock (again in {RestraintLock.Format(w)})" : "Unlock"))
+            if (ImGui.Button(wait is { } w ? $"Unlock (again {TimeText.Until(w)})" : "Unlock"))
             {
-                restraintActionResult = plugin.RestraintCommand.TryKey(worn.RuntimeId, guess).Message;
+                restraintActionResult = ResultMessage(plugin.RestraintCommand.TryKey(worn.RuntimeId, guess));
                 restraintKeyGuesses.Remove(worn.RuntimeId);
             }
         }
@@ -95,9 +89,7 @@ public sealed partial class ModuleWindow
     private void DrawRestraintsModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Handcuffs, "Restraints");
-        ImGui.Separator();
-        IconGlyph.WrappedDisabled("Set up the restraints your Owner can use. Each alias toggles its restraint; `restraint unlock` releases everything.");
+        IconGlyph.WrappedDisabled("Set up the restraints your Owner can use. Each alias toggles its restraint; your Owner's \"Unlock restraints\" releases everything.");
 
         using (Section.Begin("configuredRestraintMods", "Your restraints"))
         {
@@ -163,8 +155,7 @@ public sealed partial class ModuleWindow
 
         if (ImGui.Selectable("Rules-only restraint (no gear)"))
         {
-            CloseSubModEditor();
-            ResetDeviceDraft();
+            subRestraintDraft = new RestraintDraft(this, NewRulesOnlyKey, rulesOnly: true);
             creatingRulesOnly = true;
             subRestraintList.Select(NewRulesOnlyKey);
         }
@@ -191,7 +182,7 @@ public sealed partial class ModuleWindow
                 configured.Add(created);
                 config.Save();
                 creatingRulesOnly = false;
-                OpenSubModEditor($"submod:{created.Id}", new RestraintRuleEditState());
+                subRestraintDraft = RestraintDraft.Load(this, $"mod:{created.Id}", created);
                 subRestraintList.Select($"mod:{created.Id}");
                 ImGui.CloseCurrentPopup();
             }
@@ -201,36 +192,40 @@ public sealed partial class ModuleWindow
 
     private void OnSubRestraintSelected(ListDetailItem? item)
     {
-        var config = plugin.Configuration;
-        if (item?.Key is not { } key || key == NewRulesOnlyKey)
+        if (item?.Key == NewRulesOnlyKey)
             return;
         creatingRulesOnly = false;
-        if (key.StartsWith("mod:") && config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod)
-        {
-            ResetDeviceDraft();
-            OpenSubModEditor($"submod:{mod.Id}", FromRules(mod.Rules));
-        }
-        else if (key.StartsWith("dev:") && config.RestraintMapping.Devices.TryGetValue(key[4..], out var device))
-        {
-            CloseSubModEditor();
-            LoadDeviceDraft(device);
-        }
+        subRestraintDraft = item is null ? null : LoadSubDraft(item.Key);
+    }
+
+    private RestraintDraft? LoadSubDraft(string key)
+    {
+        var mapping = plugin.Configuration.RestraintMapping;
+        if (key.StartsWith("mod:") && mapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod)
+            return RestraintDraft.Load(this, key, mod);
+        if (key.StartsWith("dev:") && mapping.Devices.TryGetValue(key[4..], out var device))
+            return RestraintDraft.Load(this, key, device);
+        return null;
+    }
+
+    /// The draft for `key`, loaded fresh when the selection moved without onSelected (e.g. the first auto-pick).
+    private RestraintDraft? SubDraftFor(string key)
+    {
+        if (subRestraintDraft?.Key != key)
+            subRestraintDraft = key == NewRulesOnlyKey ? new RestraintDraft(this, key, rulesOnly: true) : LoadSubDraft(key);
+        return subRestraintDraft;
     }
 
     private bool SubRestraintDirty()
     {
-        var config = plugin.Configuration;
-        var key = subRestraintList.Selected;
+        var mapping = plugin.Configuration.RestraintMapping;
+        if (subRestraintList.Selected is not { } key || subRestraintDraft is not { } draft || draft.Key != key)
+            return false;
         if (key == NewRulesOnlyKey)
-            return newDeviceName.Trim().Length > 0 || HasAnyRule(newDeviceRuleEdit);
-        if (key?.StartsWith("mod:") == true && config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod
-            && restraintRuleEdits.TryGetValue($"submod:{mod.Id}", out var edit))
-            return RestraintCommand.EncodeRuleTokens(ToRules(edit)) != RestraintCommand.EncodeRuleTokens(mod.Rules);
-        if (key?.StartsWith("dev:") == true && editingDeviceId is { } id && config.RestraintMapping.Devices.TryGetValue(id, out var device))
-            return newDeviceName.Trim() != device.Name
-                || newDeviceMoodle?.StatusId != device.AttachedMoodle?.StatusId
-                || RestraintCommand.EncodeRuleTokens(ToRules(newDeviceRuleEdit, rulesOnly: true)) != RestraintCommand.EncodeRuleTokens(device.Rules);
-        return false;
+            return draft.Alias.Trim().Length > 0 || HasAnyRule(draft.Rules);
+        if (mapping.ConfiguredMods.FirstOrDefault(m => $"mod:{m.Id}" == key) is { } mod)
+            return draft.IsDirty(mod);
+        return key.StartsWith("dev:") && mapping.Devices.TryGetValue(key[4..], out var device) && draft.IsDirty(device);
     }
 
     private void DrawSubRestraintDetail(PluginConfig config, ListDetailItem? item)
@@ -275,14 +270,12 @@ public sealed partial class ModuleWindow
 
     private void DrawSubModDetail(PluginConfig config, ConfiguredModRestraint created)
     {
-        var key = $"submod:{created.Id}";
+        var key = $"mod:{created.Id}";
+        if (SubDraftFor(key) is not { } draft)
+            return;
         var missing = !config.RestraintMapping.LocalCatalog.ContainsKey(created.CatalogId);
-        if (!restraintRuleEdits.TryGetValue(key, out var edit))
-        {
-            OpenSubModEditor(key, FromRules(created.Rules));
-            edit = restraintRuleEdits[key];
-        }
 
+        var deleted = false;
         DrawDetailHeader(created.Name, "Mod restraint", created.ImageFile, FontAwesomeIcon.Image,
             () => ImageTile.DrawPicker(key, created.ImageFile, plugin.FileDialogManager, plugin.Snapshot, file =>
             {
@@ -295,83 +288,72 @@ public sealed partial class ModuleWindow
             () =>
             {
                 if (missing)
-                    IconGlyph.WrappedColored(Theme.Warning, "This mod is outside the latest scan and will not be exported.");
+                    Status.Line(StatusKind.Caution, "This mod is outside the latest scan and will not be exported.");
                 // "Delete", not "Remove": this deletes the saved restraint, it doesn't take it off anyone.
-                if (ImGui.Button($"Delete##{key}"))
+                if (ConfirmDelete.Button($"delete_{key}", created.Name))
                 {
                     ImageTile.Delete(created.ImageFile);
                     ImageTile.Delete(created.ThumbnailFile);
                     config.RestraintMapping.ConfiguredMods.Remove(created);
-                    CloseSubModEditor();
                     config.Save();
+                    deleted = true;
                 }
             });
+        if (deleted)
+        {
+            subRestraintList.Deleted();
+            return;
+        }
 
         Section.SubHeading("Name, alias & item");
-        if (DrawDeferredTextInput($"Name##{key}", (created, "name"), created.Name, 80, out var nameBuffer) && nameBuffer.Trim().Length > 0)
-        {
-            created.Name = nameBuffer;
-            config.Save();
-        }
-        IconGlyph.HelpMarker("Your own label for this restraint - rename it so you can tell entries for the same mod apart.");
-        if (DrawDeferredTextInput($"Alias##{key}", (created, "alias"), created.Alias, 32, out var aliasBuffer, "optional"))
-        {
-            created.Alias = aliasBuffer.Trim();
-            config.Save();
-        }
+        ImGui.InputText($"Name##{key}", ref draft.Name, 80);
+        IconGlyph.HelpMarker("Your own name for this restraint - rename it so you can tell entries for the same mod apart. Your Owner doesn't send it; they send the alias below.");
+        ImGui.InputTextWithHint($"Alias##{key}", "optional", ref draft.Alias, 32);
         IconGlyph.HelpMarker("Optional word your Owner sends to toggle this restraint.");
-        DrawReservedWordWarning(created.Alias);
-        if (created.Alias.Length > 0
-            && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))
-                || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), created.Alias, StringComparison.OrdinalIgnoreCase))))
-            IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias - only one of them will respond to it.");
-        TextWithActions($"Glamourer item: {(created.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
+        var alias = draft.Alias.Trim();
+        DrawReservedWordWarning(alias);
+        if (alias.Length > 0
+            && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), alias, StringComparison.OrdinalIgnoreCase))
+                || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), alias, StringComparison.OrdinalIgnoreCase))))
+            Status.Line(StatusKind.Caution, "Another restraint already uses this alias - only one of them will respond to it.");
+        TextWithActions($"Glamourer item: {(draft.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
         if (ImGui.Button($"Choose item...##{key}"))
         {
             var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
-            plugin.ItemPickerWindow.OpenForItemIds(created.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) =>
-            {
-                created.ItemId = chosenId;
-                config.Save();
-            });
+            plugin.ItemPickerWindow.OpenForItemIds(draft.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) => draft.ItemId = chosenId);
         }
 
         Section.SubHeading("Restrictions");
-        DrawRestraintRuleCheckboxes(edit, key, allowCustomizePreset: true);
+        DrawRestraintRuleCheckboxes(draft.Rules, key, forOwner: false, allowCustomizePreset: true);
 
         Section.SubHeading("Attached moodle");
-        if (DrawAttachedMoodlePicker(key, created.AttachedMoodle, config, out var modMoodle))
-        {
-            created.AttachedMoodle = modMoodle;
-            config.Save();
-        }
-        var modRedraw = created.RedrawOnApply;
-        if (DrawRedrawOnApply(key, ref modRedraw))
-        {
-            created.RedrawOnApply = modRedraw;
-            config.Save();
-        }
+        if (DrawAttachedMoodlePicker(key, draft.Moodle, config, out var modMoodle))
+            draft.Moodle = modMoodle;
+        DrawRedrawOnApply(key, ref draft.Redraw);
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        var valid = created.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)created.ItemId.Value) is not null && HasAnyRule(edit) && BoundAnimationsConfigured(edit);
-        using (ImRaii.Disabled(!valid || missing))
-        {
-            if (ImGui.Button($"Save restraint##{key}"))
+        var invalid = missing ? "This mod is outside the latest scan - rescan it before saving."
+            : draft.Name.Trim().Length == 0 ? "Give it a name."
+            : IsReserved(alias) ? "This alias is reserved for a fixed Owner command - pick a different one."
+            : !(draft.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)draft.ItemId.Value) is not null) || !HasAnyRule(draft.Rules) ? "Choose an item and at least one rule before saving."
+            : !BoundAnimationsConfigured(draft.Rules) ? "Choose an animation for every checked Arms/Legs/Full Body Cuffed rule before saving."
+            : null;
+        DrawSaveBar(key, draft.IsDirty(created), invalid,
+            () =>
             {
-                created.Rules = ToRules(edit);
+                draft.Apply(created);
                 config.Save();
-                OpenSubModEditor(key, FromRules(created.Rules));
-            }
-        }
-        if (!valid)
-            IconGlyph.WrappedDisabled("Choose an item and at least one rule before saving.");
+                subRestraintDraft = RestraintDraft.Load(this, key, created);
+            },
+            () => subRestraintDraft = RestraintDraft.Load(this, key, created));
     }
 
     /// `device` null = the new rules-only restraint being drafted.
     private void DrawRulesOnlyDetail(PluginConfig config, RestraintDeviceDefinition? device)
     {
-        var devices = config.RestraintMapping.Devices.Values.ToList();
+        var key = device is null ? NewRulesOnlyKey : $"dev:{device.Id}";
+        if (SubDraftFor(key) is not { } draft)
+            return;
+        var deleted = false;
         DrawDetailHeader(device?.Name ?? "New rules-only restraint", "Rules-only restraint", null, FontAwesomeIcon.Handcuffs, null, () =>
         {
             if (device is null)
@@ -379,137 +361,75 @@ public sealed partial class ModuleWindow
                 if (ImGui.Button("Cancel##newDevice"))
                 {
                     creatingRulesOnly = false;
-                    ResetDeviceDraft();
-                    subRestraintList.Select(null);
+                    deleted = true;
                 }
                 return;
             }
-            if (ImGui.Button($"Delete##dev_{device.Id}"))
+            if (ConfirmDelete.Button($"delete_dev_{device.Id}", device.Name))
             {
                 plugin.RestraintCommand.RemoveDevice(device.Id);
-                ResetDeviceDraft();
+                deleted = true;
             }
         });
+        if (deleted)
+        {
+            subRestraintList.Deleted();
+            return;
+        }
 
         if (device?.ItemId is { } deviceItemId)
             IconGlyph.WrappedDisabled($"Gear (from an older version): {device.Slot} · {GetItemName(deviceItemId)}");
         if (device is not null && device.Rules.Any(r =>
                 CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId) && !config.GestureMapping.LocalCatalog.ContainsKey(r.AnimationId)))
-            IconGlyph.WrappedColored(Theme.Warning, "A cuff animation is stale. Select the animation again before using this restraint.");
+            Status.Line(StatusKind.Caution, "A cuff animation is stale. Select the animation again before using this restraint.");
 
-        ImGui.InputText("Alias##newDevice", ref newDeviceName, 32);
+        ImGui.InputText("Alias##newDevice", ref draft.Alias, 32);
         IconGlyph.HelpMarker("The word your Owner sends to toggle this restraint.");
-        DrawReservedWordWarning(newDeviceName);
-        if (DrawAttachedMoodlePicker("newDevice", newDeviceMoodle, config, out var pickedDeviceMoodle, width: null))
-            newDeviceMoodle = pickedDeviceMoodle;
-        // Saved at once on an existing restraint, like its moodle; a new one takes it when added.
-        var deviceRedraw = device?.RedrawOnApply ?? newDeviceRedraw;
-        if (DrawRedrawOnApply("newDevice", ref deviceRedraw))
-        {
-            if (device is null)
-                newDeviceRedraw = deviceRedraw;
-            else
-            {
-                device.RedrawOnApply = deviceRedraw;
-                config.Save();
-            }
-        }
+        var alias = draft.Alias.Trim();
+        DrawReservedWordWarning(alias);
+        if (DrawAttachedMoodlePicker("newDevice", draft.Moodle, config, out var pickedDeviceMoodle, width: null))
+            draft.Moodle = pickedDeviceMoodle;
+        DrawRedrawOnApply("newDevice", ref draft.Redraw);
 
         Section.SubHeading("Restrictions");
-        DrawRestraintRuleCheckboxes(newDeviceRuleEdit, "newDevice", allowCustomizePreset: true, rulesOnly: true);
+        DrawRestraintRuleCheckboxes(draft.Rules, "newDevice", forOwner: false, allowCustomizePreset: true, rulesOnly: true);
 
-        var hasAnyRule = HasAnyRule(newDeviceRuleEdit);
-        var boundAnimationsConfigured = BoundAnimationsConfigured(newDeviceRuleEdit, rulesOnly: true);
-        if (hasAnyRule && !boundAnimationsConfigured)
-            IconGlyph.WrappedColored(Theme.Warning, "A chosen animation is missing or stale. Choose it again, or clear it.");
-
-        var duplicateDeviceName = devices.Any(d => d.Id != editingDeviceId &&
-            string.Equals(d.Name, newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase))
-            || config.RestraintMapping.ConfiguredMods.Any(m => string.Equals(m.Alias.Trim(), newDeviceName.Trim(), StringComparison.OrdinalIgnoreCase));
+        var hasAnyRule = HasAnyRule(draft.Rules);
+        var boundAnimationsConfigured = BoundAnimationsConfigured(draft.Rules, rulesOnly: true);
+        var duplicateDeviceName = config.RestraintMapping.Devices.Values.Any(d => d.Id != device?.Id && string.Equals(d.Name, alias, StringComparison.OrdinalIgnoreCase))
+            || config.RestraintMapping.ConfiguredMods.Any(m => string.Equals(m.Alias.Trim(), alias, StringComparison.OrdinalIgnoreCase));
         // Only measured once the draft is complete; Save is disabled for an unfinished rule anyway.
-        var safeDeviceCommand = !hasAnyRule || !boundAnimationsConfigured
-            || CommandSelector.Fits(RestraintCommand.BuildLockCommand(newDeviceName.Trim(), ToRules(newDeviceRuleEdit, rulesOnly: true)));
-        if (duplicateDeviceName)
-            IconGlyph.WrappedColored(Theme.Warning, "Another restraint already uses this alias.");
-        if (!safeDeviceCommand)
-            IconGlyph.WrappedColored(Theme.Warning, "This restraint name and rule set are too long for a safe command.");
-        ImGui.Spacing();
-        ImGui.Separator();
-        using (ImRaii.Disabled(newDeviceName.Trim().Length == 0 || IsReserved(newDeviceName) || !hasAnyRule || !boundAnimationsConfigured || duplicateDeviceName || !safeDeviceCommand))
-        {
-            if (ImGui.Button(device is null ? "Add restraint" : "Save restraint"))
+        var safeDeviceCommand = !hasAnyRule || !boundAnimationsConfigured || CommandSelector.Fits(RestraintCommand.BuildLockCommand(alias, draft.BuildRules()));
+        var invalid = alias.Length == 0 ? "Give it an alias first."
+            : IsReserved(alias) ? "This alias is reserved for a fixed Owner command - pick a different one."
+            : !hasAnyRule ? "Choose at least one rule."
+            : !boundAnimationsConfigured ? "A chosen animation is missing or stale. Choose it again, or clear it."
+            : duplicateDeviceName ? "Another restraint already uses this alias."
+            : !safeDeviceCommand ? "This restraint name and rule set are too long for a safe command."
+            : null;
+        var dirty = device is null ? alias.Length > 0 || hasAnyRule : draft.IsDirty(device);
+        DrawSaveBar(key, dirty, invalid,
+            () =>
             {
-                var rules = ToRules(newDeviceRuleEdit, rulesOnly: true);
-                if (device is null)
+                if (device is not null)
                 {
-                    var name = newDeviceName.Trim();
-                    if (plugin.RestraintCommand.CaptureDeviceFromItem(null, null, name, rules, newDeviceMoodle)
-                        && config.RestraintMapping.Devices.Values.FirstOrDefault(d => d.Name == name) is { } added)
-                    {
-                        added.RedrawOnApply = newDeviceRedraw;
-                        config.Save();
-                        creatingRulesOnly = false;
-                        LoadDeviceDraft(added);
-                        subRestraintList.Select($"dev:{added.Id}");
-                    }
+                    draft.Apply(device);
+                    config.Save();
+                    subRestraintDraft = RestraintDraft.Load(this, key, device);
+                    return;
                 }
-                // An edited older device keeps its gear.
-                else if (SaveDeviceDraft(newDeviceSlot, newDeviceItemId, rules))
-                    LoadDeviceDraft(device);
-            }
-        }
-    }
-
-    /// Opening another discards the current one's unsaved draft.
-    private void OpenSubModEditor(string key, RestraintRuleEditState draft)
-    {
-        CloseSubModEditor();
-        expandedSubModKey = key;
-        restraintRuleEdits[key] = draft;
-    }
-
-    private void CloseSubModEditor()
-    {
-        if (expandedSubModKey is { } open)
-            restraintRuleEdits.Remove(open);
-        expandedSubModKey = null;
-    }
-
-    private void LoadDeviceDraft(RestraintDeviceDefinition device)
-    {
-        editingDeviceId = device.Id;
-        newDeviceName = device.Name;
-        newDeviceMoodle = device.AttachedMoodle;
-        newDeviceSlot = device.Slot;
-        newDeviceItemId = device.ItemId;
-        CopyRuleEdit(FromRules(device.Rules), newDeviceRuleEdit);
-    }
-
-    private bool SaveDeviceDraft(ApiEquipSlot? slot, ulong? itemId, List<RestraintRuleAssignment> rules)
-    {
-        if (editingDeviceId is not { } id || !plugin.Configuration.RestraintMapping.Devices.TryGetValue(id, out var device))
-            return false;
-
-        var oldName = device.Name;
-        device.Name = newDeviceName.Trim();
-        device.Slot = slot;
-        device.ItemId = itemId;
-        device.Rules = rules;
-        device.AttachedMoodle = newDeviceMoodle;
-        plugin.Configuration.Save();
-        Plugin.Log.Debug($"Edited restraint device '{oldName}' while preserving id {id}.");
-        return true;
-    }
-
-    private void ResetDeviceDraft()
-    {
-        newDeviceRedraw = false;
-        editingDeviceId = null;
-        newDeviceName = "";
-        newDeviceMoodle = null;
-        newDeviceSlot = null;
-        newDeviceItemId = null;
-        CopyRuleEdit(new RestraintRuleEditState(), newDeviceRuleEdit);
+                if (plugin.RestraintCommand.CaptureDeviceFromItem(null, null, alias, draft.BuildRules(), draft.Moodle)
+                    && config.RestraintMapping.Devices.Values.FirstOrDefault(d => d.Name == alias) is { } added)
+                {
+                    added.RedrawOnApply = draft.Redraw;
+                    config.Save();
+                    creatingRulesOnly = false;
+                    subRestraintDraft = RestraintDraft.Load(this, $"dev:{added.Id}", added);
+                    subRestraintList.Select($"dev:{added.Id}");
+                }
+            },
+            () => subRestraintDraft = device is null ? new RestraintDraft(this, key, rulesOnly: true) : RestraintDraft.Load(this, key, device),
+            device is null ? "Add restraint" : "Save");
     }
 
     /// Only changes what this client draws; the restraint's rules keep applying with its cuffs hidden.
@@ -522,7 +442,7 @@ public sealed partial class ModuleWindow
             config.ShowDrawnRestraints = show;
             config.Save();
         }
-        IconGlyph.HelpMarker("Cuffs and chains drawn for Arms Cuffed, Legs Cuffed and Fully Restrain. Only changes what you see. Hiding them doesn't release the restraint.");
+        IconGlyph.HelpMarker("Cuffs and chains drawn for Arms Cuffed, Legs Cuffed and Full Body Cuffed. Only changes what you see. Hiding them doesn't release the restraint.");
 
         using var disabled = ImRaii.Disabled(!config.ShowDrawnRestraints);
         var color = config.RestraintColor;

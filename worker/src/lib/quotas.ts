@@ -25,6 +25,8 @@ export const QUOTA_LIMITS = {
   deviceMailboxOps: { windowSeconds: 3600, maxCount: 120 },
   // collar/rulebook key publish/fetch and consume, both channels (uploads are bounded by rulebookUploadBytes).
   deviceRulebookOps: { windowSeconds: 3600, maxCount: 120 },
+  // Mailbox receipts and sender statuses: one per pickup and per status change, plus retries.
+  deviceMailboxStatus: { windowSeconds: 3600, maxCount: 60 },
   // collar/pairing + collar/pairing-recovery: unauthenticated capability reads that a guesser would hammer.
   // Codes are 80/128 random bits, so these are defense in depth, generous for honest polling.
   originInvitationLookup: { windowSeconds: 3600, maxCount: 120 },

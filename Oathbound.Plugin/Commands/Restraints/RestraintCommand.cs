@@ -21,6 +21,8 @@ public sealed class RestraintCommand
     private const string ExportPrefix = "OATHBOUND-RESTRAINT-V1|";
     private const string ConfiguredExportPrefix = "OATHBOUND-RESTRAINT-CONFIG-V1|";
     public string? LastFailureReason { get; private set; }
+    /// Set with LastFailureReason, for the Owner's apply receipt.
+    public RefusalCode LastFailureCode { get; private set; } = RefusalCode.Failed;
 
     /// Set once by Plugin. While true the Sub can't struggle, use a key or take anything off.
     public Func<bool> IsCaged { get; set; } = static () => false;
@@ -177,6 +179,7 @@ public sealed class RestraintCommand
     public bool ToggleByWord(string word)
     {
         LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         if (FindDeviceByWord(word) is { } device)
         {
             if (activeDeviceIds.Contains(device.Id))
@@ -214,6 +217,7 @@ public sealed class RestraintCommand
         if (IsCaged())
         {
             LastFailureReason = CageService.CagedNote;
+            LastFailureCode = RefusalCode.Caged;
             return false;
         }
         return ReleaseUnlocked(runtimeId);
@@ -301,6 +305,7 @@ public sealed class RestraintCommand
     public bool ForceApply(string deviceName, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         var entry = FindDeviceByWord(deviceName);
         if (entry is null)
         {
@@ -317,6 +322,7 @@ public sealed class RestraintCommand
     public bool ForceApplyById(string deviceId, RestraintLock restraintLock = default)
     {
         LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         if (!config.RestraintMapping.Devices.TryGetValue(deviceId, out var device))
         {
             LastFailureReason = $"saved device id {deviceId} is stale";
@@ -328,10 +334,15 @@ public sealed class RestraintCommand
     /// Activates exactly the Owner's rules, ignoring the Sub's own rules for that device.
     public bool ForceApply(string deviceName, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
+        LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         var captured = config.RestraintMapping.Devices.Values
             .FirstOrDefault(d => string.Equals(d.Name, deviceName, StringComparison.OrdinalIgnoreCase));
         if (captured is null)
+        {
+            LastFailureReason = $"device \"{deviceName}\" was not found";
             return false;
+        }
 
         var device = new RestraintDeviceDefinition
         {
@@ -350,6 +361,8 @@ public sealed class RestraintCommand
     /// The device id is derived from slot+item, so release/conflict tracking works without a Sub-side device.
     public bool ForceApplyAdHoc(ApiEquipSlot? slot, ulong? itemId, string label, List<RestraintRuleAssignment> rules, string? moodleOverride = null, RestraintLock restraintLock = default)
     {
+        LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         var device = new RestraintDeviceDefinition
         {
             Id = slot is not null && itemId is not null ? $"adhoc:{slot}:{itemId}" : $"adhoc:rulesonly:{label}",
@@ -424,6 +437,7 @@ public sealed class RestraintCommand
     private unsafe bool ApplyCatalog(string catalogId, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride, bool allowSharedSlot = false, bool redraw = false)
     {
         LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         if (!config.RestraintMapping.LocalCatalog.TryGetValue(catalogId, out var entry))
         {
             LastFailureReason = "that shared restraint is stale or no longer allowed";
@@ -448,6 +462,7 @@ public sealed class RestraintCommand
         if (!restrictionRules.CanActivate(rules, out var unavailable))
         {
             LastFailureReason = $"{unavailable} enforcement is unavailable";
+            LastFailureCode = RefusalCode.Unavailable;
             return false;
         }
         var boundRules = rules.Where(r => (CuffSets.IsCuff(r.Kind) && !string.IsNullOrWhiteSpace(r.AnimationId))
@@ -464,7 +479,7 @@ public sealed class RestraintCommand
             return false;
         }
         var collection = penumbra.TryGetLocalPlayerCollectionId();
-        if (collection is null) { LastFailureReason = "the local Penumbra collection is unavailable"; return false; }
+        if (collection is null) { LastFailureReason = "the local Penumbra collection is unavailable"; LastFailureCode = RefusalCode.Unavailable; return false; }
         var selections = entry.GroupSelections.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value);
         if (!temporarySettings.Acquire(runtimeId, collection.Value, entry.ModDirectory, selections))
         { LastFailureReason = "Penumbra could not apply the restraint option"; return false; }
@@ -582,7 +597,7 @@ public sealed class RestraintCommand
     public LocalTestResult Struggle(string runtimeId)
     {
         if (IsCaged())
-            return LocalTestResult.Fail(CageService.CagedNote);
+            return LocalTestResult.Fail(CageService.CagedNote, code: RefusalCode.Caged);
         if (FindWorn(runtimeId) is not { Lock: { } restraintLock } worn || StruggleAvailable(worn) is not { } setting)
             return LocalTestResult.Fail("That restraint can't be struggled against.");
         if (StruggleWait(worn) is { } wait)
@@ -638,7 +653,7 @@ public sealed class RestraintCommand
     public LocalTestResult TryKey(string runtimeId, string guess)
     {
         if (IsCaged())
-            return LocalTestResult.Fail(CageService.CagedNote);
+            return LocalTestResult.Fail(CageService.CagedNote, code: RefusalCode.Caged);
         if (FindWorn(runtimeId) is not { Lock: { Key: { } key } restraintLock } worn)
             return LocalTestResult.Fail("That restraint has no key.");
         if (KeyWait(worn) is { } wait)
@@ -677,7 +692,7 @@ public sealed class RestraintCommand
     {
         var timed = config.WornRestraints.Where(w => w.Lock?.ExpiresAtUtc is not null).ToList();
         if (timed.Count == 0)
-            return LocalTestResult.Fail("No restraint is under a timed lock - nothing changed.");
+            return LocalTestResult.Fail("No restraint is under a timed lock - nothing changed.", code: RefusalCode.Other);
         var now = DateTime.UtcNow;
         var released = 0;
         foreach (var worn in timed)
@@ -705,9 +720,9 @@ public sealed class RestraintCommand
     {
         var worn = config.WornRestraints.FirstOrDefault(w => string.Equals(w.Reference, reference.Trim(), StringComparison.OrdinalIgnoreCase));
         if (worn is null)
-            return LocalTestResult.Fail($"No worn restraint is called \"{reference.Trim()}\".");
+            return LocalTestResult.Fail($"No worn restraint is called \"{reference.Trim()}\".", code: RefusalCode.Other);
         if (worn.Lock is { ByPairingId: { } lockedBy } && sourcePairingId is { } source && lockedBy != source)
-            return LocalTestResult.Fail($"\"{worn.Reference}\" was locked by a different Owner.");
+            return LocalTestResult.Fail($"\"{worn.Reference}\" was locked by a different Owner.", code: RefusalCode.Other);
         ReleaseDevice(worn.RuntimeId);
         return LocalTestResult.Ok($"\"{worn.Reference}\" unlocked.");
     }
@@ -833,6 +848,7 @@ public sealed class RestraintCommand
     {
         permanent = false;
         LastFailureReason = null;
+        LastFailureCode = RefusalCode.Failed;
         bool applied;
         switch (worn.Kind)
         {
@@ -916,6 +932,7 @@ public sealed class RestraintCommand
         if (!restrictionRules.CanActivate(device.Rules, out var unavailable))
         {
             LastFailureReason = $"{unavailable} enforcement is unavailable";
+            LastFailureCode = RefusalCode.Unavailable;
             Plugin.Log.Warning($"Restraint apply refused for '{device.Name}': {unavailable} enforcement is unavailable.");
             return false;
         }

@@ -163,7 +163,7 @@ public sealed unsafe class StatusIconOverlay : OverlayNode
     /// From the Status sheet by English name, so it works in any client language. 0 = not found, not drawn.
     public static uint[] ResolveIconIds()
     {
-        var sheet = Plugin.DataManager.GetExcelSheet<Status>(ClientLanguage.English);
+        var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Status>(ClientLanguage.English);
         uint Find(string name) => sheet.FirstOrDefault(s => s.Icon != 0 && s.Name.ExtractText() == name).Icon;
         var ids = new[] { Find("Silence"), Find("Fetters"), Find("Bind") };
         if (ids.Any(id => id == 0))

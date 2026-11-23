@@ -137,7 +137,10 @@ Sync tab shows whether it's up to date.
   in, however long that takes.
 - **Only the two of you see the icons, the leash line, drawn cuffs and cage bounds.** They're drawn by your own clients - nobody
   else sees them, and drawing them sends nothing. The Sub's own view is exact; the Owner's is an estimate
-  built from the commands they sent. The leash is the exception: when it comes off on the Sub's side, the
+  built from the commands they sent that the Sub's plugin didn't refuse: the Sub's plugin answers each command
+  with an apply receipt (see below), so a refused command never shows, and one it didn't answer in time shows as
+  "sent, not confirmed". With a Sub on a version without receipts, the estimate also can't see refused commands. The
+  leash is the exception: when it comes off on the Sub's side, the
   Sub's plugin tells the Owner's. So is the collar: while one is locked, the Sub's plugin tells the relay whether
   it's really on, and the Owner is warned if it comes off. For everything else the estimate can't see a panic or the Sub's own
   releases (Sub Control has a **Clear estimate** button for that). The leash line's look (or hiding it) is set in
@@ -318,10 +321,24 @@ follow. The Sub's plugin sends these notices to the Owner on its own, through th
   Sub escapes a lock or opens it with its key - failed tries and wrong keys send nothing;
 - **safeword** (`collarsafeword panic`), to each of the Sub's Owners when they use their safeword. It only says
   that it happened, at most once a minute, and is always on;
+- **apply receipt** (`collarreceipt`) for each command from the Owner whose plugin asks for one: whether the command
+  applied or was refused, and for a refusal one reason code from a fixed list (a permission is off, no such alias or
+  command, sent from a character you haven't confirmed, your cage holds you, a plugin it needs isn't available, your
+  version can't read it, it failed, or other). It names the command only by its number in the encrypted stream -
+  never its text, an alias, a setting or anything else about your setup. Receipts for commands that arrive close
+  together go out as one notice, at most about once a second. It's always on, and goes only to that Owner through
+  the relay, never as game chat; your rulebook's own consequences never send one;
+- **rulebook or oath decision** (`collardecision`) when you press Accept or Decline on a rulebook version, or I swear
+  or Decline on an oath offer: it carries only accepted or declined, the version number or the oath's id, and for a
+  declined version the short reason you typed, if any. It's sent only on your own click - never for an offer that
+  expired or a version refused automatically - and isn't sent again if your Owner was offline: your activity report
+  tells them later;
 - during a game, the piece and game-ended `collargame` notices described under Games.
 
 Panic, the Owner's own revert all, and unpairing send no leash notice. An Owner's **Grant leave** button (for an
-"ask before logging off" oath) sends one notice, only when they press it. The shared leash and status tag (see
+"ask before logging off" oath) sends one notice, only when they press it. This version never asks for a Sub's
+catalog with a notice: the catalog reaches the Owner through the encrypted mailbox by itself, and when an Owner on an
+older version asks for it, the Sub's plugin answers only by putting the catalog in the mailbox again. The shared leash and status tag (see
 Consent & safety) isn't chat or relay traffic at all: it travels with your character through SimpleHeels and your
 sync plugin.
 

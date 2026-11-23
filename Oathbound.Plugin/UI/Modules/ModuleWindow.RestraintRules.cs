@@ -18,8 +18,6 @@ public sealed partial class ModuleWindow
 {
     private static readonly string[] PoseNames = ["Ground Sit", "Sit", "Doze"];
 
-    private readonly Dictionary<string, RestraintRuleEditState> restraintRuleEdits = new();
-
     private sealed class RestraintRuleEditState
     {
         public bool ForcedPose;
@@ -95,15 +93,18 @@ public sealed partial class ModuleWindow
     private static readonly string[] ForcedPoseSourceNames = ["Vanilla pose", "Animation mod"];
 
     /// `allowCustomizePreset` is only for the Sub's own editors - only the Sub's client can list their profiles.
-    /// `rulesOnly` makes the cuffs drawn, with an optional animation.
-    private void DrawRestraintRuleCheckboxes(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset = false, bool rulesOnly = false)
+    /// `rulesOnly` makes the cuffs drawn, with an optional animation. `forOwner` words the help for an Owner editing their
+    /// Sub's restraint.
+    private void DrawRestraintRuleCheckboxes(RestraintRuleEditState edit, string idSuffix, bool forOwner, bool allowCustomizePreset = false, bool rulesOnly = false)
     {
+        var whom = forOwner ? "your Sub" : "you";
+        var whose = forOwner ? "your Sub's" : "your";
         void Cuff(string label, ref bool enabled, ref bool drawn, string? animationId, Action<string?> setAnimation, string cuffSuffix, string help)
         {
             if (rulesOnly)
             {
                 ImGui.Checkbox($"{label} (drawn)##{idSuffix}{cuffSuffix}", ref enabled);
-                IconGlyph.HelpMarker($"Draws cuffs on you until released. {help} Optionally also holds an animation.");
+                IconGlyph.HelpMarker($"Draws cuffs on {whom} until released. {help} Optionally also holds an animation.");
                 if (enabled)
                 {
                     ImGui.Indent();
@@ -114,7 +115,7 @@ public sealed partial class ModuleWindow
             else
             {
                 DrawBoundAnimationPicker(label, ref enabled, animationId, id => setAnimation(id), $"{idSuffix}{cuffSuffix}");
-                IconGlyph.HelpMarker($"Holds you in the chosen animation until released. {help}");
+                IconGlyph.HelpMarker($"Holds {whom} in the chosen animation until released. {help}");
                 if (enabled)
                 {
                     ImGui.Indent();
@@ -129,8 +130,8 @@ public sealed partial class ModuleWindow
         {
             () =>
             {
-                ImGui.Checkbox($"Forced pose##{idSuffix}", ref edit.ForcedPose);
-                IconGlyph.HelpMarker("Places you into the chosen pose (or holds a chosen animation) and fully blocks movement input until released.");
+                ImGui.Checkbox($"{CommandPresentation.RuleName(RestraintRuleKind.ForcedPose)}##{idSuffix}", ref edit.ForcedPose);
+                IconGlyph.HelpMarker($"Places {whom} into the chosen pose (or holds a chosen animation) and fully blocks movement input until released.");
                 if (edit.ForcedPose)
                 {
                     ImGui.Indent();
@@ -145,24 +146,24 @@ public sealed partial class ModuleWindow
                 }
             },
         };
-        cells.Add(() => Cuff("Arms Cuffed", ref edit.ArmsCuffed, ref edit.ArmsCuffedDrawn, edit.ArmsCuffedAnimationId, id => edit.ArmsCuffedAnimationId = id,
-            "Arms", "Cuffs your wrists together."));
-        cells.Add(() => Cuff("Legs Cuffed", ref edit.LegsCuffed, ref edit.LegsCuffedDrawn, edit.LegsCuffedAnimationId, id => edit.LegsCuffedAnimationId = id,
-            "Legs", "Cuffs your ankles together."));
+        cells.Add(() => Cuff(CommandPresentation.RuleName(RestraintRuleKind.ArmsCuffed), ref edit.ArmsCuffed, ref edit.ArmsCuffedDrawn, edit.ArmsCuffedAnimationId, id => edit.ArmsCuffedAnimationId = id,
+            "Arms", $"Cuffs {whose} wrists together."));
+        cells.Add(() => Cuff(CommandPresentation.RuleName(RestraintRuleKind.LegsCuffed), ref edit.LegsCuffed, ref edit.LegsCuffedDrawn, edit.LegsCuffedAnimationId, id => edit.LegsCuffedAnimationId = id,
+            "Legs", $"Cuffs {whose} ankles together."));
         cells.Add(() =>
         {
-            ImGui.Checkbox($"Walk-only##{idSuffix}", ref edit.WalkOnly);
+            ImGui.Checkbox($"{CommandPresentation.RuleName(RestraintRuleKind.WalkOnly)}##{idSuffix}", ref edit.WalkOnly);
             IconGlyph.HelpMarker("Forces walking and blocks running, without blocking directional movement input.");
         });
-        cells.Add(() => DrawGaggedPicker(edit, idSuffix, allowCustomizePreset));
-        cells.Add(() => Cuff("Fully Restrain", ref edit.FullBodyCuffed, ref edit.FullBodyCuffedDrawn, edit.FullBodyCuffedAnimationId, id => edit.FullBodyCuffedAnimationId = id,
-            "FullBody", "Cuffs your wrists and ankles and chains them together, and blocks movement."));
+        cells.Add(() => DrawGaggedPicker(edit, idSuffix, allowCustomizePreset, forOwner));
+        cells.Add(() => Cuff(CommandPresentation.RuleName(RestraintRuleKind.FullBodyCuffed), ref edit.FullBodyCuffed, ref edit.FullBodyCuffedDrawn, edit.FullBodyCuffedAnimationId, id => edit.FullBodyCuffedAnimationId = id,
+            "FullBody", $"Cuffs {whose} wrists and ankles and chains them together, and blocks movement."));
         cells.Add(() =>
         {
-            ImGui.Checkbox($"Action block##{idSuffix}", ref edit.ActionBlock);
+            ImGui.Checkbox($"{CommandPresentation.RuleName(RestraintRuleKind.ActionBlock)}##{idSuffix}", ref edit.ActionBlock);
             IconGlyph.HelpMarker("Blocks hotbar action/skill usage until released, without affecting movement.");
         });
-        cells.Add(() => DrawBlindfoldPicker(edit, idSuffix));
+        cells.Add(() => DrawBlindfoldPicker(edit, idSuffix, forOwner));
 
         // A table, not legacy Columns: Columns break inside a ListDetail table cell and hide the left column. One row
         // per pair keeps each toggle's dependent controls under it.
@@ -184,10 +185,12 @@ public sealed partial class ModuleWindow
     /// In BlindfoldLevel order.
     private static readonly string[] BlindfoldLevelNames = ["Full", "Heavy", "Light"];
 
-    private static void DrawBlindfoldPicker(RestraintRuleEditState edit, string idSuffix)
+    private static void DrawBlindfoldPicker(RestraintRuleEditState edit, string idSuffix, bool forOwner)
     {
-        ImGui.Checkbox($"Blindfolded##{idSuffix}", ref edit.Blindfolded);
-        IconGlyph.HelpMarker("Darkens the game world on your own screen. Chat, hotbars and other UI stay visible, so you can always read and use your safeword. Lifts during cutscenes and in GPose.");
+        ImGui.Checkbox($"{CommandPresentation.RuleName(RestraintRuleKind.Blindfolded)}##{idSuffix}", ref edit.Blindfolded);
+        IconGlyph.HelpMarker(forOwner
+            ? "Darkens the game world on your Sub's screen. Chat, hotbars and other UI stay visible, so they can always read and use their safeword. Lifts during cutscenes and in GPose."
+            : "Darkens the game world on your own screen. Chat, hotbars and other UI stay visible, so you can always read and use your safeword. Lifts during cutscenes and in GPose.");
         if (!edit.Blindfolded)
             return;
         ImGui.Indent();
@@ -195,14 +198,16 @@ public sealed partial class ModuleWindow
         ItemWidth(140);
         if (ImGui.Combo($"strength##{idSuffix}BlindfoldLevel", ref level, BlindfoldLevelNames, BlindfoldLevelNames.Length))
             edit.BlindfoldLevel = (BlindfoldLevel)level;
-        IconGlyph.HelpMarker("Full is black and hides nameplates. Heavy leaves a faint trace of the world and hides nameplates. Light leaves a small clear circle around your character. A Sub on an older Oathbound version isn't blindfolded.");
+        IconGlyph.HelpMarker($"Full is black and hides nameplates. Heavy leaves a faint trace of the world and hides nameplates. Light leaves a small clear circle around {(forOwner ? "your Sub's" : "your")} character. A Sub on an older Oathbound version isn't blindfolded.");
         ImGui.Unindent();
     }
 
-    private void DrawGaggedPicker(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset)
+    private void DrawGaggedPicker(RestraintRuleEditState edit, string idSuffix, bool allowCustomizePreset, bool forOwner)
     {
-        ImGui.Checkbox($"Gagged##{idSuffix}", ref edit.Gagged);
-        IconGlyph.HelpMarker("Garbles your outgoing chat text - the actual transmitted message, not just your own display - until released. See the README's Automation risk section before enabling.");
+        ImGui.Checkbox($"{CommandPresentation.RuleName(RestraintRuleKind.Gagged)}##{idSuffix}", ref edit.Gagged);
+        IconGlyph.HelpMarker(forOwner
+            ? "Garbles your Sub's outgoing chat text - the actual transmitted message, not just their own display - until released. See the README's Automation risk section before enabling."
+            : "Garbles your outgoing chat text - the actual transmitted message, not just your own display - until released. See the README's Automation risk section before enabling.");
         if (!edit.Gagged)
             return;
 
@@ -282,7 +287,7 @@ public sealed partial class ModuleWindow
         var clearWidth = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemSpacing.X;
         var width = Math.Max(120f, ImGui.GetContentRegionAvail().X - clearWidth);
         if (warn)
-            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Warning);
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Caution);
         var clicked = ImGui.Button($"{text}##choice_{idSuffix}", new Vector2(width, 0));
         if (warn)
             ImGui.PopStyleColor();
@@ -313,7 +318,7 @@ public sealed partial class ModuleWindow
         {
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 ImGui.SetTooltip(blocked);
-            IconGlyph.WrappedColored(Theme.StatusMissing, blocked);
+            Status.Line(StatusKind.Error, blocked);
             return;
         }
         if (ImGui.IsItemHovered())

@@ -7,6 +7,7 @@ import { fetchPair, fetchPairStatusBatch, putCageStatus, putCollarStatus, putPai
 import { checkRevocations, publishRevocation } from "./routes/revocations";
 import { consumeCatalogResponse, createCatalogRequest, fetchCatalogRequest, uploadCatalogResponse } from "./routes/catalog";
 import { consumeMailboxSnapshot, fetchMailboxKey, mailboxStatus, publishMailboxKey, uploadMailboxSnapshot } from "./routes/mailbox";
+import { postMailboxStatus } from "./routes/mailboxStatus";
 import { consumeRulebookItem, fetchRulebookKey, publishRulebookKey, uploadRulebookItem } from "./routes/rulebook";
 import { health } from "./routes/health";
 import { fetchPictures, syncPictures, uploadPicture } from "./routes/pictures";
@@ -95,6 +96,8 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (action === "status") return mailboxStatus(request, env);
     if (action === "consume") return consumeMailboxSnapshot(request, env);
   }
+
+  if (method === "POST" && segments.length === 3 && segments[1] === "mailbox" && segments[2] === "status") return postMailboxStatus(request, env);
 
   if (segments[1] === "chat-images" && method === "POST" && segments.length === 3) {
     if (segments[2] === "upload") return uploadChatImage(request, env);

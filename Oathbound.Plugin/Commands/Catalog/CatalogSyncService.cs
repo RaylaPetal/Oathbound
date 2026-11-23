@@ -101,7 +101,7 @@ public sealed class CatalogSyncService
 
         var sections = SplitSections(exportText);
         if (sections.Count == 0)
-            return new CatalogSnapshotResult(0, 0, 0, 0, "Snapshot doesn't look like a Collar export (no recognized sections) - nothing imported.");
+            return new CatalogSnapshotResult(0, 0, 0, 0, "Snapshot doesn't look like an Oathbound export (no recognized sections) - nothing imported.");
         if (!ValidateRelaySnapshot(sections, out var validationError))
             return new CatalogSnapshotResult(0, 0, 0, 0, validationError);
 
@@ -166,7 +166,7 @@ public sealed class CatalogSyncService
         var oldGestureCatalog = config.GestureMapping.ImportedPeerCatalog;
         var oldRestraintCatalog = config.RestraintMapping.ImportedPeerCatalog;
         quick.Titles = ReconcileCategory(oldTitles, newTitles, sourcePairIdHash, ref added, ref updated, ref removed);
-        quick.Outfits = ReconcileCategory(oldOutfits, newOutfits, sourcePairIdHash, ref added, ref updated, ref removed);
+        quick.Outfits = ReconcileCategory(oldOutfits, newOutfits, sourcePairIdHash, ref added, ref updated, ref removed, carryForwardExtra: CarryForwardOutfitLock);
         quick.Gestures = ReconcileCategory(oldGestures, newGestures, sourcePairIdHash, ref added, ref updated, ref removed, carryForwardExtra: CarryForwardGestureFields);
         quick.Moodles = ReconcileCategory(oldMoodles, newMoodles, sourcePairIdHash, ref added, ref updated, ref removed);
         quick.Restraints = ReconcileCategory(oldRestraints, newRestraints, sourcePairIdHash, ref added, ref updated, ref removed, carryForwardExtra: CarryForwardRestraintRules);
@@ -199,6 +199,18 @@ public sealed class CatalogSyncService
         to.GestureGroupName = from.GestureGroupName;
         to.GestureGroupOrder = from.GestureGroupOrder;
         to.GestureOptionOrder = from.GestureOptionOrder;
+    }
+
+    /// The Owner's "not locked" choice is the command's verb, so a re-import keeps it like the timer.
+    private static void CarryForwardOutfitLock(QuickCommand from, QuickCommand to)
+    {
+        const string lockPrefix = "outfit lock ", wearPrefix = "outfit wear ";
+        static bool IsOutfit(string c) => c.StartsWith(lockPrefix, StringComparison.OrdinalIgnoreCase) || c.StartsWith(wearPrefix, StringComparison.OrdinalIgnoreCase);
+        if (!IsOutfit(from.Command) || !IsOutfit(to.Command))
+            return;
+        var wear = from.Command.StartsWith(wearPrefix, StringComparison.OrdinalIgnoreCase);
+        if (wear != to.Command.StartsWith(wearPrefix, StringComparison.OrdinalIgnoreCase))
+            to.Command = (wear ? wearPrefix : lockPrefix) + to.Command[lockPrefix.Length..];
     }
 
     private static void CarryForwardRestraintRules(QuickCommand from, QuickCommand to)
@@ -418,7 +430,7 @@ public sealed class CatalogSyncService
 
         var sections = SplitSections(text);
         if (sections.Count == 0)
-            return new CatalogImportResult(0, 0, 0, 0, 0, 0, 0, "File doesn't look like a Collar export (no recognized sections) - nothing imported.");
+            return new CatalogImportResult(0, 0, 0, 0, 0, 0, 0, "File doesn't look like an Oathbound export (no recognized sections) - nothing imported.");
 
         var quick = config.QuickCommands;
         var stagedTitles = CloneQuickList(quick.Titles);

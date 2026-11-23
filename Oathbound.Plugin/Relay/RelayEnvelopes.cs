@@ -107,6 +107,9 @@ public sealed class RulebookChannelSummary
     [JsonPropertyName("waitingSequence")] public int? WaitingSequence { get; set; }
     [JsonPropertyName("lastConsumedSequence")] public int? LastConsumedSequence { get; set; }
     [JsonPropertyName("lastUploadAt")] public long? LastUploadAt { get; set; }
+    /// Each side's latest signed mailbox status, verbatim; null from an older relay or before either side posted.
+    [JsonPropertyName("senderStatus")] public MailboxStatusEnvelope? SenderStatus { get; set; }
+    [JsonPropertyName("recipientStatus")] public MailboxStatusEnvelope? RecipientStatus { get; set; }
 }
 
 public sealed class CatalogMailboxSummary
@@ -116,6 +119,40 @@ public sealed class CatalogMailboxSummary
     [JsonPropertyName("waitingSnapshotId")] public int? WaitingSnapshotId { get; set; }
     [JsonPropertyName("lastConsumedSnapshotId")] public int? LastConsumedSnapshotId { get; set; }
     [JsonPropertyName("lastUploadAt")] public long? LastUploadAt { get; set; }
+    /// When the Owner last asked for the latest catalog; null from an older relay or if never asked.
+    [JsonPropertyName("refreshRequestedAt")] public long? RefreshRequestedAt { get; set; }
+    [JsonPropertyName("senderStatus")] public MailboxStatusEnvelope? SenderStatus { get; set; }
+    [JsonPropertyName("recipientStatus")] public MailboxStatusEnvelope? RecipientStatus { get; set; }
+}
+
+public static class MailboxNames
+{
+    public const string Catalog = "catalog";
+    public const string Rulebook = "rulebook";
+    public const string Report = "report";
+}
+
+public static class MailboxRoles
+{
+    public const string Sender = "sender";
+    public const string Recipient = "recipient";
+}
+
+/// A delivery receipt (role recipient) or a sender's can't-send status for one mailbox, signed with the posting
+/// device's key. The relay hands it to the other member verbatim, which verifies it against the paired device key.
+public sealed class MailboxStatusEnvelope
+{
+    [JsonPropertyName("type")] public string Type { get; set; } = "mailbox-status";
+    [JsonPropertyName("schemaVersion")] public int SchemaVersion { get; set; } = 1;
+    [JsonPropertyName("pairIdHash")] public string PairIdHash { get; set; } = "";
+    [JsonPropertyName("pairEpoch")] public int PairEpoch { get; set; }
+    [JsonPropertyName("mailbox")] public string Mailbox { get; set; } = "";
+    [JsonPropertyName("role")] public string Role { get; set; } = "";
+    [JsonPropertyName("deviceKeyId")] public string DeviceKeyId { get; set; } = "";
+    [JsonPropertyName("sequence")] public int Sequence { get; set; }
+    [JsonPropertyName("code")] public string Code { get; set; } = "";
+    [JsonPropertyName("at")] public long At { get; set; }
+    [JsonPropertyName("signature")] public string? Signature { get; set; }
 }
 
 public sealed class RevocationEnvelope
@@ -204,7 +241,8 @@ public sealed class CatalogPushEnvelope
     [JsonPropertyName("signature")] public string? Signature { get; set; }
 }
 
-/// Built like CatalogResponseAad (vector: ecdhHkdfAesGcmCatalogPush).
+/// Everything except ciphertextDigest, nonce and signature, with ciphertextSizeBytes forced to 0 - binds the
+/// ciphertext to its envelope without depending on its own size/digest (vector: ecdhHkdfAesGcmCatalogPush).
 public static class CatalogPushAad
 {
     public static byte[] Build(CatalogPushEnvelope envelope)
@@ -294,38 +332,6 @@ public static class RulebookItemAad
             ["pairEpoch"] = envelope.PairEpoch,
             ["receiveKeyId"] = envelope.ReceiveKeyId,
             ["sequence"] = envelope.Sequence,
-            ["senderDeviceKeyId"] = envelope.SenderDeviceKeyId,
-            ["recipientDeviceKeyId"] = envelope.RecipientDeviceKeyId,
-            ["createdAt"] = envelope.CreatedAt,
-            ["expiresAt"] = envelope.ExpiresAt,
-            ["algorithm"] = envelope.Algorithm,
-            ["ciphertextSizeBytes"] = 0,
-            ["senderEphemeralPublicKey"] = new Dictionary<string, object?>
-            {
-                ["kty"] = envelope.SenderEphemeralPublicKey.Kty,
-                ["crv"] = envelope.SenderEphemeralPublicKey.Crv,
-                ["x"] = envelope.SenderEphemeralPublicKey.X,
-                ["y"] = envelope.SenderEphemeralPublicKey.Y,
-            },
-        };
-        return System.Text.Encoding.UTF8.GetBytes(CanonicalJson.Serialize(dict));
-    }
-}
-
-/// Everything except ciphertextDigest, nonce and signature, with ciphertextSizeBytes forced to 0 - binds the
-/// ciphertext to its envelope without depending on its own size/digest.
-public static class CatalogResponseAad
-{
-    public static byte[] Build(CatalogResponseEnvelope envelope)
-    {
-        var dict = new Dictionary<string, object?>
-        {
-            ["type"] = envelope.Type,
-            ["schemaVersion"] = envelope.SchemaVersion,
-            ["pairIdHash"] = envelope.PairIdHash,
-            ["pairEpoch"] = envelope.PairEpoch,
-            ["requestId"] = envelope.RequestId,
-            ["snapshotId"] = envelope.SnapshotId,
             ["senderDeviceKeyId"] = envelope.SenderDeviceKeyId,
             ["recipientDeviceKeyId"] = envelope.RecipientDeviceKeyId,
             ["createdAt"] = envelope.CreatedAt,

@@ -127,18 +127,21 @@ public sealed partial class ModuleWindow
         if (plugin.OwnerCageStatus.HoldingPost(pairing) is { } post)
         {
             IconGlyph.WrappedDisabled($"You tied {name} to a post at {post.PlaceLabel} ({post.Radius:0} yalms of rope).");
-            using (ImRaii.Disabled(!canSend))
-            {
-                if (ImGui.Button("Untie"))
-                    ReportCageSend(CageSendAction.TryOpen(plugin));
-            }
+            SendButton.Draw(plugin, new SendSpec("leashUntie", "Untie") { Custom = SendNotice.Cage(() => CageSendAction.TryOpen(plugin)) });
             IconGlyph.HelpMarker("Opens the post. If they're still on your leash, it picks them up and pulls them after you again.");
             return;
         }
 
+        if (plugin.OwnerCageStatus.RefusalFor(pairing) is { Post: true } refusedPost)
+            Status.Line(StatusKind.Error, $"{name}'s client refused the post: {refusedPost.Code.ToOwnerText()}.");
+
+        // A leash counts once it's in the estimate: applied, unanswered, or sent to a version that doesn't confirm.
         if (plugin.OwnerStatusEstimates.For(pairing) is not { Leashed: true } estimate)
         {
-            IconGlyph.WrappedDisabled($"Leash {name} first, then tie them off here.");
+            var leashMark = plugin.OwnerStatusEstimates.ForBanner(pairing)?.MarkFor("follow");
+            IconGlyph.WrappedDisabled(leashMark?.State == CommandConfirmation.Waiting
+                ? $"Waiting for {name}'s client to confirm the leash before you can tie them off."
+                : $"Leash {name} first, then tie them off here.");
             return;
         }
 
@@ -155,11 +158,10 @@ public sealed partial class ModuleWindow
                 tieOffMinutes = Math.Clamp(tieOffMinutes, 1, 7 * 24 * 60);
         }
         ImGui.SameLine();
-        using (ImRaii.Disabled(!canSend))
+        SendButton.Draw(plugin, new SendSpec("leashTieOff", "Tie off here")
         {
-            if (ImGui.Button("Tie off here"))
-                ReportCageSend(CageSendAction.TryTieOff(plugin, (int)MathF.Round(estimate.LeashLength), tieOffTimed ? tieOffMinutes * 60 : null));
-        }
+            Custom = SendNotice.Cage(() => CageSendAction.TryTieOff(plugin, (int)MathF.Round(estimate.LeashLength), tieOffTimed ? tieOffMinutes * 60 : null)),
+        });
     }
 
     private static readonly string[] TieOffLockModes = ["Until untied", "Timed"];

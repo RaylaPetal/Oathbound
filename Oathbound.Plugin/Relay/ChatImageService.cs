@@ -81,10 +81,13 @@ public sealed class ChatImageService
         throw new InvalidOperationException("That picture couldn't be made small enough to send.");
     }
 
+    public static string FileNameFor(string imageId, Prepared image) => imageId + image.Extension;
+
     /// Keeps the sender's own copy, encrypts it and uploads the ciphertext. Returns the local file name and the key.
+    /// The copy stays on a failed upload too, so the message can be retried; the caller records it.
     public async Task<(string FileName, string Key)> UploadAsync(string pairIdHash, int pairEpoch, string imageId, Prepared image, CancellationToken ct)
     {
-        var fileName = imageId + image.Extension;
+        var fileName = FileNameFor(imageId, image);
         Directory.CreateDirectory(Folder);
         await File.WriteAllBytesAsync(Path.Combine(Folder, fileName), image.Bytes, ct).ConfigureAwait(false);
         var (key, blob) = ChatImageCrypto.Encrypt(image.Bytes, imageId);
@@ -94,7 +97,6 @@ public sealed class ChatImageService
         }
         catch (RelayException ex)
         {
-            Delete(fileName);
             Plugin.Log.Warning($"Chat picture upload refused by the relay: {ex.Message}");
             throw new InvalidOperationException(ex.Code switch
             {
@@ -105,11 +107,6 @@ public sealed class ChatImageService
                 "service_unavailable" => "the relay is busy - try again later",
                 _ => $"the relay couldn't store it ({ex.Code})",
             });
-        }
-        catch
-        {
-            Delete(fileName);
-            throw;
         }
         return (fileName, key);
     }

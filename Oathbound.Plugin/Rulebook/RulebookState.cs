@@ -16,9 +16,15 @@ public sealed class RulebookPairingState
     public string? PublishedDigest { get; set; }
     /// Exactly what was last sent, so a copy the relay lost can be sent again without picking up later edits.
     public RulebookDocument? PublishedDocument { get; set; }
-    /// The Sub's client has collected the rulebook up to this version (the relay's delivery receipt).
+    /// The Sub's client has collected the rulebook up to this version (the relay's pickup record).
     public int PickedUpVersion { get; set; }
+    /// The last send's error, manual or automatic; cleared by the next successful send.
     public string? PublishError { get; set; }
+
+    /// Owner: sending rulebooks (and the Sub's receipts). Sub: receiving them.
+    public Oathbound.Plugin.Config.MailboxDeliveryState RulebookDelivery { get; set; } = new();
+    /// Sub: sending reports (and the Owner's receipts). Owner: receiving them.
+    public Oathbound.Plugin.Config.MailboxDeliveryState ReportDelivery { get; set; } = new();
 
     /// The Owner's report-channel receive key. The private half is DPAPI-protected.
     public string? ReportKeyId { get; set; }
@@ -33,6 +39,20 @@ public sealed class RulebookPairingState
 
     /// The relay has a rulebook receive key from the Sub, so the Sub's plugin supports rulebooks.
     public bool SubSupportsRulebook { get; set; }
+
+    /// The Sub's latest version decision notice; shown until a report generated after it arrives.
+    public RulebookDecisionNotice? LastDecision { get; set; }
+    /// Oath id -> the Sub's latest decision notice for that offer, under the same rule.
+    public Dictionary<string, OathDecisionNotice> OathDecisions { get; set; } = new();
+
+    // Both times are this client's own receive times: a report's GeneratedAt is the Sub's clock, which can be minutes off.
+    public RulebookDecisionNotice? FreshDecision() =>
+        LastDecision is { } d && (LastReport is null || LastReportReceivedUnixSeconds <= d.At) ? d : null;
+
+    public OathStatus? FreshOathDecision(string oathId) =>
+        OathDecisions.TryGetValue(oathId, out var d) && (LastReport is null || LastReportReceivedUnixSeconds <= d.At)
+            ? d.Accepted ? OathStatus.Open : OathStatus.Declined
+            : null;
 
     // ---- Sub side ----
 
@@ -51,6 +71,10 @@ public sealed class RulebookPairingState
     public RulebookDocument? Accepted { get; set; }
     public long AcceptedUnixSeconds { get; set; }
     public int? LastDeclinedVersion { get; set; }
+    /// The pending version the Sub last opened the Rulebook module on, for the nav tile's attention badge.
+    public int? SeenPendingVersion { get; set; }
+    /// "id:offeredAt" of each oath offer the Sub has seen, so an offer made again with new terms counts as new.
+    public HashSet<string> SeenOfferIds { get; set; } = new();
     /// The Owner's ResetCount as of the last wipe.
     public int AppliedResetCount { get; set; }
 
@@ -67,6 +91,8 @@ public sealed class RulebookPairingState
     public int NextReportSequence { get; set; }
     public string? LastUploadedReportDigest { get; set; }
     public long LastReportUploadUnixSeconds { get; set; }
+    /// Why the last report couldn't be sent; cleared by the next upload.
+    public string? ReportUploadError { get; set; }
 
     /// Time rule id -> the Sub's local date ("yyyy-MM-dd") it last fired, so a reload doesn't fire it again.
     public Dictionary<string, string> TimeRuleLastFired { get; set; } = new();
@@ -212,6 +238,23 @@ public sealed class RulebookReport
     public List<string> DisabledRuleIds { get; set; } = new();
     public List<ReportedOath> Oaths { get; set; } = new();
     public List<RulebookEvent> Events { get; set; } = new();
+}
+
+[Serializable]
+public sealed class RulebookDecisionNotice
+{
+    public int Version { get; set; }
+    public bool Accepted { get; set; }
+    public string? Reason { get; set; }
+    /// When this client received it, unix seconds.
+    public long At { get; set; }
+}
+
+[Serializable]
+public sealed class OathDecisionNotice
+{
+    public bool Accepted { get; set; }
+    public long At { get; set; }
 }
 
 [Serializable]

@@ -166,18 +166,18 @@ public sealed class CageService
         if (verb.Equals(OpenWord, StringComparison.OrdinalIgnoreCase) && args.Length == 0)
             return HandleOpen(source);
         if (!verb.Equals(CloseWord, StringComparison.OrdinalIgnoreCase))
-            return LocalTestResult.Fail($"Unrecognized \"cage\" override \"{rest.Trim()}\".");
+            return LocalTestResult.Fail($"Unrecognized \"cage\" override \"{rest.Trim()}\".", code: RefusalCode.Unsupported);
 
         if (!config.Permissions.Cage || !config.CageAcknowledged)
-            return LocalTestResult.Fail("Cage permission is not enabled.", "tried to cage you - Cage is turned off");
+            return LocalTestResult.Fail("Cage permission is not enabled.", "tried to cage you - Cage is turned off", RefusalCode.Permission);
         if (!TryParseClose(args, out var place, out var position, out var cageRadius, out var cageRadiusZ, out var post, out var name))
-            return LocalTestResult.Fail($"Unrecognized \"cage close\" arguments \"{args}\".");
+            return LocalTestResult.Fail($"Unrecognized \"cage close\" arguments \"{args}\".", code: RefusalCode.Unsupported);
         if (!CanEnforce(cageRadius))
-            return LocalTestResult.Fail("Refused: a cage can't be enforced on this game version.", "tried to cage you, but your game version can't hold a cage");
+            return LocalTestResult.Fail("Refused: a cage can't be enforced on this game version.", "tried to cage you, but your game version can't hold a cage", RefusalCode.Unavailable);
 
         var existing = config.ActiveCage;
         if (existing is not null && existing.PairingId != source?.Id)
-            return LocalTestResult.Fail("Refused: you're already held by another Owner's cage.", "tried to cage you, but you're already in another Owner's cage");
+            return LocalTestResult.Fail("Refused: you're already held by another Owner's cage.", "tried to cage you, but you're already in another Owner's cage", RefusalCode.Caged);
 
         var now = DateTime.UtcNow;
         var lockDuration = RestraintLock.FromSeconds(lockSeconds).Duration;
@@ -279,9 +279,9 @@ public sealed class CageService
     {
         var cage = config.ActiveCage;
         if (cage is null)
-            return LocalTestResult.Fail("There's no cage to open.", "tried to open your cage, but you aren't in one");
+            return LocalTestResult.Fail("There's no cage to open.", "tried to open your cage, but you aren't in one", RefusalCode.Other);
         if (cage.PairingId != source?.Id)
-            return LocalTestResult.Fail("Refused: only the Owner who caged you can open it.", "tried to open your cage, but only the Owner who caged you can");
+            return LocalTestResult.Fail("Refused: only the Owner who caged you can open it.", "tried to open your cage, but only the Owner who caged you can", RefusalCode.Caged);
         var wasCaged = IsCaged;
         Open(wasCaged ? $"{cage.OwnerName} opened it" : $"{cage.OwnerName} called it off");
         return wasCaged

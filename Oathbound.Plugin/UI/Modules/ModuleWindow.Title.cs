@@ -39,8 +39,6 @@ public sealed partial class ModuleWindow
     private void DrawTitleModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Heading, "Title Aliases");
-        ImGui.Separator();
         DrawFixedWordRow("titleFixed", new FixedWordInfo("Clear title", ControlWords.ClearTitle,
             "Removes your current title. It can't be renamed, so your Owner always knows it."));
 
@@ -95,11 +93,11 @@ public sealed partial class ModuleWindow
         ImGui.AlignTextToFramePadding();
         ImGui.TextColored(Theme.AccentHover, t.Alias);
         ImGui.SameLine();
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", t.Alias))
         {
             titles.RemoveAt(index);
             config.Save();
-            titleList.Select(null);
+            titleList.Deleted();
             ImGui.PopID();
             return;
         }
@@ -110,7 +108,7 @@ public sealed partial class ModuleWindow
             t.Alias = alias.Trim();
             config.Save();
         }
-        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this title.");
+        IconGlyph.HelpMarker("Short word your Owner sends to apply this title.");
         if (DrawDeferredTextInput("Title text##titleEdit", (t, "text"), t.Text, 64, out var text) && text.Trim().Length > 0)
         {
             t.Text = text.Trim();
@@ -144,7 +142,7 @@ public sealed partial class ModuleWindow
     {
         using var box = Section.Begin("titleAdd", "Add a title alias");
         ImGui.InputText("Alias##newTitle", ref newTitleAlias, 32);
-        IconGlyph.HelpMarker("Short word the Owner types after the trigger phrase to apply this title, e.g. \"command goodgirl\".");
+        IconGlyph.HelpMarker("Short word your Owner sends to apply this title, e.g. \"goodgirl\".");
         ImGui.InputText("Title text##newTitle", ref newTitleText, 64);
         IconGlyph.HelpMarker("The exact title text applied via Honorific.");
         ImGui.Checkbox("Prefix (not suffix)##newTitle", ref newTitleIsPrefix);
@@ -167,8 +165,6 @@ public sealed partial class ModuleWindow
 
     private void DrawTitleQuickSection(bool canSend)
     {
-        IconGlyph.Text(FontAwesomeIcon.Heading, "Title");
-        ImGui.Separator();
         var quick = plugin.Configuration.QuickCommands.Titles;
         DrawCommandRow("titleQuickFixed", canSend, new RowCommand("Clear title", "title clear", FixedActionIds.ClearTitle, "Removes your Sub's title."));
 
@@ -198,7 +194,9 @@ public sealed partial class ModuleWindow
         ImGui.ColorEdit3("Color##newQuickTitle", ref newTitleQuickColor);
         IconGlyph.HelpMarker("Honorific title color - matches the Sub's own Title alias color picker.");
         DrawGlowPicker("newQuickTitle", ref newTitleQuickHasGlow, ref newTitleQuickGlow);
-        OwnerLockOption.Draw("newQuickTitle", ref newTitleQuickLock, gesture: false, ownerLock: true);
+        var lockSettings = new LockSettings(newTitleQuickLock);
+        if (OwnerLockOption.Draw("newQuickTitle", ref lockSettings, LockKind.OwnerLock, LockLayout.Stacked))
+            newTitleQuickLock = lockSettings.Seconds;
         if (newTitleQuickText.Trim().Length > 0)
             DrawTitlePreview(newTitleQuickText.Trim(), newTitleQuickIsPrefix, newTitleQuickColor);
         if (ImGui.Button("Save title##quickTitle") && newTitleQuickText.Trim().Length > 0)

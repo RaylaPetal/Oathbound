@@ -37,7 +37,10 @@
         "receiveKeyId": { "$ref": "catalog-mailbox-key.schema.json#/properties/receiveKeyId" },
         "waitingSnapshotId": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
         "lastConsumedSnapshotId": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
-        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
+        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+        "refreshRequestedAt": { "description": "When the Owner last asked for the latest catalog (a refresh-flagged key publish), or null.", "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+        "senderStatus": { "description": "The latest signed mailbox-status from that side, verbatim, or null if none.", "oneOf": [{ "$ref": "mailbox-status.schema.json" }, { "type": "null" }] },
+        "recipientStatus": { "description": "The latest signed mailbox-status from that side, verbatim, or null if none.", "oneOf": [{ "$ref": "mailbox-status.schema.json" }, { "type": "null" }] }
       }
     },
     "relayActiveDevices": {
@@ -66,7 +69,9 @@
         "receiveKeyId": { "$ref": "rulebook-key.schema.json#/properties/receiveKeyId" },
         "waitingSequence": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
         "lastConsumedSequence": { "oneOf": [{ "$ref": "common.schema.json#/$defs/monotonicSequence" }, { "type": "null" }] },
-        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] }
+        "lastUploadAt": { "oneOf": [{ "$ref": "common.schema.json#/$defs/unixSeconds" }, { "type": "null" }] },
+        "senderStatus": { "description": "The latest signed mailbox-status from that side, verbatim, or null if none.", "oneOf": [{ "$ref": "mailbox-status.schema.json" }, { "type": "null" }] },
+        "recipientStatus": { "description": "The latest signed mailbox-status from that side, verbatim, or null if none.", "oneOf": [{ "$ref": "mailbox-status.schema.json" }, { "type": "null" }] }
       }
     }
   }

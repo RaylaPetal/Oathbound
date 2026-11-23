@@ -3,7 +3,6 @@ using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
-using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using System.Numerics;
@@ -48,7 +47,6 @@ public sealed class FavoritesWindow : Window, IDisposable
             return;
         }
 
-        var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
         var favoritesByCategory = QuickAccessMenu.CategorizedFavorites(plugin.Configuration.QuickCommands);
         var teleportFavorited = plugin.Configuration.QuickCommands.FavoriteFixedActions.Contains(FixedActionIds.Teleport);
 
@@ -58,8 +56,8 @@ public sealed class FavoritesWindow : Window, IDisposable
             return;
         }
 
-        if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "Not paired with a Sub yet - Send is disabled until an Owner-side pairing is active.");
+        if (SendReadiness.For(plugin).BlockedReason is { } reason)
+            Status.Line(StatusKind.Caution, reason);
 
         foreach (var (label, favorites) in favoritesByCategory)
         {
@@ -68,53 +66,37 @@ public sealed class FavoritesWindow : Window, IDisposable
 
             ImGui.Indent();
             foreach (var cmd in favorites)
-                DrawFavoriteRow(cmd, canSend);
+                DrawFavoriteRow(cmd);
             ImGui.Unindent();
         }
 
         if (teleportFavorited)
-            DrawTeleportRow(canSend);
+            DrawTeleportRow();
     }
 
-    private void DrawFavoriteRow(QuickCommand cmd, bool canSend)
+    private void DrawFavoriteRow(QuickCommand cmd)
     {
-        var command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd);
-        var fits = CommandSelector.Fits(command);
+        var spec = new SendSpec($"fav_{cmd.Label}_{cmd.Command}", "Send") { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd) };
         ImGui.BeginGroup();
-        using (ImRaii.Disabled(!canSend || !fits))
-        {
-            if (ImGui.Button($"Send##fav_{cmd.Label}_{cmd.Command}"))
-                plugin.SendCommand(command);
-        }
+        SendButton.Draw(plugin, spec);
         ImGui.SameLine();
         ImGui.TextUnformatted(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label);
         ImGui.EndGroup();
         TutorialService.Anchor(TutorialAnchors.FavoritesRow);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(!fits ? "Command is too long to send." : canSend ? command : "Not paired with a Sub yet.");
+        SendGate.Tooltip(SendGate.Evaluate(plugin, spec));
     }
 
     /// Teleport has no static command text; resolved live via TeleportSendAction.
-    private void DrawTeleportRow(bool canSend)
+    private void DrawTeleportRow()
     {
-        using (ImRaii.Disabled(!canSend))
+        var spec = new SendSpec("favTeleport", "Send")
         {
-            if (ImGui.Button("Send##favTeleport"))
-            {
-                var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
-                if (!success)
-                    Plugin.NotificationManager.AddNotification(new Notification
-                    {
-                        Title = "Oathbound",
-                        Content = error ?? "Teleport failed.",
-                        Type = NotificationType.Warning,
-                        InitialDuration = TimeSpan.FromSeconds(5),
-                    });
-            }
-        }
+            Help = "Teleport your paired Sub to your current position.",
+            Custom = SendNotice.Teleport(plugin),
+        };
+        SendButton.Draw(plugin, spec);
         ImGui.SameLine();
         ImGui.TextUnformatted("Teleport");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canSend ? "Teleport your paired Sub to your current position." : "Not paired with a Sub yet.");
+        SendGate.Tooltip(SendGate.Evaluate(plugin, spec));
     }
 }

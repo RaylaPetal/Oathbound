@@ -61,7 +61,8 @@
         "linked": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/character" } },
         "unlinked": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/character" } },
         "current": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
-        "accepted": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/character" } }
+        "accepted": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/character" } },
+        "features": { "description": "What this client supports; \"receipts\" means it sends and reads apply receipts (constants.json peerMessage.receipts).", "type": "array", "items": { "enum": ["receipts"] }, "uniqueItems": true }
       }
     }
   }

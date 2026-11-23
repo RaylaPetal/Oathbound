@@ -81,6 +81,7 @@ public sealed class PairingService
         if (!pairing.IsPaired) return;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.CatalogDelivery = new();
         pairing.ClearCharacters();
         config.SaveNow();
         PairingEnded?.Invoke();
@@ -126,6 +127,7 @@ public sealed class PairingService
         pairing.PairIdHash = null;
         pairing.Paired = false;
         pairing.Rulebook = new();
+        pairing.CatalogDelivery = new();
         pairing.ClearCharacters();
         config.SaveNow();
         PairingEnded?.Invoke();

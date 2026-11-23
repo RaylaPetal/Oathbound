@@ -21,7 +21,6 @@ public class CollarWindow : Window, IDisposable
 
     public void OpenMainWindow() => IsOpen = true;
 
-    private string? teleportResolveError;
 
     /// Armed by the first click until this time; a second click before it sends.
     private DateTime revertAllConfirmUntil = DateTime.MinValue;
@@ -64,6 +63,12 @@ public class CollarWindow : Window, IDisposable
         TitleBarButtons.Add(new TitleBarButton
         {
             Icon = FontAwesomeIcon.QuestionCircle,
+            Click = _ => plugin.Tutorial.StartOverview(plugin.Configuration.ResolveActiveDirection()),
+            ShowTooltip = () => ImGui.SetTooltip("Tour of Oathbound"),
+        });
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.LifeRing,
             Click = _ => HelpLinks.RequestOpen(),
             ShowTooltip = () => ImGui.SetTooltip("Help & bug reports"),
         });
@@ -103,9 +108,10 @@ public class CollarWindow : Window, IDisposable
         LastPosition = ImGui.GetWindowPos();
         LastSize = ImGui.GetWindowSize();
 
-        // Title-bar buttons aren't ImGui items, so the settings cog's area is reported by position.
+        // Title-bar buttons aren't ImGui items, so the area of the close button and our three buttons (cog among them)
+        // is reported by position.
         var titleBarHeight = ImGui.GetFrameHeight();
-        TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 3f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
+        TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
 
         HelpLinks.Draw(plugin);
         DrawCharacterHeader();
@@ -113,8 +119,10 @@ public class CollarWindow : Window, IDisposable
         ImGui.Spacing();
 
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
+        var rulebookWaiting = plugin.RulebookService.NeedsAttention();
         var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
-            id => id switch { FavoritesNavId => TutorialAnchors.NavFavorites, "achievements" => TutorialAnchors.NavAchievements, _ => null });
+            id => id switch { FavoritesNavId => TutorialAnchors.NavFavorites, "achievements" => TutorialAnchors.NavAchievements, _ => null },
+            id => id == "rulebook" && rulebookWaiting ? ("!", "A rulebook version or an oath offer is waiting for your answer.") : null);
         TutorialService.Anchor(TutorialAnchors.MainNav);
         if (clicked == FavoritesNavId)
             plugin.FavoritesWindow.IsOpen = true;
@@ -145,7 +153,7 @@ public class CollarWindow : Window, IDisposable
 
         var start = ImGui.GetCursorScreenPos();
         var center = start + new Vector2(dot, ImGui.GetTextLineHeight() / 2);
-        ImGui.GetWindowDrawList().AddCircleFilled(center, dot, ImGui.GetColorU32(Theme.Success));
+        ImGui.GetWindowDrawList().AddCircleFilled(center, dot, ImGui.GetColorU32(Theme.Ok));
         ImGui.Dummy(new Vector2(dot * 2, ImGui.GetTextLineHeight()));
         var hovered = ImGui.IsItemHovered();
         ImGui.SameLine(0, spacing);
@@ -271,7 +279,7 @@ public class CollarWindow : Window, IDisposable
         }
         else if (pairedEntries.Count == 1)
         {
-            IconGlyph.WrappedColored(Theme.Success, PairingLabel(pairedEntries[0]));
+            Status.Line(StatusKind.Ok, PairingLabel(pairedEntries[0]));
         }
 
         foreach (var (pairingId, notice) in notices)
@@ -279,7 +287,7 @@ public class CollarWindow : Window, IDisposable
             var pairing = config.FindPairingById(pairingId);
             ImGui.PushID(pairingId.GetHashCode());
             var peerLabel = notice.PeerRole == PluginRole.Owner ? "Your Owner" : "Your Sub";
-            IconGlyph.WrappedColored(Theme.Warning, $"{peerLabel} ({pairing?.PeerName}@{pairing?.PeerWorld}) ended this pairing on their side.");
+            Status.Line(StatusKind.Caution, $"{peerLabel} ({pairing?.PeerName}@{pairing?.PeerWorld}) ended this pairing on their side.");
             if (ImGui.Button("Dismiss##peerUnpairedNotice"))
                 plugin.ChatCommandListener.DismissPeerUnpairedNotice(pairingId);
             ImGui.PopID();
@@ -293,7 +301,7 @@ public class CollarWindow : Window, IDisposable
         if (records.NeedsLinkPrompt && records.Current is { } current)
         {
             ImGui.PushID("linkCharacter");
-            IconGlyph.WrappedColored(Theme.Warning, $"{current} isn't linked to your pairings yet. Link it so they can reach you on this character?");
+            Status.Line(StatusKind.Caution, $"{current} isn't linked to your pairings yet. Link it so they can reach you on this character?");
             if (ImGui.Button("Link")) records.LinkCurrent();
             IconGlyph.HelpMarker("Your pairings learn this character is also you. Your restrictions follow you to every character either way.");
             ImGui.SameLine();
@@ -307,7 +315,7 @@ public class CollarWindow : Window, IDisposable
         {
             ImGui.PushID($"pendingOwnerCharacter_{pairing.Id}_{character}");
             var owner = pairing.ConfirmedCharacters.FirstOrDefault()?.ToString() ?? "Your Owner";
-            IconGlyph.WrappedColored(Theme.Warning, $"{owner} says {character} is also them. Its commands are ignored until you confirm.");
+            Status.Line(StatusKind.Caution, $"{owner} says {character} is also them. Its commands are ignored until you confirm.");
             if (ImGui.Button("Confirm")) records.Confirm(pairing, character);
             IconGlyph.HelpMarker("Commands from that character will count exactly like ones from your Owner. You can remove it again in Settings.");
             ImGui.SameLine();
@@ -322,7 +330,7 @@ public class CollarWindow : Window, IDisposable
         if (config.ActivePairing is not { Direction: PairingDirection.OwnerSide, IsPaired: true } pairing) return;
         if (pairing.PeerRelayState == PeerRelayState.NeedsUpdate)
         {
-            IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName} needs to update Oathbound - nothing you send reaches them until they do.");
+            Status.Line(StatusKind.Caution, $"{pairing.PeerName} needs to update Oathbound - nothing you send reaches them until they do.");
             PeerRelayStatus.DrawAskToUpdate(plugin, pairing);
             return;
         }
@@ -336,9 +344,7 @@ public class CollarWindow : Window, IDisposable
         var presence = target is not null && target.Is(pairing.PresenceName, pairing.PresenceWorld) ? pairing.PresenceAt : 0;
         var seen = Math.Max(presence, target?.LastSeenAt ?? 0);
         if (seen == 0) return $"{pairing.PeerName}@{pairing.PeerWorld}.";
-        var ago = TimeSpan.FromSeconds(Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - seen));
-        var text = ago.TotalMinutes < 1 ? "just now" : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago" : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago" : $"{(int)ago.TotalDays}d ago";
-        return $"On {pairing.PeerName}@{pairing.PeerWorld}, last seen {text}.";
+        return $"On {pairing.PeerName}@{pairing.PeerWorld}, last seen {TimeText.Ago(seen)}.";
     }
 
     /// Owner side: a Sub's safeword, shown until dismissed, for every Sub rather than only the active one.
@@ -347,8 +353,8 @@ public class CollarWindow : Window, IDisposable
         foreach (var pairing in config.Pairings.Where(p => p.IsPaired && p.Direction == PairingDirection.OwnerSide && OwnerSafewordAlerts.IsShowing(p)).ToList())
         {
             ImGui.PushID($"safeword_{pairing.Id}");
-            Layout.TextWithActions($"{pairing.PeerName} used their safeword {OwnerSafewordAlerts.Ago(pairing.LastSafewordAt)}", Layout.ActionsWidth("Dismiss"),
-                t => ImGui.TextColored(Theme.StatusMissing, t));
+            Layout.TextWithActions($"{pairing.PeerName} used their safeword {TimeText.Ago(pairing.LastSafewordAt)}", Layout.ActionsWidth("Dismiss"),
+                t => Status.Inline(StatusKind.Caution, t));
             if (ImGui.Button("Dismiss"))
                 plugin.OwnerSafewordAlerts.Dismiss(pairing);
             ImGui.PopID();
@@ -365,17 +371,17 @@ public class CollarWindow : Window, IDisposable
 
             if (status.State == Relay.CollarStatusReporter.Broken)
             {
-                IconGlyph.WrappedColored(Theme.StatusMissing, $"{pairing.PeerName}'s collar is unlocked");
-                IconGlyph.HelpMarker($"Their collar came off without you unlocking it ({status.StateAt.ToLocalTime():g}). This clears once it's locked again.");
+                Status.Line(StatusKind.Caution, $"{pairing.PeerName}'s collar is unlocked");
+                IconGlyph.HelpMarker($"Their collar came off without you unlocking it ({TimeText.Date(status.StateAt)}). This clears once it's locked again.");
             }
             else if (status.State == Relay.CollarStatusReporter.Unlocked)
             {
-                IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName}'s collar is unlocked");
-                IconGlyph.HelpMarker($"You unlocked it ({status.StateAt.ToLocalTime():g}). This clears once you lock it again.");
+                Status.Line(StatusKind.Caution, $"{pairing.PeerName}'s collar is unlocked");
+                IconGlyph.HelpMarker($"You unlocked it ({TimeText.Date(status.StateAt)}). This clears once you lock it again.");
             }
             else if (OwnerCollarStatusStore.IsStale(status) && status.CheckinAt is { } checkin)
             {
-                IconGlyph.WrappedDisabled($"{pairing.PeerName}'s collar status unknown since {checkin.ToLocalTime():g}");
+                IconGlyph.WrappedDisabled($"{pairing.PeerName}'s collar status unknown since {TimeText.Date(checkin)}");
                 IconGlyph.HelpMarker("Their plugin hasn't checked in for a while. They may just not have played - or their plugin is turned off.");
             }
         }
@@ -406,7 +412,12 @@ public class CollarWindow : Window, IDisposable
         var confirming = DateTime.UtcNow < revertAllConfirmUntil;
         var revertLabel = confirming ? "Click again to revert" : "Revert all";
         var revertWidth = ImGui.CalcTextSize(revertLabel).X + ImGui.GetStyle().FramePadding.X * 2f;
-        var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
+        var revertSpec = new SendSpec("revertAll", "Revert all")
+        {
+            Command = "revert all",
+            Help = "Reverts everything on your active Sub back to nothing: restraints, outfit (back to their normal look), title, leash, animation, toy, and moodles.\nThe collar and the pairing are never touched. Each part only applies if your Sub allows that category.",
+        };
+        var gate = SendGate.Evaluate(plugin, revertSpec);
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var chatWidth = showChat ? size + spacing : 0f;
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - size - spacing - revertWidth - chatWidth);
@@ -415,14 +426,14 @@ public class CollarWindow : Window, IDisposable
             DrawChatIcon(size);
             ImGui.SameLine();
         }
-        using (ImRaii.Disabled(!canSend))
-        using (ImRaii.PushColor(ImGuiCol.Button, Theme.Danger, confirming))
+        using (ImRaii.Disabled(!gate.Enabled))
+        using (ImRaii.PushColor(ImGuiCol.Button, Theme.Destructive, confirming))
         {
-            if (ImGui.Button($"{revertLabel}##revertAll", new Vector2(revertWidth, size)))
+            if (ImGui.Button($"{revertLabel}##revertAll", new Vector2(revertWidth, size)) && gate.Enabled)
             {
                 if (confirming)
                 {
-                    plugin.SendCommand("revert all");
+                    SendGate.Run(plugin, revertSpec);
                     revertAllConfirmUntil = DateTime.MinValue;
                 }
                 else
@@ -432,10 +443,7 @@ public class CollarWindow : Window, IDisposable
             }
         }
         TutorialService.Anchor(TutorialAnchors.MainRevertAll);
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(canSend
-                ? "Reverts everything on your active Sub back to nothing: restraints, outfit (back to their normal look), title, leash, animation, toy, and moodles.\nThe collar and the pairing are never touched. Each part only applies if your Sub allows that category."
-                : "Select an Owner-side pairing first.");
+        SendGate.Tooltip(gate);
         ImGui.SameLine();
 
         if (IconGlyph.Button(icon, new Vector2(size, size)))
@@ -460,18 +468,8 @@ public class CollarWindow : Window, IDisposable
             if (target is { } id) chat.RequestOpen(id);
             else plugin.ChatWindow.IsOpen = !plugin.ChatWindow.IsOpen;
         }
-        var min = ImGui.GetItemRectMin();
-        var max = ImGui.GetItemRectMax();
         if (unread > 0)
-        {
-            var text = unread > 99 ? "99+" : unread.ToString();
-            var textSize = ImGui.CalcTextSize(text);
-            var radius = MathF.Max(textSize.Y * 0.5f, textSize.X * 0.5f + Layout.Scaled(2f));
-            var center = new Vector2(max.X - Layout.Scaled(2f), min.Y + Layout.Scaled(2f));
-            var draw = ImGui.GetWindowDrawList();
-            draw.AddCircleFilled(center, radius, ImGui.GetColorU32(Theme.StatusMissing));
-            draw.AddText(center - textSize / 2, ImGui.GetColorU32(new Vector4(1, 1, 1, 1)), text);
-        }
+            Badge.OnLastItem(unread > 99 ? "99+" : unread.ToString());
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(unread > 0
                 ? $"Chat - {unread} unread message{(unread == 1 ? "" : "s")}"
@@ -489,9 +487,9 @@ public class CollarWindow : Window, IDisposable
         ImGui.Separator();
         var stuck = teleport.Stage == TeleportStage.Stuck;
         IconGlyph.Text(FontAwesomeIcon.Route, "Teleporting to your Owner");
-        IconGlyph.WrappedColored(stuck ? Theme.Warning : Theme.TextMuted, TeleportStageLabel(teleport));
+        IconGlyph.WrappedColored(stuck ? Theme.Caution : Theme.TextMuted, TeleportStageLabel(teleport));
 
-        using (ImRaii.PushColor(ImGuiCol.Button, Theme.Danger))
+        using (ImRaii.PushColor(ImGuiCol.Button, Theme.Destructive))
             if (ImGui.Button("Stop teleport##teleportStop"))
                 teleport.StopBySub("stopped from the header");
         if (ImGui.IsItemHovered())
@@ -510,14 +508,14 @@ public class CollarWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.Lock, caged ? $"Caged: {cage.Name}" : $"Cage waiting: {cage.Name}");
         string detail;
         if (caged)
-            detail = cage.EndsAtUtc is { } end ? $"{cage.OwnerName} holds you here - {RestraintLock.Format(end - DateTime.UtcNow)} left." : $"{cage.OwnerName} holds you here until they open it.";
+            detail = cage.EndsAtUtc is { } end ? $"{cage.OwnerName} holds you here - {TimeText.Left(end)}." : $"{cage.OwnerName} holds you here until they open it.";
         else if (cage.HasClosed)
-            detail = $"You left it. It closes again when you're back at {CagePlaces.Describe(cage.Place)}{(cage.EndsAtUtc is { } left ? $" ({RestraintLock.Format(left - DateTime.UtcNow)} left)" : "")}.";
+            detail = $"You left it. It closes again when you're back at {CagePlaces.Describe(cage.Place)}{(cage.EndsAtUtc is { } left ? $" ({TimeText.Left(left)})" : "")}.";
         else
-            detail = $"{cage.OwnerName} set it at {CagePlaces.Describe(cage.Place)}. It closes when you're there, and waits {RestraintLock.Format(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more.";
+            detail = $"{cage.OwnerName} set it at {CagePlaces.Describe(cage.Place)}. It closes when you're there, and waits {TimeText.Duration(cage.ArmExpiresAtUtc - DateTime.UtcNow)} more.";
         if (caged && plugin.CageService.IsWalkingIn)
             detail += " Walking you in...";
-        IconGlyph.WrappedColored(caged ? Theme.Warning : Theme.TextMuted, detail);
+        IconGlyph.WrappedColored(caged ? Theme.Caution : Theme.TextMuted, detail);
         if (caged)
             IconGlyph.WrappedDisabled("Your permissions are locked until it opens. Panic still opens it.");
     }
@@ -543,29 +541,15 @@ public class CollarWindow : Window, IDisposable
     {
         // No Lifestream/vnavmesh check: the Owner only reports its location.
         IconGlyph.Text(FontAwesomeIcon.MapMarkerAlt, "Teleport");
-        var canSend = DrawOwnerCanSendBanner();
-        using (ImRaii.Disabled(!canSend))
+        if (SendReadiness.For(plugin).BlockedReason is { } reason)
+            Status.Line(StatusKind.Caution, reason);
+        SendButton.Draw(plugin, new SendSpec("headerTeleport", "Teleport Sub to me")
         {
-            if (ImGui.Button("Teleport Sub to me"))
-            {
-                var (success, error) = TeleportSendAction.TryResolveAndSend(plugin);
-                teleportResolveError = success ? null : error;
-            }
-        }
+            Help = "Teleport your paired Sub to your current position.",
+            Custom = SendNotice.Teleport(plugin),
+        });
         ImGui.SameLine();
         DrawFavoriteFixedActionToggle(FixedActionIds.Teleport);
-
-        if (teleportResolveError is not null)
-            IconGlyph.WrappedColored(Theme.Warning, teleportResolveError);
-    }
-
-    /// Duplicated from ModuleWindow for the header's Teleport action. Returns whether Send should be enabled.
-    private bool DrawOwnerCanSendBanner()
-    {
-        var canSend = plugin.Configuration.ActivePairing is { Direction: PairingDirection.OwnerSide };
-        if (!canSend)
-            IconGlyph.WrappedColored(Theme.Warning, "No Sub to send to yet - pick an Owner-side pairing in the header, or pair in Settings. Copy still works.");
-        return canSend;
     }
 
     /// Duplicated from ModuleWindow for the header's Teleport action.

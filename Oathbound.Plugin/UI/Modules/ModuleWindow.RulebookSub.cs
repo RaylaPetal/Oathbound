@@ -16,6 +16,10 @@ namespace Oathbound.Plugin.UI;
 
 public sealed partial class ModuleWindow
 {
+    /// The pending version whose Decline was pressed, waiting for the Sub to confirm with an optional reason.
+    private int? rbDeclineVersion;
+    private string rbDeclineReason = "";
+
     private void DrawSubRulebook(PairingState pairing)
     {
         var config = plugin.Configuration;
@@ -27,15 +31,21 @@ public sealed partial class ModuleWindow
         {
             using (Section.Begin("rbSubSuspended"))
             {
-                IconGlyph.WrappedColored(Theme.Warning, "Your rulebooks are paused because panic was triggered. Nothing fires until you resume.");
+                Status.Line(StatusKind.Caution, "Your rulebooks are paused because panic was triggered. Nothing fires until you resume.");
                 if (ImGui.Button("Resume rulebooks"))
                     service.Resume();
             }
         }
         else if (!config.Permissions.Rulebook || !config.RulebookAcknowledged)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Your Rulebook permission is off, so nothing fires. You can still review what arrives. Turn it on in Settings > Permissions.");
+            Status.Line(StatusKind.Caution, config.RulebookAcknowledged
+                ? "Your Rulebook permission is off, so nothing fires. You can still review what arrives. Turn it on in Settings > Permissions."
+                : "Your Rulebook permission is off, so nothing fires. You can still review what arrives. Read its acknowledgement in Settings > ToS, then turn it on in Settings > Permissions.");
+            DrawOpenPermissionButton(config.RulebookAcknowledged, "rulebookPerm");
         }
+
+        DrawSubRulebookDelivery(pairing, state);
+        service.MarkSeen(pairing);
 
         if (state.Pending is { } pending)
         {
@@ -43,20 +53,40 @@ public sealed partial class ModuleWindow
             {
                 var startsOver = pending.ResetCount > state.AppliedResetCount;
                 if (startsOver)
-                    IconGlyph.WrappedColored(Theme.Warning, $"{pairing.PeerName ?? "Your Owner"} is starting over. Accepting clears your oaths (running ones end with no outcome), your ledger score, switched-off rules and history, and offers every oath again.");
+                    Status.Line(StatusKind.Caution, $"{pairing.PeerName ?? "Your Owner"} is starting over. Accepting clears your oaths (running ones end with no outcome), your points, switched-off rules and history, and offers every oath again.");
                 using (Section.List("rbSubPendingDiff", Scaled(300)))
                     DrawRulebookDiff(startsOver ? null : state.Accepted, pending, startsOver ? new Dictionary<string, OathState>() : state.Oaths, pairing.PeerName ?? "your Owner");
                 using (ImRaii.Disabled(plugin.CageService.IsCaged))
                 {
-                    if (ImGui.Button("Accept"))
-                        service.AcceptPending(pairing);
-                    ImGui.SameLine();
-                    if (ImGui.Button("Decline"))
-                        service.DeclinePending(pairing);
+                    if (rbDeclineVersion != pending.Version)
+                    {
+                        if (ImGui.Button("Accept"))
+                            service.AcceptPending(pairing);
+                        ImGui.SameLine();
+                        if (ImGui.Button("Decline"))
+                        {
+                            rbDeclineVersion = pending.Version;
+                            rbDeclineReason = "";
+                        }
+                    }
+                    else
+                    {
+                        Layout.ItemWidth(Scaled(320));
+                        ImGui.InputTextWithHint("##rbDeclineReason", "Reason for your Owner (optional)", ref rbDeclineReason, CommandComposer.DecisionReasonMaxChars);
+                        if (ImGui.Button($"Decline v{pending.Version}"))
+                        {
+                            service.DeclinePending(pairing, rbDeclineReason);
+                            rbDeclineVersion = null;
+                            rbDeclineReason = "";
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Cancel##rbDecline"))
+                            rbDeclineVersion = null;
+                    }
                 }
                 IconGlyph.HelpMarker(plugin.CageService.IsCaged
                     ? "You can accept or decline this once your cage opens."
-                    : "Declining keeps the version you already accepted running. Your Owner sees that you declined.");
+                    : "Declining keeps the version you already accepted running. Your Owner is told you declined, with your reason if you give one.");
             }
         }
 
@@ -81,7 +111,7 @@ public sealed partial class ModuleWindow
                     DrawRuleSummary(RuleSentence.For(oath), OathText.Lines(oath));
                     if (OathConditions.IsRitual(oath.Condition))
                         IconGlyph.WrappedDisabled("Resets at midnight - today counts as the first day.");
-                    IconGlyph.WrappedDisabled($"Offer ends {Until(s.OfferedUnixSeconds + (long)RulebookService.OfferLifetime.TotalSeconds)}.");
+                    IconGlyph.WrappedDisabled($"Offer ends {TimeText.Until(s.OfferedUnixSeconds + (long)RulebookService.OfferLifetime.TotalSeconds)}.");
                     if (ImGui.Button("I swear"))
                         service.AcceptOath(pairing, id);
                     ImGui.SameLine();
@@ -98,6 +128,21 @@ public sealed partial class ModuleWindow
         DrawSubLadder(pairing, accepted);
         if (ImGui.CollapsingHeader("Your oaths, all rules, the shop and activity###rbSubAll"))
             TwoColumns("rbSubColumns", () => DrawSubRulebookOaths(pairing, state, accepted), () => DrawSubRulebookRules(pairing, state, accepted, service));
+    }
+
+    /// Delivery problems in either direction; each stays until the next item gets through.
+    private static void DrawSubRulebookDelivery(PairingState pairing, RulebookPairingState state)
+    {
+        var owner = pairing.PeerName ?? "Your Owner";
+        if (state.RulebookDelivery.LastFailureCode is { } failure)
+            Status.Line(StatusKind.Error, $"The last rulebook from {owner} couldn't be read: {MailboxStatusText.OwnFailure(failure)}. Their plugin has been told.");
+        if (MailboxStatusText.IsProblem(state.RulebookDelivery.PeerSenderCode))
+            IconGlyph.WrappedDisabled($"{owner}'s plugin {MailboxStatusText.SenderProblem(state.RulebookDelivery.PeerSenderCode, "rulebook")}.");
+        if (state.ReportUploadError is { } error)
+            Status.Line(StatusKind.Error, $"Your activity report to {owner} couldn't be sent: {error} It's tried again by itself.");
+        if (Relay.MailboxStatusService.Evaluate(state.ReportDelivery, state.NextReportSequence) == Relay.MailboxSentState.Rejected)
+            Status.Line(StatusKind.Error, $"{owner}'s plugin couldn't read your last activity report: {MailboxStatusText.Reject(state.ReportDelivery.PeerReceiptCode)}."
+                + (Relay.MailboxStatusService.ShouldResend(state.ReportDelivery, state.NextReportSequence) ? " It's sent again by itself." : ""));
     }
 
     private void DrawSubRulebookOaths(PairingState pairing, RulebookPairingState state, RulebookDocument accepted)
@@ -117,8 +162,8 @@ public sealed partial class ModuleWindow
                 {
                     var due = RitualCalendar.RepeatEnd(s.PeriodStartUnixSeconds, terms.PeriodDays);
                     var done = s.PeriodCount >= terms.TimesPerPeriod;
-                    IconGlyph.WrappedColored(done ? Theme.Success : Theme.Warning,
-                        done ? $"Done for now - next stretch starts {Until(due)}." : $"{s.PeriodCount}/{terms.TimesPerPeriod} done - due {Until(due)}.");
+                    IconGlyph.WrappedColored(done ? Theme.Ok : Theme.Caution,
+                        done ? $"Done for now - next stretch starts {TimeText.Until(due)}." : $"{s.PeriodCount}/{terms.TimesPerPeriod} done - due {TimeText.Until(due)}.");
                 }
                 if (OathConditions.IsRitual(terms.Condition) && s.ScopeEndsUnixSeconds is { } ends)
                 {
@@ -147,7 +192,7 @@ public sealed partial class ModuleWindow
             using (Section.Begin("rbSubLedger", "Recent card draws"))
             {
                 foreach (var d in draws)
-                    IconGlyph.WrappedDisabled($"{Ago(d.At)} - {d.Text}");
+                    IconGlyph.WrappedDisabled($"{TimeText.Ago(d.At)} - {d.Text}");
             }
         }
     }
@@ -200,7 +245,7 @@ public sealed partial class ModuleWindow
                 if (state.Activity.Count == 0)
                     IconGlyph.WrappedDisabled("Nothing yet.");
                 foreach (var e in Enumerable.Reverse(state.Activity).Take(50))
-                    IconGlyph.WrappedDisabled($"{Ago(e.At)} - {e.Text}");
+                    IconGlyph.WrappedDisabled($"{TimeText.Ago(e.At)} - {e.Text}");
             }
             var held = service.Queue.HeldCount(pairing.Id);
             if (held > 0)
@@ -209,7 +254,7 @@ public sealed partial class ModuleWindow
     }
 
     private string? rbPutBackError;
-    private string? rbShopResult;
+    private StatusMessage? rbShopResult;
     private string? rbShopConfirm;
 
     /// Strikes, streak, renewal and the per-condition status (grace time, leave) under an open oath.
@@ -221,7 +266,7 @@ public sealed partial class ModuleWindow
         if (terms.Strikes > 0)
         {
             var left = terms.Strikes - s.StrikesUsed;
-            IconGlyph.WrappedColored(left == 0 ? Theme.Warning : Theme.TextMuted,
+            IconGlyph.WrappedColored(left == 0 ? Theme.Caution : Theme.Muted,
                 left == 0 ? "No strikes left - the next slip breaks it." : $"{left} of {terms.Strikes} strikes left.");
         }
         if (terms.StreakEvery > 0)
@@ -235,22 +280,22 @@ public sealed partial class ModuleWindow
                 if (outfitName is null)
                     IconGlyph.WrappedDisabled($"Nothing to keep on until {pairing.PeerName} puts an outfit on you.");
                 else if (s.GraceEndsUnixSeconds is { } graceEnds)
-                    IconGlyph.WrappedColored(Theme.Warning, $"{outfitName} came off - put it back on {Until(graceEnds)}.");
+                    Status.Line(StatusKind.Caution, $"{outfitName} came off - put it back on {TimeText.Until(graceEnds)}.");
                 else
                     IconGlyph.WrappedDisabled($"Keeping on: {outfitName}.");
                 if (outfitName is not null && ImGui.Button("Put it back on"))
                     rbPutBackError = service.PutBackOn(pairing);
                 if (rbPutBackError is not null)
-                    IconGlyph.WrappedColored(Theme.Warning, rbPutBackError);
+                    Status.Line(StatusKind.Error, rbPutBackError);
                 break;
             }
             case OathCondition.StayAtSide when s.GraceEndsUnixSeconds is { } sideEnds:
-                IconGlyph.WrappedColored(Theme.Warning, $"Too far from {pairing.PeerName} - get back within {terms.RangeYalms:0} yalms {Until(sideEnds)}.");
+                Status.Line(StatusKind.Caution, $"Too far from {pairing.PeerName} - get back within {terms.RangeYalms:0} yalms {TimeText.Until(sideEnds)}.");
                 break;
             case OathCondition.AskBeforeLogoff:
-                IconGlyph.WrappedColored(s.LeaveGrantedUntilUnixSeconds > now ? Theme.Success : Theme.TextMuted,
+                IconGlyph.WrappedColored(s.LeaveGrantedUntilUnixSeconds > now ? Theme.Ok : Theme.Muted,
                     s.LeaveGrantedUntilUnixSeconds > now
-                        ? $"You have leave to log off until {DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime():HH:mm}."
+                        ? $"You have leave to log off until {TimeText.Date(s.LeaveGrantedUntilUnixSeconds)}."
                         : $"Ask {pairing.PeerName} before you log off.");
                 break;
         }
@@ -274,7 +319,7 @@ public sealed partial class ModuleWindow
     {
         var service = plugin.RulebookService;
         using var section = Section.Begin("rbSubShop", "Shop");
-        IconGlyph.WrappedDisabled($"Spend your ledger points ({pairing.Rulebook.LedgerScore}). Only you can buy something here.");
+        IconGlyph.WrappedDisabled($"Spend your points ({pairing.Rulebook.LedgerScore}). Only you can buy something here.");
         foreach (var item in accepted.Shop)
         {
             ImGui.PushID(item.Id);
@@ -289,7 +334,7 @@ public sealed partial class ModuleWindow
                 {
                     if (ImGui.Button("Yes, buy it"))
                     {
-                        rbShopResult = service.Buy(pairing, item.Id) ?? $"Bought \"{item.Name}\".";
+                        rbShopResult = service.Buy(pairing, item.Id) is { } buyError ? StatusMessage.Error(buyError) : StatusMessage.Ok($"Bought \"{item.Name}\".");
                         rbShopConfirm = null;
                     }
                 }
@@ -313,8 +358,7 @@ public sealed partial class ModuleWindow
             ImGui.Separator();
             ImGui.PopID();
         }
-        if (rbShopResult is not null)
-            IconGlyph.WrappedDisabled(rbShopResult);
+        Status.Line(rbShopResult);
     }
 
     /// The Sub's open oaths in the main window's header, a line each with the action it needs, so the Rulebook doesn't
@@ -333,7 +377,7 @@ public sealed partial class ModuleWindow
         ImGui.Separator();
         IconGlyph.Text(FontAwesomeIcon.Scroll, "Your oaths");
         if (config.RulebookSuspended)
-            IconGlyph.WrappedColored(Theme.Warning, "Paused since panic - resume them in the Rulebook.");
+            Status.Line(StatusKind.Caution, "Paused since panic - resume them in the Rulebook.");
         foreach (var (pairing, id, s) in rows)
         {
             var terms = s.Terms!;
@@ -363,7 +407,7 @@ public sealed partial class ModuleWindow
                 if (ImGui.Button("Put it back on"))
                     rbPutBackError = plugin.RulebookService.PutBackOn(pairing);
                 if (rbPutBackError is not null)
-                    IconGlyph.WrappedColored(Theme.Warning, rbPutBackError);
+                    Status.Line(StatusKind.Error, rbPutBackError);
             }
             ImGui.PopID();
         }
@@ -377,20 +421,20 @@ public sealed partial class ModuleWindow
         switch (terms.Condition)
         {
             case OathCondition.KeepItOn when s.GraceEndsUnixSeconds is { } graceEnds:
-                return ($"came off - put it back on {Until(graceEnds)}", Theme.Warning);
+                return ($"came off - put it back on {TimeText.Until(graceEnds)}", Theme.Caution);
             case OathCondition.StayAtSide when s.GraceEndsUnixSeconds is { } sideEnds:
-                return ($"too far - get back {Until(sideEnds)}", Theme.Warning);
+                return ($"too far - get back {TimeText.Until(sideEnds)}", Theme.Caution);
             case OathCondition.AskBeforeLogoff:
                 return s.LeaveGrantedUntilUnixSeconds > now
-                    ? ($"leave to log off until {DateTimeOffset.FromUnixTimeSeconds(s.LeaveGrantedUntilUnixSeconds).ToLocalTime():HH:mm}", Theme.Success)
+                    ? ($"leave to log off until {TimeText.Date(s.LeaveGrantedUntilUnixSeconds)}", Theme.Ok)
                     : ($"ask {pairing.PeerName} before you log off", Theme.TextMuted);
         }
         if (OathConditions.CountsTimes(terms.Condition))
         {
             var due = RitualCalendar.RepeatEnd(s.PeriodStartUnixSeconds, terms.PeriodDays);
             return s.PeriodCount >= terms.TimesPerPeriod
-                ? ("done for now", Theme.Success)
-                : ($"{s.PeriodCount}/{terms.TimesPerPeriod} - due {Until(due)}", Theme.Warning);
+                ? ("done for now", Theme.Ok)
+                : ($"{s.PeriodCount}/{terms.TimesPerPeriod} - due {TimeText.Until(due)}", Theme.Caution);
         }
         return null;
     }
@@ -402,7 +446,7 @@ public sealed partial class ModuleWindow
         if (service.IsPerforming(pairing, oathId))
         {
             var left = service.PerformSecondsLeft is { } seconds ? $" - {Math.Ceiling(seconds):0}s left" : "";
-            IconGlyph.WrappedColored(Theme.Warning, $"Performing{left}. Stay put until it ends.");
+            Status.Line(StatusKind.Caution, $"Performing{left}. Stay put until it ends.");
         }
         else
         {
@@ -417,7 +461,7 @@ public sealed partial class ModuleWindow
             if (blocker is not null && blocker != "Done for now.")
                 IconGlyph.WrappedDisabled(blocker);
             if (rbPerformError is not null)
-                IconGlyph.WrappedColored(Theme.Warning, rbPerformError);
+                Status.Line(StatusKind.Error, rbPerformError);
         }
         ImGui.PopID();
     }
@@ -434,10 +478,10 @@ public sealed partial class ModuleWindow
             {
                 if (id == DrawOnSettings.RuleId && !pending.DrawOn.Any)
                     continue;
-                IconGlyph.WrappedColored(Theme.Success, $"New {rule.Kind.ToLowerInvariant()}: {rule.Name}");
+                Status.Line(StatusKind.Ok, $"New {rule.Kind.ToLowerInvariant()}: {rule.Name}");
             }
             else if (old.Summary != rule.Summary || old.Name != rule.Name)
-                IconGlyph.WrappedColored(Theme.Warning, $"Changed {rule.Kind.ToLowerInvariant()}: {rule.Name}");
+                Status.Line(StatusKind.Caution, $"Changed {rule.Kind.ToLowerInvariant()}: {rule.Name}");
             else
                 continue;
             ImGui.PushID(id);
@@ -455,9 +499,9 @@ public sealed partial class ModuleWindow
             var running = s.Terms!;
             var name = string.IsNullOrWhiteSpace(running.Name) ? "oath" : running.Name;
             if (pending.Oaths.FirstOrDefault(o => o.Id == id) is not { } next)
-                IconGlyph.WrappedColored(Theme.Warning, $"Accepting ends your running oath \"{name}\" with no outcome.");
+                Status.Line(StatusKind.Caution, $"Accepting ends your running oath \"{name}\" with no outcome.");
             else if (!RulebookService.SameTermsIgnoringName(running, next))
-                IconGlyph.WrappedColored(Theme.Warning, $"Accepting switches your running oath \"{name}\" to these terms and restarts it.");
+                Status.Line(StatusKind.Caution, $"Accepting switches your running oath \"{name}\" to these terms and restarts it.");
             else
                 continue;
             any = true;
@@ -472,7 +516,7 @@ public sealed partial class ModuleWindow
         OathStatus.Declined => "Declined.",
         OathStatus.Expired => "Offer expired.",
         OathStatus.Withdrawn => "Withdrawn.",
-        OathStatus.Open => scopeEnds is { } ends ? $"Open, ends {Until(ends)}." : "Open.",
+        OathStatus.Open => scopeEnds is { } ends ? $"Open, ends {TimeText.Until(ends)}." : "Open.",
         OathStatus.Kept => "Kept.",
         OathStatus.Broken => "Broken.",
         OathStatus.Voided => "Voided.",

@@ -14,7 +14,19 @@ import {
   signedFetch,
   useFetcher,
 } from "./helpers";
-import { consume, ecdhPublicJwk, fetchKey, freshPair, publishKey, status, upload, type Pair } from "./mailbox-helpers";
+import {
+  consume,
+  ecdhPublicJwk,
+  fetchKey,
+  freshPair,
+  postStatus,
+  publishKey,
+  publishRefreshKey,
+  signedKeyEnvelope,
+  status,
+  upload,
+  type Pair,
+} from "./mailbox-helpers";
 import { type Channel, consumeItem, fetchRulebookKey, publishRulebookKey, uploadItem } from "./rulebook-helpers";
 import { fetchPictures, pictureId, syncPictures, uploadPicture } from "./picture-helpers";
 import { fetchChatImage, imageId, uploadChatImage } from "./chat-image-helpers";
@@ -219,7 +231,16 @@ async function measureEveryRoute(): Promise<void> {
   await measure("POST /v1/catalog/mailbox/key/fetch", () => fetchKey(m));
   await measure("POST /v1/catalog/mailbox/upload", async () => (await upload(m, key.envelope.receiveKeyId, 1)).r);
   await measure("POST /v1/catalog/mailbox/status", () => status(m));
-  await measure("POST /v1/catalog/mailbox/consume", async () => (await consume(m, 1)).r);
+  let picked!: Awaited<ReturnType<typeof consume>>;
+  await measure("POST /v1/catalog/mailbox/consume", async () => (picked = await consume(m, 1)).r);
+  // A first status row, then a receipt that also releases the held snapshot.
+  await measure("POST /v1/mailbox/status", async () => (await postStatus(m, { role: "sender", code: "not_scanned" })).r);
+  await measure("POST /v1/mailbox/status", async () => (await postStatus(m, { sequence: 1, code: "ok" })).r);
+  // A pickup that replaces a still-held snapshot, then a Get latest that drops a held one.
+  await env.RELAY_DB.prepare(`UPDATE catalog_mailboxes SET last_upload_at = last_upload_at - 3600 WHERE pair_id_hash = ?1`).bind(m.pairIdHash).run();
+  await measure("POST /v1/catalog/mailbox/upload", async () => (await upload(m, picked.nextKey.receiveKeyId, 2)).r);
+  await measure("POST /v1/catalog/mailbox/consume", async () => (await consume(m, 2)).r);
+  await measure("POST /v1/catalog/mailbox/key", async () => publishRefreshKey(m, await signedKeyEnvelope(m)));
 
   const picture = pictureId();
   await measure("POST /v1/pictures/sync", () => syncPictures(m, [picture]));
@@ -241,6 +262,7 @@ async function measureEveryRoute(): Promise<void> {
     await measure("POST /v1/rulebook/key/fetch", () => fetchRulebookKey(p, channel));
     await measure("POST /v1/rulebook/upload", async () => (await uploadItem(p, channel, rbKey.envelope.receiveKeyId, 1)).r);
     await measure("POST /v1/rulebook/consume", async () => (await consumeItem(p, channel, 1)).r);
+    await measure("POST /v1/mailbox/status", async () => (await postStatus(p, { mailbox: channel, sequence: 1, code: "decrypt_failed" })).r);
   }
 
   // Revocations last, since publishing one ends the pair.

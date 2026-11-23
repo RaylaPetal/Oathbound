@@ -23,9 +23,7 @@ public sealed partial class ModuleWindow
     private void DrawMoodlesModule()
     {
         var config = plugin.Configuration;
-        IconGlyph.Text(FontAwesomeIcon.Smile, "Moodles Aliases");
-        ImGui.Separator();
-        IconGlyph.WrappedDisabled("Scan your own registered Moodles statuses in Settings, then pick one to give it an alias.");
+        IconGlyph.WrappedDisabled("Scan your own registered Moodles statuses in the Sync module, then pick one to give it an alias.");
         DrawFixedWordRow("moodleFixed", new FixedWordInfo("Clear moodles", ControlWords.ClearMoodle,
             "Clears your Moodles, except ones attached to something active. It can't be renamed."));
 
@@ -42,9 +40,11 @@ public sealed partial class ModuleWindow
 
         using (Section.Begin("moodleAliases", "Your moodles"))
         {
+            if (statuses.Count == 0)
+                DrawGoToSyncTabPrompt("No scanned Moodles statuses yet.");
             moodleList.Draw("moodles", items, null, item => DrawMoodleStatusDetail(config, moodleAliases, item),
                 () => newMoodleAlias.Trim().Length > 0, _ => newMoodleAlias = "",
-                "No scanned Moodles statuses yet - rescan in Settings (gear icon) first.");
+                "Nothing scanned yet.");
         }
     }
 
@@ -59,12 +59,12 @@ public sealed partial class ModuleWindow
         {
             var stale = moodleAliases[staleIndex];
             ImGui.TextColored(Theme.AccentHover, stale.Alias);
-            IconGlyph.WrappedColored(Theme.Warning, $"{MoodlesTextFormat.StripMarkup(stale.StatusName)} isn't in the latest scan. Rescan, or delete this alias and make it again.");
-            if (ImGui.Button("Delete##staleMoodle"))
+            Status.Line(StatusKind.Caution, $"{MoodlesTextFormat.StripMarkup(stale.StatusName)} isn't in the latest scan. Rescan, or delete this alias and make it again.");
+            if (ConfirmDelete.Button("deleteStaleMoodle", stale.Alias))
             {
                 moodleAliases.RemoveAt(staleIndex);
                 config.Save();
-                moodleList.Select(null);
+                moodleList.Deleted();
             }
             return;
         }
@@ -87,7 +87,7 @@ public sealed partial class ModuleWindow
                 config.Save();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Delete"))
+            if (ConfirmDelete.Button("delete", alias.Alias))
             {
                 moodleAliases.RemoveAt(index);
                 config.Save();
@@ -100,7 +100,7 @@ public sealed partial class ModuleWindow
         Section.SubHeading("Add an alias");
         ItemWidth(160);
         ImGui.InputTextWithHint("##newMoodle", "word", ref newMoodleAlias, 32);
-        IconGlyph.HelpMarker("Short word the Owner types. With Moodles permission enabled, this immediately applies the status.");
+        IconGlyph.HelpMarker("Short word your Owner sends to apply this status. With the Moodles permission on, it applies right away.");
         DrawReservedWordWarning(newMoodleAlias);
         using (ImRaii.Disabled(newMoodleAlias.Trim().Length == 0 || IsReserved(newMoodleAlias)))
         {
@@ -121,21 +121,17 @@ public sealed partial class ModuleWindow
     {
         var quick = plugin.Configuration.QuickCommands.Moodles;
         var own = plugin.Configuration.QuickCommands.CustomMoodles;
-        DrawSectionTitleRow(FontAwesomeIcon.Smile, "Moodles", quick.Count > 0, "moodlesQuick", () =>
-        {
-            quick.Clear();
-            plugin.Configuration.Save();
-        });
-        DrawCommandRow("moodlesQuickFixed", canSend, new RowCommand("Clear moodle", "moodle clear", FixedActionIds.ClearMoodle,
+        DrawCommandRow("moodlesQuickFixed", canSend, new RowCommand("Clear moodles", "moodle clear", FixedActionIds.ClearMoodle,
             "Clears your Sub's moodles, except ones attached to something active."));
         if (quick.Count == 0)
             DrawGoToSyncTabPrompt("No Moodles statuses imported yet.");
 
-        var items = quick.Select((c, i) => new ListDetailItem($"sub:{i}", MoodlesTextFormat.StripMarkup(c.Label), Group: "From your Sub")).ToList();
-        items.AddRange(own.Select((c, i) => new ListDetailItem($"own:{i}", c.Label, Group: "Written by you",
+        var rows = quick.Select((c, i) => new ListDetailItem($"sub:{i}", MoodlesTextFormat.StripMarkup(c.Label), Group: ListGroups.Of(c))).ToList();
+        rows.AddRange(own.Select((c, i) => new ListDetailItem($"own:{i}", c.Label, Group: ListGroups.WrittenByYou,
             Tooltip: c.CustomMoodle?.Description is { Length: > 0 } description ? description : null)));
         if (ownerMoodleList.Selected == NewOwnMoodleKey)
-            items.Add(new ListDetailItem(NewOwnMoodleKey, "New moodle", Group: "Written by you"));
+            rows.Add(new ListDetailItem(NewOwnMoodleKey, "New moodle", Group: ListGroups.WrittenByYou));
+        var items = ListGroups.Finish(rows);
 
         QuickCommand? FindSub(string? key) => key is not null && key.StartsWith("sub:") && int.TryParse(key[4..], out var i) && i < quick.Count ? quick[i] : null;
         QuickCommand? FindOwn(string? key) => key is not null && key != NewOwnMoodleKey && key.StartsWith("own:") && int.TryParse(key[4..], out var i) && i < own.Count ? own[i] : null;
@@ -199,12 +195,12 @@ public sealed partial class ModuleWindow
         ContinueRowOrWrap(StarWidth);
         DrawFavoriteToggle(cmd, id);
         ContinueRowOrWrap(ButtonWidth("Delete"));
-        if (ImGui.Button("Delete"))
+        if (ConfirmDelete.Button("delete", cmd.Label))
         {
             own.Remove(cmd);
             ResetCustomMoodleBuilder();
             plugin.Configuration.Save();
-            ownerMoodleList.Select(null);
+            ownerMoodleList.Deleted();
             ImGui.EndGroup();
             ImGui.PopID();
             return;
@@ -214,10 +210,10 @@ public sealed partial class ModuleWindow
         ImGui.EndGroup();
 
         Section.SubHeading("Send");
-        DrawSendCopyButtons(OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), canSend, id);
+        SendButton.Draw(plugin, new SendSpec(id, "Send") { Command = OwnerMoodleOverride.ForSend(plugin.Configuration, cmd), AnchorQuickSend = true });
         OwnerLockOption.DrawInline(id, cmd, plugin.Configuration);
         ContinueRowOrWrap(ButtonWidth("Take off"));
-        DrawSendCopyButtons(moodle.RemoveCommand(), canSend, id + "_remove", "Take off");
+        SendButton.Draw(plugin, new SendSpec(id + "_remove", "Take off") { Command = moodle.RemoveCommand(), AnchorQuickSend = true });
 
         Section.SubHeading("Edit");
         // The builder's Save and Cancel end the edit; reopen it so the detail pane always shows it.

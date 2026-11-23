@@ -85,7 +85,9 @@ public sealed class AnimationPickerWindow : Window, IDisposable
         var all = plugin.Configuration.GestureMapping.LocalCatalog.Values.ToList();
         if (all.Count == 0)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "No animations scanned. Select Penumbra mods in Settings, rescan, then return here.");
+            Status.Line(StatusKind.Caution, "No animations scanned. Select Penumbra mods and scan them in the Sync module, then return here.");
+            if (ImGui.Button("Go to Sync"))
+                plugin.ModuleWindow.Show("sync");
             return;
         }
 
@@ -162,7 +164,7 @@ public sealed class AnimationPickerWindow : Window, IDisposable
         var all = plugin.Configuration.GestureMapping.ImportedPeerCatalog.Values.ToList();
         if (all.Count == 0)
         {
-            IconGlyph.WrappedColored(Theme.Warning, "No Sub animation library imported. Import the Sub's catalog in Owner controls first.");
+            Status.Line(StatusKind.Caution, "No Sub animation library imported. Import the Sub's catalog in Owner controls first.");
             return;
         }
         var filter = search.Trim();

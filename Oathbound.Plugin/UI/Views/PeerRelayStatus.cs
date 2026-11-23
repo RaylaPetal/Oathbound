@@ -22,8 +22,8 @@ public static class PeerRelayStatus
         var state = pairing.PeerRelayState;
         var color = state switch
         {
-            PeerRelayState.Reachable => Theme.Success,
-            PeerRelayState.NeedsUpdate => Theme.Warning,
+            PeerRelayState.Reachable => Theme.Ok,
+            PeerRelayState.NeedsUpdate => Theme.Caution,
             _ => Theme.TextMuted,
         };
         ImGui.TextColored(color, Describe(pairing));

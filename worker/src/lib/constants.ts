@@ -38,6 +38,12 @@ interface ProtocolConstants {
     pairCharactersCiphertextMaxBytes: number;
   };
   socketAuth: { authTimeoutSeconds: number };
+  mailboxStatus: {
+    recipientCodes: string[];
+    senderCodes: string[];
+    resendableCodes: string[];
+    catalogMailboxRefreshMinIntervalSeconds: number;
+  };
   peerMessage: {
     maxFrameBytes: number;
     maxAgeSeconds: number;
@@ -91,6 +97,10 @@ export const RULEBOOK_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.rulebo
 export const RULEBOOK_REPORT_CIPHERTEXT_MAX_BYTES = PROTOCOL.sizeAndExpiryLimits.rulebookReportCiphertextMaxBytes;
 export const RULEBOOK_MIN_UPLOAD_INTERVAL_SECONDS = PROTOCOL.sizeAndExpiryLimits.rulebookMinUploadIntervalSeconds;
 export const RULEBOOK_REPORT_MIN_UPLOAD_INTERVAL_SECONDS = PROTOCOL.sizeAndExpiryLimits.rulebookReportMinUploadIntervalSeconds;
+
+export const MAILBOX_STATUS_RECIPIENT_CODES: ReadonlySet<string> = new Set(PROTOCOL.mailboxStatus.recipientCodes);
+export const MAILBOX_STATUS_SENDER_CODES: ReadonlySet<string> = new Set(PROTOCOL.mailboxStatus.senderCodes);
+export const CATALOG_MAILBOX_REFRESH_MIN_INTERVAL_SECONDS = PROTOCOL.mailboxStatus.catalogMailboxRefreshMinIntervalSeconds;
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);

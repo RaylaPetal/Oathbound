@@ -19,6 +19,11 @@ public sealed class PeerMessagePlaintext
     [JsonPropertyName("kind")] public string Kind { get; set; } = CommandKind;
     [JsonPropertyName("text")] public string Text { get; set; } = "";
     [JsonPropertyName("character"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] public CharacterRecordEntry? Character { get; set; }
+    /// Owner commands only: asks the Sub's client for an apply receipt. Only ever true or absent on the wire, so an
+    /// older reader that doesn't know it just ignores it.
+    [JsonPropertyName("receipt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? Receipt { get; set; }
+
+    public bool AsksReceipt => Kind == CommandKind && Receipt == true;
 }
 
 /// A chat message once decrypted. Must match protocol/schemas/peer-frame.schema.json#/$defs/chatPlaintext.

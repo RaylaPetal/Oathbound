@@ -79,7 +79,7 @@ public class SettingsWindow : Window, IDisposable
         foreach (var dependency in DependencyStatusService.All)
         {
             var state = status.Get(dependency.Id);
-            var color = state == DependencyState.Ready ? Theme.Success : Theme.StatusMissing;
+            var color = state == DependencyState.Ready ? Theme.Ok : Theme.Error;
 
             var width = ImGui.CalcTextSize(dependency.Name).X + Layout.Scaled(18f);
             if (used > 0f && used + spacing + width <= available)
@@ -166,7 +166,7 @@ public class SettingsWindow : Window, IDisposable
         if (ImGui.BeginTabItem("ToS", TabFlags(requested, SettingsTab.Tos)))
         {
             if (plugin.CageService.IsCaged)
-                IconGlyph.WrappedColored(Theme.Warning, "You're caged, so these stay as they are until the cage opens. Panic still opens it.");
+                Status.Line(StatusKind.Caution, "You're caged, so these stay as they are until the cage opens. Panic still opens it.");
             using (ImRaii.Disabled(plugin.CageService.IsCaged))
             {
                 using (Section.Begin("tosCard"))
@@ -240,7 +240,7 @@ public class SettingsWindow : Window, IDisposable
 
                     ImGui.TableNextColumn();
                     var owns = p.Direction == PairingDirection.OwnerSide;
-                    ImGui.TextColored(owns ? Theme.Accent : Theme.Success, owns ? "Owns" : "Owned by");
+                    ImGui.TextColored(owns ? Theme.Accent : Theme.Ok, owns ? "Owns" : "Owned by");
 
                     ImGui.TableNextColumn();
                     ImGui.TextWrapped($"{p.PeerName}@{p.PeerWorld}");
@@ -270,8 +270,8 @@ public class SettingsWindow : Window, IDisposable
         {
             if (activePairings.FirstOrDefault(p => p.Id == unpairId) is { } target)
             {
-                IconGlyph.WrappedColored(Theme.Danger, $"End your pairing with {target.PeerName}@{target.PeerWorld}? This reverts your current outfit, title, movement lock and restraints the same way panic does, removes your collar if this is the pairing that collared you, and can't be undone. Your other pairings aren't affected.");
-                if (ImGui.Button("Confirm unpair"))
+                Status.Line(StatusKind.Caution, $"End your pairing with {target.PeerName}@{target.PeerWorld}? This reverts your current outfit, title, movement lock and restraints the same way panic does, removes your collar if this is the pairing that collared you, and can't be undone. Your other pairings aren't affected.");
+                if (ConfirmDelete.DestructiveButton("Confirm unpair"))
                 {
                     plugin.PanicHandler.ReleasePairing(target);
                     confirmingUnpairId = null;
@@ -404,7 +404,7 @@ public class SettingsWindow : Window, IDisposable
             "expired" => "Unpaired here; they weren't notified in time.",
             _ => "Unpaired here; they couldn't be notified.",
         };
-        IconGlyph.WrappedColored(delivery == "delivered" ? Theme.Success : Theme.Warning, label);
+        IconGlyph.WrappedColored(delivery == "delivered" ? Theme.Ok : Theme.Caution, label);
     }
 
     private void DrawPairWithSection(PluginConfig config)
@@ -413,7 +413,7 @@ public class SettingsWindow : Window, IDisposable
 
         ImGui.Spacing();
         if (plugin.RelayClient.LastReachable is false)
-            IconGlyph.WrappedColored(Theme.Warning, "Couldn't reach Oathbound's server last time. Pairing and commands need it; panic always works.");
+            Status.Line(StatusKind.Error, "Couldn't reach Oathbound's server last time. Pairing and commands need it; panic always works.");
     }
 
     private void DrawRoleSection(PluginConfig config, bool subLocked)
@@ -431,19 +431,16 @@ public class SettingsWindow : Window, IDisposable
         }
         IconGlyph.HelpMarker("Sub receives commands, Owner sends them, Switch can do both.");
 
-        using (ImRaii.Disabled(subLocked))
+        Layout.ItemWidth(160);
+        if (ImGui.InputText("Trigger phrase", ref triggerPhraseInput, 32))
         {
-            Layout.ItemWidth(160);
-            if (ImGui.InputText("Trigger phrase", ref triggerPhraseInput, 32))
-            {
-                config.TriggerPhrase = triggerPhraseInput;
-                config.Save();
-            }
+            config.TriggerPhrase = triggerPhraseInput;
+            config.Save();
         }
         IconGlyph.HelpMarker("Starts a chat phrase for your Reactions, e.g. \"collar kneel\". Commands from your Owner don't use it - they come through Oathbound directly.");
 
         if (subLocked)
-            IconGlyph.WrappedColored(Theme.TextMuted, "Role and trigger phrase are locked while you hold a Sub-side pairing - unpair it above to change them.");
+            IconGlyph.WrappedColored(Theme.TextMuted, "Your role is locked while you hold a Sub-side pairing - unpair it above to change it.");
     }
 
     /// Fingerprint only - never the key itself.
@@ -457,7 +454,7 @@ public class SettingsWindow : Window, IDisposable
 
         if (!OperatingSystem.IsWindows())
         {
-            IconGlyph.WrappedColored(Theme.Warning, "Running under Wine: the private key is stored without a real OS-backed protection guarantee (Wine's DPAPI does not provide one). Treat a compromised machine as requiring a reset below.");
+            Status.Line(StatusKind.Caution, "Running under Wine: the private key is stored without a real OS-backed protection guarantee (Wine's DPAPI does not provide one). Treat a compromised machine as requiring a reset below.");
         }
 
         var cooldownRemaining = identity.CooldownRemaining;
@@ -467,13 +464,13 @@ public class SettingsWindow : Window, IDisposable
                 confirmingIdentityReset = true;
         }
         if (cooldownRemaining is { } remaining)
-            IconGlyph.WrappedColored(Theme.TextMuted, $"Available again in {(int)remaining.TotalMinutes}m {remaining.Seconds}s.");
+            Status.Line(StatusKind.Muted, $"Available again {TimeText.Until(remaining)}.");
         if (confirmingIdentityReset)
         {
-            IconGlyph.WrappedColored(Theme.Danger, "This ends every pairing on this device and can't be undone. Are you sure?");
+            Status.Line(StatusKind.Caution, "This ends every pairing on this device and can't be undone. Are you sure?");
             using (ImRaii.Disabled(!identity.CanReset))
             {
-                if (ImGui.Button("Confirm reset"))
+                if (ConfirmDelete.DestructiveButton("Confirm reset"))
                 {
                     Plugin.FireAndForget(plugin.PairingService.ResetDeviceIdentityAsync(CancellationToken.None));
                     confirmingIdentityReset = false;
@@ -489,7 +486,7 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Sync, "Mod changes");
         ImGui.Separator();
-        if (ImGuiCheckbox("Redraw my character after a mod change", config.RedrawAfterModChange, out var redraw))
+        if (Layout.WrappedCheckbox("Redraw my character after a mod change", config.RedrawAfterModChange, out var redraw))
         {
             config.RedrawAfterModChange = redraw;
             config.Save();
@@ -501,11 +498,11 @@ public class SettingsWindow : Window, IDisposable
     {
         IconGlyph.Text(FontAwesomeIcon.Tag, "Moodles");
         ImGui.Separator();
-        if (ImGuiCheckbox("Use Oathbound's moodles", config.UseBuiltinMoodles, out var use))
+        if (Layout.WrappedCheckbox("Use Oathbound's moodles", config.UseBuiltinMoodles, out var use))
             plugin.MoodlesCommand.SetUseBuiltinMoodles(use);
         IconGlyph.HelpMarker("Shows Collared, Leashed, Caged, Restrained, Gagged or Blindfolded while that's happening to you. They're never added to your Moodles library. A moodle you picked yourself for your collar, leash or a restraint is used instead, as is one your Owner chose.");
         if (config.UseBuiltinMoodles && plugin.MoodlesIpc.BuiltinProblem is { } problem)
-            IconGlyph.WrappedColored(Theme.Warning, problem);
+            Status.Line(StatusKind.Error, problem);
     }
 
     private static readonly string[] AchievementSoundNames =
@@ -517,7 +514,7 @@ public class SettingsWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.Trophy, "Achievements");
         ImGui.Separator();
         var state = config.Achievements;
-        if (ImGuiCheckbox("Show a popup when I unlock an achievement", state.ShowToasts, out var show))
+        if (Layout.WrappedCheckbox("Show a popup when I unlock an achievement", state.ShowToasts, out var show))
         {
             state.ShowToasts = show;
             config.Save();
@@ -575,7 +572,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("Animations, the leash, restraints and teleport move or hold your character for you.");
 
-        if (ImGuiCheckbox("I understand my character can be moved and held", config.TosAcknowledged, out var newTos))
+        if (Layout.WrappedCheckbox("I understand my character can be moved and held", config.TosAcknowledged, out var newTos))
         {
             config.TosAcknowledged = newTos;
             config.Save();
@@ -590,7 +587,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("A Custom Trigger can make you say any text, in any channel, where other players see it.");
 
-        if (ImGuiCheckbox("I understand my Owner can make me send chat", config.CustomChatAcknowledged, out var newAck))
+        if (Layout.WrappedCheckbox("I understand my Owner can make me send chat", config.CustomChatAcknowledged, out var newAck))
         {
             config.CustomChatAcknowledged = newAck;
             config.Save();
@@ -605,7 +602,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("Your Owner can run a real device connected through Intiface. Commands have a time limit, and your safeword stops every device.");
 
-        if (ImGuiCheckbox("I understand my Owner can control my device, and I've checked Intiface's own safety settings", config.ToyControlAcknowledged, out var newToyAck))
+        if (Layout.WrappedCheckbox("I understand my Owner can control my device, and I've checked Intiface's own safety settings", config.ToyControlAcknowledged, out var newToyAck))
         {
             config.ToyControlAcknowledged = newToyAck;
             config.Save();
@@ -620,7 +617,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("Your device can react by itself to your game - health, hits, emotes, spells - including during combat. Your safeword pauses all triggers.");
 
-        if (ImGuiCheckbox("I understand my device can react on its own", config.ToyTriggersAcknowledged, out var newTriggerAck))
+        if (Layout.WrappedCheckbox("I understand my device can react on its own", config.ToyTriggersAcknowledged, out var newTriggerAck))
         {
             config.ToyTriggersAcknowledged = newTriggerAck;
             config.Save();
@@ -635,7 +632,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("A rulebook you accept runs by itself: when you break an oath, enter a place, or your Owner comes near, its consequences happen without anyone clicking anything. Only categories that don't send chat or move you are allowed, and your safeword pauses it.");
 
-        if (ImGuiCheckbox("I understand a rulebook acts on its own", config.RulebookAcknowledged, out var newAck))
+        if (Layout.WrappedCheckbox("I understand a rulebook acts on its own", config.RulebookAcknowledged, out var newAck))
         {
             config.RulebookAcknowledged = newAck;
             if (!newAck)
@@ -652,7 +649,7 @@ public class SettingsWindow : Window, IDisposable
         ImGui.Separator();
         IconGlyph.WrappedDisabled("Your Owner can put you in a cage they saved. Your character is walked to it and kept inside until its time is up or they open it, including while you're away from the keyboard. While caged you can't leave the area, change any Oathbound permission or acknowledgement, struggle, use a restraint key, take a restraint off, run commands on yourself or stop what your Owner does. Only the categories you allow apply. Panic and unpairing always open the cage.");
 
-        if (ImGuiCheckbox("I understand a cage holds me until it opens", config.CageAcknowledged, out var newAck))
+        if (Layout.WrappedCheckbox("I understand a cage holds me until it opens", config.CageAcknowledged, out var newAck))
         {
             config.CageAcknowledged = newAck;
             if (!newAck)
@@ -660,17 +657,5 @@ public class SettingsWindow : Window, IDisposable
             config.Save();
         }
         IconGlyph.HelpMarker("Needed before the Cage permission can be turned on. Automating your character is against the game's rules - see the README.");
-    }
-
-    /// ImGui.Checkbox never wraps its label, so the label is drawn separately, wrapped.
-    private static bool ImGuiCheckbox(string label, bool value, out bool newValue)
-    {
-        newValue = value;
-        var changed = ImGui.Checkbox($"##{label}", ref newValue);
-        ImGui.SameLine();
-        ImGui.PushTextWrapPos(0f);
-        ImGui.TextUnformatted(label);
-        ImGui.PopTextWrapPos();
-        return changed;
     }
 }

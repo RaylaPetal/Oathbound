@@ -19,15 +19,15 @@ public sealed partial class ModuleWindow
     private void DrawLedgerTab(RulebookDocument draft)
     {
         using var section = Section.Begin("rbLedger", "Milestones");
-        IconGlyph.WrappedDisabled("The ledger is a running score. Oaths and your Award/Penalize buttons move it; a threshold runs something when the score reaches it.");
-        DrawRuleListDetail("rbThresholdList", draft.Thresholds, t => t.Id, t => t.Name, "threshold", RuleText.Threshold, x => DrawThresholdEditor(x),
+        IconGlyph.WrappedDisabled("Points add up as rules run. Oaths and your Award/Penalize buttons move them; a milestone runs something when the points reach it.");
+        DrawRuleListDetail("rbThresholdList", draft.Thresholds, t => t.Id, t => t.Name, "milestone", RuleText.Threshold, x => DrawThresholdEditor(x),
             () =>
             {
                 using var full = ImRaii.Disabled(draft.Thresholds.Count >= RulebookLimits.MaxThresholds);
-                if (ImGui.Button("+ New threshold"))
-                    StartNew(draft.Thresholds, new LedgerThreshold { Name = "Too many demerits", Score = -5, Direction = ThresholdDirection.AtOrBelow, DrawCard = true, ResetTo = 0 }, t => t.Id);
+                if (ImGui.Button("+ New milestone"))
+                    StartNew(draft.Thresholds, new LedgerThreshold { Name = "Too few points", Score = -5, Direction = ThresholdDirection.AtOrBelow, DrawCard = true, ResetTo = 0 }, t => t.Id);
             },
-            "No thresholds yet.");
+            "No milestones yet.");
     }
 
     private const string NewSubNote = "Needs your Sub on this version of Oathbound or newer - an older one refuses the whole rulebook until they update.";
@@ -40,7 +40,7 @@ public sealed partial class ModuleWindow
         {
             if (DrawName(t.Name, out var name)) { t.Name = name; changed = true; }
 
-            ImGui.TextUnformatted("When the score is");
+            ImGui.TextUnformatted("When the points are");
             var direction = (int)t.Direction;
             ItemWidth(130);
             if (ImGui.Combo("##direction", ref direction, ThresholdDirectionNames, ThresholdDirectionNames.Length)) { t.Direction = (ThresholdDirection)direction; changed = true; }
@@ -58,14 +58,14 @@ public sealed partial class ModuleWindow
             if (ImGui.Checkbox($"Also draw a {CardPiles.Word(t.Pile)} card", ref draw)) { t.DrawCard = draw; changed = true; }
             IconGlyph.HelpMarker("At or above draws a reward, at or below draws a punishment.");
             var reset = t.ResetTo is not null;
-            if (ImGui.Checkbox("Then reset the score", ref reset)) { t.ResetTo = reset ? 0 : null; changed = true; }
+            if (ImGui.Checkbox("Then reset the points", ref reset)) { t.ResetTo = reset ? 0 : null; changed = true; }
             if (t.ResetTo is { } to)
             {
                 ImGui.SameLine();
                 ItemWidth(110);
                 if (ImGui.InputInt("to##reset", ref to, 1, 5)) { t.ResetTo = Math.Clamp(to, RulebookLimits.MinLedger, RulebookLimits.MaxLedger); changed = true; }
             }
-            IconGlyph.HelpMarker("Without a reset, it fires once and fires again only after the score has left the threshold and come back.");
+            IconGlyph.HelpMarker("Without a reset, it fires once and fires again only after the points have moved away from the milestone and come back.");
             ImGui.Spacing();
             var cd = t.CooldownSeconds;
             if (DrawCooldown("thresholdCooldown", ref cd, "It won't fire again within this time.")) { t.CooldownSeconds = cd; changed = true; }
@@ -79,7 +79,7 @@ public sealed partial class ModuleWindow
     private static bool DrawLedgerDelta(string id, int value, Action<int> set)
     {
         ItemWidth(110);
-        if (!ImGui.InputInt($"ledger##{id}", ref value, 1, 5))
+        if (!ImGui.InputInt($"points##{id}", ref value, 1, 5))
             return false;
         set(Math.Clamp(value, -RulebookLimits.MaxLedgerChange, RulebookLimits.MaxLedgerChange));
         return true;

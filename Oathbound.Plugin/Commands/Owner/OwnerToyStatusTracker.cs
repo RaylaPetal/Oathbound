@@ -6,36 +6,81 @@ using Oathbound.Plugin.Config;
 
 namespace Oathbound.Plugin.Commands;
 
-/// Owner-side estimate built only from the toy commands this client sent, keyed by pairing. The Sub's device
-/// state never comes back, so the UI says it's an estimate.
+/// Owner-side estimate built only from the toy commands this client sent that the Sub's client didn't refuse, keyed
+/// by pairing. The Sub's device state never comes back, so the UI says it's an estimate.
 public sealed class OwnerToyStatusTracker : IDisposable
 {
     private static readonly Regex ToyCommand = new(@"(?:^|\s)toy\s+(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly PluginConfig config;
-    private readonly Relay.PeerMessenger messenger;
+    private readonly OwnerReceiptTracker receipts;
     private readonly Dictionary<Guid, OwnerToyEstimate> estimates = new();
+    /// The command whose estimate is shown and what was shown before it, so a late refusal can put that back.
+    private readonly Dictionary<Guid, (long Seq, OwnerToyEstimate? Previous)> lastApplied = new();
+    private readonly Dictionary<Guid, CommandMark> marks = new();
 
-    public OwnerToyStatusTracker(PluginConfig config, Relay.PeerMessenger messenger)
+    public OwnerToyStatusTracker(PluginConfig config, OwnerReceiptTracker receipts)
     {
         this.config = config;
-        this.messenger = messenger;
-        messenger.SendResult += OnSendResult;
+        this.receipts = receipts;
+        receipts.CommandOutcome += OnOutcome;
     }
 
     /// Null if none was sent this session.
     public OwnerToyEstimate? ForActivePairing =>
         config.GetActivePairing() is { Direction: PairingDirection.OwnerSide } pairing && estimates.TryGetValue(pairing.Id, out var estimate) ? estimate : null;
 
-    private void OnSendResult(Relay.PeerSendResult result)
-    {
-        if (result.Delivery != Relay.PeerDelivery.Delivered || result.Kind != Relay.PeerMessagePlaintext.CommandKind) return;
-        if (config.FindPairingById(result.PairingId) is not { Direction: PairingDirection.OwnerSide } pairing) return;
-        var match = ToyCommand.Match(result.Text.Trim());
-        if (!match.Success) return;
+    /// The latest toy command's confirmation for the active pairing.
+    public CommandMark? MarkForActivePairing =>
+        config.GetActivePairing() is { Direction: PairingDirection.OwnerSide } pairing ? marks.GetValueOrDefault(pairing.Id) : null;
 
-        if (Parse(match.Groups[1].Value.Trim()) is { } estimate)
-            estimates[pairing.Id] = estimate;
+    private void OnOutcome(CommandOutcome outcome)
+    {
+        if (config.FindPairingById(outcome.PairingId) is not { Direction: PairingDirection.OwnerSide } pairing) return;
+        var match = ToyCommand.Match(outcome.Text.Trim());
+        if (!match.Success) return;
+        var id = pairing.Id;
+
+        switch (outcome.Kind)
+        {
+            case CommandOutcomeKind.Waiting:
+                SetMark(id, new CommandMark(outcome.Seq, CommandConfirmation.Waiting));
+                break;
+            case CommandOutcomeKind.Applied or CommandOutcomeKind.NotConfirmed or CommandOutcomeKind.Legacy when !outcome.Late:
+                if (Parse(match.Groups[1].Value.Trim()) is { } estimate)
+                {
+                    lastApplied[id] = (outcome.Seq, estimates.GetValueOrDefault(id));
+                    estimates[id] = estimate;
+                }
+                SetMark(id, new CommandMark(outcome.Seq, outcome.Kind switch
+                {
+                    CommandOutcomeKind.Applied => CommandConfirmation.Confirmed,
+                    CommandOutcomeKind.NotConfirmed => CommandConfirmation.NotConfirmed,
+                    _ => CommandConfirmation.Legacy,
+                }));
+                break;
+            case CommandOutcomeKind.Applied:
+                if (marks.GetValueOrDefault(id) is { } current && current.Seq == outcome.Seq)
+                    marks[id] = current with { State = CommandConfirmation.Confirmed };
+                break;
+            case CommandOutcomeKind.Refused:
+                if (outcome.Late && lastApplied.GetValueOrDefault(id) is { } applied && applied.Seq == outcome.Seq)
+                {
+                    if (applied.Previous is { } previous)
+                        estimates[id] = previous;
+                    else
+                        estimates.Remove(id);
+                    lastApplied.Remove(id);
+                }
+                SetMark(id, new CommandMark(outcome.Seq, CommandConfirmation.Refused, outcome.Code));
+                break;
+        }
+    }
+
+    private void SetMark(Guid pairingId, CommandMark mark)
+    {
+        if (marks.GetValueOrDefault(pairingId) is not { } current || current.Seq <= mark.Seq)
+            marks[pairingId] = mark;
     }
 
     private static OwnerToyEstimate? Parse(string rest)
@@ -77,7 +122,7 @@ public sealed class OwnerToyStatusTracker : IDisposable
         return null;
     }
 
-    public void Dispose() => messenger.SendResult -= OnSendResult;
+    public void Dispose() => receipts.CommandOutcome -= OnOutcome;
 }
 
 /// EndTicks null = permanent. EndIsExact false = an upper bound (the Sub's default may be shorter).

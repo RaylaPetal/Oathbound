@@ -89,9 +89,18 @@ public class PairingState
     public bool? MailboxReceivePrivateKeyProtected { get; set; }
 
     /// Owner-side display state for the Sync tab. SubLastPublishedUnixSeconds is null when the Sub never published.
+    /// LastMailboxCheckError is the last check's transient problem, cleared by the next good check; LastSyncFailure
+    /// is the last snapshot that couldn't be imported, cleared only by a later import.
     public long LastMailboxCheckOkUnixSeconds { get; set; }
     public string? LastMailboxCheckError { get; set; }
+    public string? LastSyncFailure { get; set; }
+    public long LastSyncFailureUnixSeconds { get; set; }
     public long? SubLastPublishedUnixSeconds { get; set; }
+    /// When the Owner last asked for the latest catalog, from the relay; 0 if never.
+    public long CatalogRefreshRequestedUnixSeconds { get; set; }
+
+    /// Receipts, statuses and the receive key held across a pickup, for the catalog mailbox.
+    public MailboxDeliveryState CatalogDelivery { get; set; } = new();
 
     /// Sub-side change detector, recorded only after a successful upload so a failure leaves the change pending.
     public string? LastPublishedCatalogDigest { get; set; }
@@ -163,6 +172,9 @@ public class PairingState
     }
     /// The peer has published at least one record, so it runs a version that knows about linked characters.
     public bool PeerPublishesCharacters { get; set; }
+    /// Owner side: the Sub's client sends apply receipts (its record says so, or one was accepted), so a missing
+    /// receipt means "not confirmed" rather than "their version doesn't confirm".
+    public bool PeerSendsReceipts { get; set; }
     /// Owner side: my characters the Sub has confirmed, from the Sub's latest record.
     public List<CharacterRef> PeerAcceptedMine { get; set; } = new();
 
@@ -232,6 +244,7 @@ public class PairingState
         PresenceAt = 0;
         LastAppliedPeerRecordSeq = 0;
         PeerPublishesCharacters = false;
+        PeerSendsReceipts = false;
     }
 }
 
@@ -687,7 +700,7 @@ public enum GagLevel
     Light,
 }
 
-/// What a set of cuff rules draws: Arms Cuffed = Wrists, Legs Cuffed = Ankles, Fully Restrain = all three.
+/// What a set of cuff rules draws: Arms Cuffed = Wrists, Legs Cuffed = Ankles, Full Body Cuffed = all three.
 [Flags]
 public enum CuffSet
 {

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { deviceKeyId, genSigningKeyPair, signedFetch } from "./helpers";
-import { consume, freshPair, type Pair, publishKey, upload } from "./mailbox-helpers";
+import { consume, freshPair, type Pair, postStatus, publishKey, publishRefreshKey, signedKeyEnvelope, upload } from "./mailbox-helpers";
 
 describe("catalog mailbox: state on the pair status response", () => {
   const pairStatus = (p: Pair, as: "owner" | "sub" = "owner") =>
@@ -19,6 +19,7 @@ describe("catalog mailbox: state on the pair status response", () => {
     const { envelope: key } = await publishKey(p);
     expect((await pairStatus(p)).json.catalogMailbox).toEqual({
       exists: true, receiveKeyId: key.receiveKeyId, waitingSnapshotId: null, lastConsumedSnapshotId: null, lastUploadAt: null,
+      refreshRequestedAt: null, senderStatus: null, recipientStatus: null,
     });
 
     await upload(p, key.receiveKeyId, 1);
@@ -38,9 +39,27 @@ describe("catalog mailbox: state on the pair status response", () => {
     expect((await pairStatus(p)).json.catalogMailbox).toMatchObject({ waitingSnapshotId: null });
   });
 
+  it("carries each side's latest signed status and the time of the last Get latest", async () => {
+    const p = await freshPair();
+    const { envelope: key } = await publishKey(p);
+    await upload(p, key.receiveKeyId, 1);
+    await consume(p, 1);
+    const receipt = await postStatus(p, { sequence: 1, code: "decrypt_failed" });
+    const sender = await postStatus(p, { role: "sender", code: "key_unverified" });
+    expect((await publishRefreshKey(p, await signedKeyEnvelope(p))).status).toBe(200);
+
+    for (const as of ["owner", "sub"] as const) {
+      const mailbox = (await pairStatus(p, as)).json.catalogMailbox;
+      expect(mailbox.recipientStatus).toEqual(receipt.envelope);
+      expect(mailbox.senderStatus).toEqual(sender.envelope);
+      expect(mailbox.refreshRequestedAt).toBeGreaterThan(0);
+    }
+  });
+
   it("reveals nothing to a device outside the pair", async () => {
     const p = await freshPair();
     await publishKey(p);
+    await postStatus(p, { role: "sender", code: "not_scanned" });
     const outsider = await genSigningKeyPair();
     const outsiderId = await deviceKeyId(outsider.publicKeyJwk);
     const r = await signedFetch(`/v1/pairs/${p.pairIdHash}?epoch=0`, "GET", undefined, outsider.privateKey, outsiderId);

@@ -114,7 +114,7 @@ public sealed class CatalogPictureService
         }
         catch (RelayException ex)
         {
-            Plugin.Log.Information($"Restraint pictures from {pairing.PeerName} not fetched ({ex.Code}); tried again on the next import or Check now.");
+            Plugin.Log.Information($"Restraint pictures from {pairing.PeerName} not fetched ({ex.Code}); tried again on the next import or Get latest.");
         }
         catch (OperationCanceledException)
         {

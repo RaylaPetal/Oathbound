@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/mailbox-status.schema.json",
+  "title": "MailboxStatus",
+  "description": "A short status one member of a pair epoch posts about one mailbox (POST /v1/mailbox/status), signed with that member's device key over JCS of every field but signature. role \"recipient\" is a delivery receipt for item `sequence` (ok, or the step that failed); role \"sender\" says whether the sender can currently send (ok clears an earlier problem). Codes come from a fixed list (constants.json mailboxStatus) and never carry content. Sides: catalog sender=sub, recipient=owner; rulebook sender=owner, recipient=sub; report sender=sub, recipient=owner. The relay keeps the latest status per (pair epoch, mailbox, role) by `at`, and returns it verbatim in the pair status so the other member verifies the signature itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type", "schemaVersion", "pairIdHash", "pairEpoch", "mailbox", "role",
+    "deviceKeyId", "sequence", "code", "at", "signature"
+  ],
+  "properties": {
+    "type": { "const": "mailbox-status" },
+    "schemaVersion": { "const": 1 },
+    "pairIdHash": { "$ref": "common.schema.json#/$defs/pairIdHash" },
+    "pairEpoch": { "$ref": "common.schema.json#/$defs/pairEpoch" },
+    "mailbox": { "enum": ["catalog", "rulebook", "report"] },
+    "role": { "enum": ["sender", "recipient"] },
+    "deviceKeyId": {
+      "$ref": "common.schema.json#/$defs/deviceKeyId",
+      "description": "The posting device; must be the pair epoch's device on `role`'s side of `mailbox`."
+    },
+    "sequence": {
+      "$ref": "common.schema.json#/$defs/monotonicSequence",
+      "description": "The item number the status is about (catalog snapshotId, rulebook version sequence, report sequence), or 0 when it is about no item. A recipient's sequence is never above the mailbox's last consumed item."
+    },
+    "code": { "type": "string" },
+    "at": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+    "signature": { "$ref": "common.schema.json#/$defs/ecdsaSignature" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "role": { "const": "recipient" } } },
+      "then": {
+        "properties": {
+          "code": { "enum": ["ok", "verify_failed", "decrypt_failed", "import_failed", "needs_update", "stale", "key_lost"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "role": { "const": "sender" } } },
+      "then": {
+        "properties": {
+          "code": { "enum": ["ok", "not_scanned", "key_unverified", "too_large", "export_failed", "upload_failed"] }
+        }
+      }
+    }
+  ]
+}

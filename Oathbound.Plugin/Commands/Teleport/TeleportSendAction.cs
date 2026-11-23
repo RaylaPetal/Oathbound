@@ -9,7 +9,7 @@ public static class TeleportSendAction
     {
         if (!TryResolveTarget(out var target, out var error))
             return (false, error);
-        return plugin.SendCommand(plugin.CommandComposer.ComposeTeleport(target)) is { } failed
+        return plugin.SendCommand(plugin.CommandComposer.ComposeTeleport(target)).Failure is { } failed
             ? (false, OwnerSendFeedback.Explain(failed))
             : (true, null);
     }

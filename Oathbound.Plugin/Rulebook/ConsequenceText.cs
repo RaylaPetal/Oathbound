@@ -51,7 +51,7 @@ public static partial class ConsequenceText
                         return CustomMoodle.TryDecode(name, out var custom) ? $"apply moodle {Config.MoodlesTextFormat.StripMarkup(custom.Title)}{(seconds is null ? "" : HeldFor(seconds))}" : text;
                     if (verb.Equals(CustomMoodle.RemoveWord, StringComparison.OrdinalIgnoreCase))
                         return CustomMoodle.TryDecodeId(name, out _) ? "remove a moodle" : $"remove moodle {Unquote(name)}";
-                    return verb.Equals("apply", StringComparison.OrdinalIgnoreCase) ? $"apply moodle {Unquote(name)}{HeldFor(seconds)}" : verb.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "clear moodle" : text;
+                    return verb.Equals("apply", StringComparison.OrdinalIgnoreCase) ? $"apply moodle {Unquote(name)}{HeldFor(seconds)}" : verb.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "clear moodles" : text;
                 }
             case "restraint":
                 return DescribeRestraint(rest, text);
@@ -67,7 +67,7 @@ public static partial class ConsequenceText
                     : text;
             case ConsequenceValidator.LedgerWord:
                 return LedgerCommand.TryParse(rest, out var delta, out var reason)
-                    ? $"{(delta > 0 ? "+" : "")}{delta} ledger" + (reason.Length > 0 ? $" ({reason})" : "")
+                    ? $"{(delta > 0 ? "+" : "")}{delta} {Points(delta)}" + (reason.Length > 0 ? $" ({reason})" : "")
                     : text;
             case "customtrigger":
                 {
@@ -107,6 +107,8 @@ public static partial class ConsequenceText
 
     private static string LockSuffix(RestraintLock restraintLock) =>
         (restraintLock.Duration is { } d ? $", locked for {RestraintLock.Format(d)}" : "") + (restraintLock.Key is not null ? ", with a key" : "");
+
+    public static string Points(int n) => Math.Abs(n) == 1 ? "point" : "points";
 
     private static (string Head, string Tail) Split(string text)
     {
@@ -222,7 +224,7 @@ public static class OathText
         {
             var parts = commands.Select(ConsequenceText.Describe).ToList();
             if (ledger != 0)
-                parts.Add($"{Signed(ledger)} ledger");
+                parts.Add($"{Signed(ledger)} {ConsequenceText.Points(ledger)}");
             return parts.Count == 0 ? "nothing" : string.Join("; ", parts);
         }
 
@@ -236,9 +238,9 @@ public static class OathText
             lines.Add(("Broken", $"At the end, if any {unit} was missed: {broken}"));
             var each = new List<string>();
             if (oath.LedgerPerDone != 0)
-                each.Add($"{Signed(oath.LedgerPerDone)} ledger when done");
+                each.Add($"{Signed(oath.LedgerPerDone)} {ConsequenceText.Points(oath.LedgerPerDone)} when done");
             if (oath.LedgerPerMissed != 0)
-                each.Add($"{Signed(oath.LedgerPerMissed)} ledger for each one missed");
+                each.Add($"{Signed(oath.LedgerPerMissed)} {ConsequenceText.Points(oath.LedgerPerMissed)} for each one missed");
             if (each.Count > 0)
                 lines.Add(("Each time", RuleText.Cap(string.Join(", ", each))));
         }
@@ -248,12 +250,12 @@ public static class OathText
             lines.Add(("Broken", oath.Strikes > 0 ? $"On strike {oath.Strikes + 1}: {broken}" : $"Right away: {broken}"));
         }
         if (oath.Strikes > 0)
-            lines.Add(("Strikes", $"{oath.Strikes} allowed{(oath.LedgerPerStrike != 0 ? $", {Signed(oath.LedgerPerStrike)} ledger each" : "")}"));
+            lines.Add(("Strikes", $"{oath.Strikes} allowed{(oath.LedgerPerStrike != 0 ? $", {Signed(oath.LedgerPerStrike)} {ConsequenceText.Points(oath.LedgerPerStrike)} each" : "")}"));
         if (oath.StreakEvery > 0)
         {
             var bonus = new List<string>();
             if (oath.StreakLedger != 0)
-                bonus.Add($"{Signed(oath.StreakLedger)} ledger");
+                bonus.Add($"{Signed(oath.StreakLedger)} {ConsequenceText.Points(oath.StreakLedger)}");
             if (oath.StreakDrawReward)
                 bonus.Add("draw a reward card");
             var what = OathConditions.IsRitual(oath.Condition) ? $"{Unit(oath)}s done" : "runs kept";
@@ -313,11 +315,11 @@ public static class RuleText
             parts.Add($"draw a {CardPiles.Word(t.Pile)} card");
         var lines = new List<(string, string)>
         {
-            ("When", $"The ledger is {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}"),
+            ("When", $"The points are {(t.Direction == ThresholdDirection.AtOrAbove ? "at or above" : "at or below")} {t.Score}"),
             ("Does", Cap(parts.Count == 0 ? "nothing" : string.Join("; ", parts))),
         };
         if (t.ResetTo is { } to)
-            lines.Add(("Then", $"Reset the ledger to {to}"));
+            lines.Add(("Then", $"Reset the points to {to}"));
         return lines;
     }
 
@@ -353,7 +355,7 @@ public static class RuleText
 
     public static List<(string Label, string Text)> Shop(ShopItem i) =>
     [
-        ("Price", $"{i.Price} ledger points"),
+        ("Price", $"{i.Price} {ConsequenceText.Points(i.Price)}"),
         ("Gives", i.DrawReward ? "Draw a reward card" : Cap(ConsequenceText.Describe(i.Consequence))),
         ("Cooldown", i.CooldownSeconds == 0 ? "None" : RestraintLock.Format(TimeSpan.FromSeconds(i.CooldownSeconds))),
     ];
@@ -398,7 +400,7 @@ public static class RuleText
         foreach (var c in doc.Deck) Add(c.Id, "Card", Name(c.Name, "Card"), Card(c));
         foreach (var p in doc.Places) Add(p.Id, "Place rule", Name(p.Name, "Place rule"), Place(p));
         foreach (var p in doc.Presence) Add(p.Id, "Presence rule", Name(p.Name, "Presence rule"), Presence(p, owner));
-        foreach (var t in doc.Thresholds) Add(t.Id, "Ledger threshold", Name(t.Name, "Threshold"), Threshold(t));
+        foreach (var t in doc.Thresholds) Add(t.Id, "Milestone", Name(t.Name, "Milestone"), Threshold(t));
         foreach (var t in doc.Times) Add(t.Id, "Time rule", Name(t.Name, "Time rule"), Time(t));
         foreach (var i in doc.Shop) Add(i.Id, "Shop item", Name(i.Name, "Shop item"), Shop(i));
         Add(DrawOnSettings.RuleId, "Deck", "Deck draws on events", DrawOn(doc.DrawOn));
