@@ -92,6 +92,12 @@ public sealed class ChatWindow : Window, IDisposable
             windowPos + new Vector2(ImGui.GetWindowWidth(), titleBarHeight));
 
         var conversations = Chat.Conversations();
+        if (conversations.Count == 0 && Chat.ClosedConversations().Count > 0)
+        {
+            Chat.FocusedPairingId = null;
+            Pane("closed", Vector2.Zero, PaneBg, Layout.Scaled(16f), DrawClosedList);
+            return;
+        }
         if (conversations.Count == 0)
         {
             Chat.FocusedPairingId = null;
@@ -161,6 +167,27 @@ public sealed class ChatWindow : Window, IDisposable
         lastMessageCount = -1;
         clearArmedUntil = DateTime.MinValue;
         refocusInput = true;
+    }
+
+    private void CloseConversation(ChatConversation conversation)
+    {
+        Chat.Close(conversation.PairingId);
+        selected = null;
+        Chat.FocusedPairingId = null;
+        if (Chat.Conversations().Count == 0) IsOpen = false;
+    }
+
+    /// Every chat is closed: offer them back.
+    private void DrawClosedList()
+    {
+        ImGui.TextUnformatted("All your chats are closed.");
+        IconGlyph.WrappedDisabled("A chat opens again by itself when a new message arrives. Open one now:");
+        ImGui.Spacing();
+        foreach (var (conversation, _) in Chat.ClosedConversations())
+        {
+            if (ImGui.Button($"{Name(conversation)}##open{conversation.PairingId:N}"))
+                Chat.RequestOpen(conversation.PairingId);
+        }
     }
 
     // ---- partner rail -----------------------------------------------------------------------------------------------
@@ -251,10 +278,37 @@ public sealed class ChatWindow : Window, IDisposable
         draw.AddText(start + new Vector2(textX, top), ImGui.GetColorU32(new Vector4(1, 1, 1, 0.95f)), Name(conversation));
         draw.AddText(ImGui.GetFont(), small, start + new Vector2(textX, top + lineHeight + Layout.Scaled(2f)), ImGui.GetColorU32(Theme.TextMuted), subtitle);
 
+        var closeSize = Layout.Scaled(30f);
+        ImGui.SetCursorScreenPos(start + new Vector2(width - padX - closeSize, (height - closeSize) / 2));
+        if (GhostIcon("closeChat", FontAwesomeIcon.Times, closeSize, Theme.TextMuted, false))
+            CloseConversation(conversation);
+        if (ImGui.IsItemHovered())
+            Tip("Close this chat. It comes back when a new message arrives, or when you open it again. Nothing is deleted.");
+        var trailing = closeSize + Layout.Scaled(4f);
+
+        if (Chat.ClosedConversations() is { Count: > 0 } closed)
+        {
+            var size = Layout.Scaled(30f);
+            ImGui.SetCursorScreenPos(start + new Vector2(width - padX - trailing - size, (height - size) / 2));
+            if (GhostIcon("closedChats", FontAwesomeIcon.FolderOpen, size, Theme.TextMuted, false))
+                ImGui.OpenPopup("closedChatsMenu");
+            if (ImGui.IsItemHovered()) Tip($"Closed chats ({closed.Count})");
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, PopupPadding);
+            var menu = ImGui.BeginPopup("closedChatsMenu");
+            ImGui.PopStyleVar();
+            if (menu)
+            {
+                foreach (var (c, _) in closed)
+                    if (ImGui.Selectable($"{Name(c)}##reopen{c.PairingId:N}")) Chat.RequestOpen(c.PairingId);
+                ImGui.EndPopup();
+            }
+            trailing += size + Layout.Scaled(4f);
+        }
+
         if (conversation.Messages.Count > 0)
         {
             var buttonSize = Layout.Scaled(30f);
-            ImGui.SetCursorScreenPos(start + new Vector2(width - padX - buttonSize, (height - buttonSize) / 2));
+            ImGui.SetCursorScreenPos(start + new Vector2(width - padX - trailing - buttonSize, (height - buttonSize) / 2));
             var armed = DateTime.UtcNow < clearArmedUntil;
             if (GhostIcon("clearChat", FontAwesomeIcon.TrashAlt, buttonSize, armed ? Theme.Destructive : Theme.TextMuted, armed))
             {

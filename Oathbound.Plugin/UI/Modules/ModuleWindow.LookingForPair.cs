@@ -29,6 +29,14 @@ public sealed partial class ModuleWindow
     private bool lfpRulesChecked;
     private string lfpCodeInput = "";
     private string? lfpTab;
+    private float? lfpProfileContentHeight;
+    /// The profile shown full size in the viewer, and what it was opened from (its actions depend on that).
+    private (LfpProfileFields Fields, string? Picture, LfpProfileWire? Profile, LfpMatchState? Match, string Context)? lfpViewing;
+    private bool lfpViewerOpening;
+
+    /// protocol/constants.json allows 1000; a card shows this much and the viewer the rest.
+    private const int LfpBioPreviewChars = 160;
+    private const int LfpBioPreviewLines = 3;
 
     private LookingForPairService Lfp => plugin.LookingForPair;
 
@@ -47,22 +55,24 @@ public sealed partial class ModuleWindow
         if (Lfp.LastError is { } error) Status.Line(StatusKind.Error, error);
         else if (Lfp.LastNotice is { } notice) Status.Line(StatusKind.Ok, notice);
 
-        using (Section.Begin("lfpTabs"))
-        {
-            if (!ImGui.BeginTabBar("lfpTabBar")) return;
-            LfpTab("Profile", "profile", () => DrawLfpProfile(state));
-            LfpTab("Browse", "browse", DrawLfpBrowse);
-            var unseen = Lfp.UnseenMatches;
-            LfpTab(unseen > 0 ? $"Matches ({unseen} new)###lfpMatches" : "Matches###lfpMatches", "matches", () => DrawLfpMatches(state));
-            LfpTab("Liked", "liked", DrawLfpLiked);
-            LfpTab("Blocked", "blocked", DrawLfpBlocked);
-            ImGui.EndTabBar();
-        }
+        // Not inside a Section: those size to their content, which would collapse the Profile tab's fill-the-window layout.
+        if (!ImGui.BeginTabBar("lfpTabBar")) return;
+        LfpTab("Profile", "profile", () => DrawLfpProfile(state));
+        LfpTab("Browse", "browse", DrawLfpBrowse);
+        var unseen = Lfp.UnseenMatches;
+        LfpTab(unseen > 0 ? $"Matches ({unseen} new)###lfpMatches" : "Matches###lfpMatches", "matches", () => DrawLfpMatches(state));
+        LfpTab("Liked", "liked", DrawLfpLiked);
+        LfpTab("Blocked", "blocked", DrawLfpBlocked);
+        ImGui.EndTabBar();
+        DrawLfpViewer();
     }
 
     private void LfpTab(string label, string id, Action draw)
     {
-        if (!ImGui.BeginTabItem(label)) return;
+        var open = ImGui.BeginTabItem(label);
+        // The tour's "lfpTabs" step points at the tab row; the first tab stands in for it.
+        if (id == "profile") TutorialService.Anchor(TutorialAnchors.Section("lfpTabs"));
+        if (!open) return;
         if (lfpTab != id)
         {
             lfpTab = id;
@@ -107,44 +117,58 @@ public sealed partial class ModuleWindow
         }
         var draft = lfpDraft;
 
-        using (Section.Begin("lfpProfileStatus"))
+        // The save bar sits right under the form, and only sticks to the bottom edge when the window is too short to
+        // show everything: the scroll area is as tall as last frame's content, capped at the room above the bar.
+        var footer = ImGui.GetFrameHeight() + ImGui.GetStyle().ItemSpacing.Y * 3 + Layout.Scaled(2f);
+        var room = ImGui.GetContentRegionAvail().Y - footer;
+        var height = lfpProfileContentHeight is { } measured ? Math.Min(measured, room) : room;
+        using (var scroll = ImRaii.Child("lfpProfileScroll", new Vector2(0, Math.Max(height, Layout.Scaled(60f)))))
         {
-            if (!state.Published)
+            if (scroll)
             {
-                Status.Line(StatusKind.Info, "You don't have a profile yet. Fill it in and save to be found.");
-            }
-            else
-            {
-                var listed = Lfp.OwnProfile?.Listed ?? true;
-                var where = state.Hidden ? "Hidden - nobody can see it." : !listed ? "Not listed - it hasn't been refreshed in 60 days." : state.Visibility == "public" ? "Public - listed in Browse." : "Private - only people with your code can see it.";
-                Status.Line(state.Hidden || !listed ? StatusKind.Caution : StatusKind.Ok, where);
-                if (state.ProfileCode is { } code)
-                {
-                    var formatted = code.Length == 10 ? $"{code[..5]}-{code[5..]}" : code;
-                    ImGui.TextUnformatted("Your profile code:");
-                    ImGui.SameLine();
-                    ImGui.TextColored(Theme.Accent, formatted);
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton("Copy##lfpCode")) ImGui.SetClipboardText(formatted);
-                    ImGui.SameLine();
-                    using (ImRaii.Disabled(Lfp.Busy))
-                        if (ImGui.SmallButton("New code##lfpNewCode")) Lfp.NewCode();
-                    IconGlyph.HelpMarker("Anyone you give this code to can see your profile and like it, even when it's private. A new code stops the old one working.");
-                }
+                DrawLfpProfileStatus(state);
+                TwoColumns("lfpProfileColumns", () => DrawLfpPictureColumn(state, draft), () => DrawLfpForm(draft));
+                DrawLfpProfileMore(state);
+                lfpProfileContentHeight = ImGui.GetCursorPosY();
             }
         }
+        DrawLfpSaveBar(state, draft);
+    }
 
+    private void DrawLfpProfileStatus(LookingForPairState state)
+    {
+        if (!state.Published)
+        {
+            Status.Line(StatusKind.Info, "You don't have a profile yet. Fill it in, then press Create profile at the bottom.");
+            return;
+        }
+        var listed = Lfp.OwnProfile?.Listed ?? true;
+        var where = state.Hidden ? "Hidden - nobody can see it." : !listed ? "Not listed - it hasn't been refreshed in 60 days." : state.Visibility == "public" ? "Public - listed in Browse." : "Private - only people with your code can see it.";
+        Status.Line(state.Hidden || !listed ? StatusKind.Caution : StatusKind.Ok, where);
+        if (state.ProfileCode is not { } code) return;
+        var formatted = code.Length == 10 ? $"{code[..5]}-{code[5..]}" : code;
+        ImGui.TextUnformatted("Your profile code:");
+        ImGui.SameLine();
+        ImGui.TextColored(Theme.Accent, formatted);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Copy##lfpCode")) ImGui.SetClipboardText(formatted);
+        ImGui.SameLine();
+        using (ImRaii.Disabled(Lfp.Busy))
+            if (ImGui.SmallButton("New code##lfpNewCode")) Lfp.NewCode();
+        IconGlyph.HelpMarker("Anyone you give this code to can see your profile and like it, even when it's private. A new code stops the old one working.");
+    }
+
+    /// The picture with its buttons, then the card as others see it (the saved version).
+    private void DrawLfpPictureColumn(LookingForPairState state, LfpProfileFields draft)
+    {
         using (Section.Begin("lfpPicture", "Profile picture"))
         {
-            var size = Layout.Scaled(112f);
+            var size = Layout.Scaled(120f);
             if (Lfp.OwnPicturePath is { } path) LfpImage(path, size);
             else LfpPlaceholder(draft.DisplayName.Length > 0 ? draft.DisplayName : "?", size);
-            ImGui.SameLine();
-            ImGui.BeginGroup();
-            IconGlyph.WrappedDisabled("Optional. Shown on your profile in Browse, code lookups and your matches. It's shrunk to 512 px, and everyone who can see your profile can see it - no character name, nothing sexual.");
             using (ImRaii.Disabled(Lfp.Busy))
             {
-                if (ImGui.Button(Lfp.OwnPicturePath is null ? "Upload a picture...##lfpPic" : "Change picture...##lfpPic"))
+                if (ImGui.Button(Lfp.OwnPicturePath is null ? "Upload a picture...##lfpPic" : "Change...##lfpPic"))
                     plugin.FileDialogManager.OpenFileDialog("Profile picture", "Pictures{.png,.jpg,.jpeg}", (ok, picked) =>
                     {
                         if (ok) Lfp.SetPicture(picked);
@@ -155,103 +179,149 @@ public sealed partial class ModuleWindow
                     if (ImGui.Button("Remove##lfpPicRemove")) Lfp.RemovePicture();
                 }
             }
-            if (!state.Published && Lfp.OwnPicturePath is not null)
-                ImGui.TextColored(Theme.TextMuted, "Uploaded when you create your profile.");
-            ImGui.EndGroup();
+            IconGlyph.WrappedDisabled(!state.Published && Lfp.OwnPicturePath is not null
+                ? "Uploaded when you create your profile."
+                : "Optional, shrunk to 512 px. Everyone who can see your profile sees it - no character name, nothing sexual.");
         }
 
-        using (Section.Begin("lfpProfileEditor", "Your profile"))
+        if (!state.Published) return;
+        using (Section.Begin("lfpPreview", "How others see you"))
         {
-            IconGlyph.WrappedDisabled("Don't put your character's name or world here - you can share it with a match later, in your chat.");
-            var name = draft.DisplayName;
-            Layout.ItemWidth(240);
-            if (ImGui.InputTextWithHint("Display name##lfpName", "2-32 characters", ref name, 128)) draft.DisplayName = name;
-            var pronouns = draft.Pronouns ?? "";
-            Layout.ItemWidth(240);
-            if (ImGui.InputTextWithHint("Pronouns (optional)##lfpPronouns", "she/her", ref pronouns, 96)) draft.Pronouns = pronouns;
-            draft.Race = LfpCombo("Race##lfpRace", LookingForPairService.Races, LookingForPairService.RaceNames, draft.Race, null)!;
-            draft.Gender = LfpCombo("Gender##lfpGender", LookingForPairService.Genders, LookingForPairService.GenderNames, draft.Gender, null)!;
-            draft.Role = LfpCombo("I am##lfpRole", LookingForPairService.Roles, LookingForPairService.RoleNames, draft.Role, null)!;
-            draft.Seeking = LfpCombo("Looking for##lfpSeeking", LookingForPairService.Seeking, LookingForPairService.SeekingNames, draft.Seeking, null)!;
-            draft.DataCenter = LfpCombo("Data center##lfpDc", LookingForPairService.DataCenters, LookingForPairService.DataCenterNames, draft.DataCenter, "Any / not saying");
-            var bio = draft.Bio;
-            if (ImGui.InputTextMultiline("##lfpBio", ref bio, 4000, new Vector2(-1, Layout.Scaled(110f)))) draft.Bio = bio;
-            var bioChars = bio.Trim().EnumerateRunes().Count();
-            ImGui.TextColored(bioChars > 1000 ? Theme.Error : Theme.TextMuted, $"Bio: {bioChars}/1000");
-
-            if (ImGui.RadioButton("Public##lfpVis", lfpDraftVisibility == "public")) lfpDraftVisibility = "public";
+            var size = Layout.Scaled(56f);
+            if (Lfp.OwnProfile?.Picture is not null && Lfp.OwnPicturePath is { } own) LfpImage(own, size);
+            else LfpPlaceholder(state.Fields.DisplayName, size);
             ImGui.SameLine();
-            if (ImGui.RadioButton("Private (code only)##lfpVis", lfpDraftVisibility == "private")) lfpDraftVisibility = "private";
-            IconGlyph.HelpMarker("Public profiles are listed in Browse. A private one is only seen by people you give your profile code to.");
-            Layout.WrappedCheckbox("Hide my profile for now##lfpHidden", ref lfpDraftHidden);
-
-            var problem = LookingForPairService.Validate(draft);
-            if (problem is not null && draft.DisplayName.Length > 0) Status.Line(StatusKind.Caution, problem);
-            using (ImRaii.Disabled(Lfp.Busy || problem is not null))
-            {
-                if (ImGui.Button(state.Published ? "Save changes##lfpSave" : "Create profile##lfpSave"))
-                    Lfp.SaveProfile(draft, lfpDraftVisibility, lfpDraftHidden);
-            }
-            if (state.Published)
-            {
-                ImGui.SameLine();
-                if (ImGui.Button("Undo edits##lfpUndo")) lfpDraft = null;
-            }
-        }
-
-        if (state.Published)
-            using (Section.Begin("lfpPreview", "How others see you"))
-            {
-                var picture = Lfp.OwnProfile?.Picture;
-                var size = Layout.Scaled(72f);
-                if (picture is not null && Lfp.OwnPicturePath is { } own) LfpImage(own, size);
-                else LfpPlaceholder(state.Fields.DisplayName, size);
-                ImGui.SameLine();
-                ImGui.BeginGroup();
-                DrawLfpSummaryText(state.Fields, null);
-                ImGui.EndGroup();
-                if (state.Fields.Bio.Length > 0) ImGui.TextWrapped(state.Fields.Bio);
-            }
-
-        using (Section.Begin("lfpProfileSettings", "Settings"))
-        {
-            var show = state.ShowPictures;
-            if (Layout.WrappedCheckbox("Show profile pictures##lfpShowPics", ref show))
-            {
-                state.ShowPictures = show;
-                plugin.Configuration.Save();
-            }
-            if (state.Published && ConfirmDelete.Button("lfpDelete", "your profile", "Delete profile",
-                    "Your profile, picture and pending likes are removed from the relay. Matches and their chats stay."))
-                Lfp.DeleteProfile();
-            if (state.Published) ImGui.SameLine();
-            if (ImGui.Button("Withdraw 18+ confirmation##lfpWithdraw")) ImGui.OpenPopup("lfpWithdrawConfirm");
-            if (ImGui.BeginPopup("lfpWithdrawConfirm"))
-            {
-                ImGui.TextUnformatted("Withdraw your confirmation? Your profile is deleted.");
-                if (ConfirmDelete.DestructiveButton("Withdraw"))
-                {
-                    Lfp.WithdrawAttestation();
-                    lfpAdultChecked = lfpRulesChecked = false;
-                    lfpDraft = null;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.EndPopup();
-            }
+            ImGui.BeginGroup();
+            DrawLfpSummaryText(state.Fields, null);
+            ImGui.EndGroup();
+            if (state.Fields.Bio.Length > 0) ImGui.TextWrapped(state.Fields.Bio);
         }
     }
 
-    private static string? LfpCombo(string label, string[] ids, string[] names, string? current, string? noneLabel)
+    private void DrawLfpForm(LfpProfileFields draft)
     {
-        Layout.ItemWidth(240);
+        using var section = Section.Begin("lfpProfileEditor", "Your profile");
+        IconGlyph.WrappedDisabled("Don't put your character's name or world here - you can share it with a match later, in the chat.");
+
+        if (ImGui.BeginTable("lfpFields", 2, ImGuiTableFlags.SizingStretchSame))
+        {
+            LfpCell("Display name", () =>
+            {
+                var name = draft.DisplayName;
+                if (ImGui.InputTextWithHint("##lfpName", "2-32 characters", ref name, 128)) draft.DisplayName = name;
+            });
+            LfpCell("Pronouns (optional)", () =>
+            {
+                var pronouns = draft.Pronouns ?? "";
+                if (ImGui.InputTextWithHint("##lfpPronouns", "she/her", ref pronouns, 96)) draft.Pronouns = pronouns;
+            });
+            LfpCell("Race", () => draft.Race = LfpPick("##lfpRace", LookingForPairService.Races, LookingForPairService.RaceNames, draft.Race, null)!);
+            LfpCell("Gender", () => draft.Gender = LfpPick("##lfpGender", LookingForPairService.Genders, LookingForPairService.GenderNames, draft.Gender, null)!);
+            LfpCell("I am", () => draft.Role = LfpPick("##lfpRole", LookingForPairService.Roles, LookingForPairService.RoleNames, draft.Role, null)!);
+            LfpCell("Looking for", () => draft.Seeking = LfpPick("##lfpSeeking", LookingForPairService.Seeking, LookingForPairService.SeekingNames, draft.Seeking, null)!);
+            LfpCell("Data center", () => draft.DataCenter = LfpPick("##lfpDc", LookingForPairService.DataCenters, LookingForPairService.DataCenterNames, draft.DataCenter, "Any / not saying"));
+            ImGui.EndTable();
+        }
+
+        var bio = draft.Bio;
+        var bioChars = bio.Trim().EnumerateRunes().Count();
+        ImGui.TextColored(Theme.TextMuted, "Bio");
+        ImGui.SameLine();
+        ImGui.TextColored(bioChars > 1000 ? Theme.Error : Theme.TextMuted, $"({bioChars}/1000)");
+        if (ImGui.InputTextMultiline("##lfpBio", ref bio, 4000, new Vector2(-1, Layout.Scaled(84f)))) draft.Bio = bio;
+
+        ImGui.TextColored(Theme.TextMuted, "Who can see it");
+        if (ImGui.RadioButton("Public##lfpVis", lfpDraftVisibility == "public")) lfpDraftVisibility = "public";
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Private (code only)##lfpVis", lfpDraftVisibility == "private")) lfpDraftVisibility = "private";
+        IconGlyph.HelpMarker("Public profiles are listed in Browse. A private one is only seen by people you give your profile code to.");
+        Layout.WrappedCheckbox("Hide my profile for now##lfpHidden", ref lfpDraftHidden);
+    }
+
+    /// One labelled field in the two-column form table, the label above it.
+    private static void LfpCell(string label, Action field)
+    {
+        ImGui.TableNextColumn();
+        ImGui.TextColored(Theme.TextMuted, label);
+        ImGui.SetNextItemWidth(-1);
+        field();
+    }
+
+    private static string? LfpPick(string id, string[] ids, string[] names, string? current, string? noneLabel)
+    {
         var preview = current is null ? noneLabel ?? "" : LookingForPairService.NameOf(ids, names, current);
-        if (!ImGui.BeginCombo(label, preview)) return current;
+        if (!ImGui.BeginCombo(id, preview)) return current;
         var picked = current;
         if (noneLabel is not null && ImGui.Selectable(noneLabel, current is null)) picked = null;
         for (var i = 0; i < ids.Length; i++)
             if (ImGui.Selectable(names[i], ids[i] == current)) picked = ids[i];
         ImGui.EndCombo();
         return picked;
+    }
+
+    /// Create or Save, always visible, with whatever stops it or whether there's anything to save.
+    private void DrawLfpSaveBar(LookingForPairState state, LfpProfileFields draft)
+    {
+        ImGui.Separator();
+        var problem = LookingForPairService.Validate(draft);
+        var dirty = !state.Published || LfpChanged(state, draft);
+        using (ImRaii.Disabled(Lfp.Busy || problem is not null || !dirty))
+        using (Theme.PushPrimaryButton())
+        {
+            if (ImGui.Button(Lfp.Busy ? "Saving...##lfpSave" : state.Published ? "Save changes##lfpSave" : "Create profile##lfpSave"))
+                Lfp.SaveProfile(draft, lfpDraftVisibility, lfpDraftHidden);
+        }
+        if (state.Published && dirty)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Undo edits##lfpUndo")) lfpDraft = null;
+        }
+        ImGui.SameLine();
+        if (problem is not null)
+            Status.Inline(StatusKind.Caution, draft.DisplayName.Trim().Length == 0 ? "Add a display name to continue." : problem);
+        else if (state.Published && dirty)
+            Status.Inline(StatusKind.Info, "Unsaved changes.");
+        else if (state.Published)
+            ImGui.TextColored(Theme.TextMuted, "All saved.");
+    }
+
+    private bool LfpChanged(LookingForPairState state, LfpProfileFields draft)
+    {
+        var saved = state.Fields;
+        return lfpDraftVisibility != state.Visibility || lfpDraftHidden != state.Hidden
+            || draft.DisplayName.Trim() != saved.DisplayName.Trim() || (draft.Pronouns ?? "").Trim() != (saved.Pronouns ?? "").Trim()
+            || draft.Race != saved.Race || draft.Gender != saved.Gender || draft.Role != saved.Role || draft.Seeking != saved.Seeking
+            || draft.DataCenter != saved.DataCenter || draft.Bio.Trim() != saved.Bio.Trim();
+    }
+
+    /// The rarely used settings, folded away so the form stays short.
+    private void DrawLfpProfileMore(LookingForPairState state)
+    {
+        ImGui.Spacing();
+        if (!ImGui.CollapsingHeader("More##lfpMore")) return;
+        var show = state.ShowPictures;
+        if (Layout.WrappedCheckbox("Show other people's profile pictures##lfpShowPics", ref show))
+        {
+            state.ShowPictures = show;
+            plugin.Configuration.Save();
+        }
+        if (state.Published && ConfirmDelete.Button("lfpDelete", "your profile", "Delete profile",
+                "Your profile, picture and pending likes are removed from the relay. Matches and their chats stay."))
+            Lfp.DeleteProfile();
+        if (state.Published) ImGui.SameLine();
+        if (ImGui.Button("Withdraw 18+ confirmation##lfpWithdraw")) ImGui.OpenPopup("lfpWithdrawConfirm");
+        if (ImGui.BeginPopup("lfpWithdrawConfirm"))
+        {
+            ImGui.TextUnformatted("Withdraw your confirmation? Your profile is deleted.");
+            if (ConfirmDelete.DestructiveButton("Withdraw"))
+            {
+                Lfp.WithdrawAttestation();
+                lfpAdultChecked = lfpRulesChecked = false;
+                lfpDraft = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
     }
 
     // ---- browse ------------------------------------------------------------------------------------------------------
@@ -329,7 +399,10 @@ public sealed partial class ModuleWindow
         using var id = ImRaii.PushId($"{context}{profile.ProfileId}");
         using (LfpItem())
         {
-            DrawLfpSummary(profile.Fields.ToFields(), profile.Picture, null);
+            var fields = profile.Fields.ToFields();
+            if (DrawLfpSummary(fields, profile.Picture, null)) ViewLfp(fields, profile.Picture, profile, null, context);
+            if (ImGui.Button("View profile")) ViewLfp(fields, profile.Picture, profile, null, context);
+            ImGui.SameLine();
             using (ImRaii.Disabled(Lfp.Busy))
             {
                 if (ImGui.Button("Like")) Lfp.Like(profile);
@@ -354,17 +427,142 @@ public sealed partial class ModuleWindow
         }
     }
 
-    /// Picture, name, pronouns, what they are and seek, and the bio.
-    private void DrawLfpSummary(LfpProfileFields f, string? picture, string? extraLine)
+    /// Picture, name, pronouns, what they are and seek, and the start of the bio. True when the picture or "Read more"
+    /// was clicked, to open the viewer.
+    private bool DrawLfpSummary(LfpProfileFields f, string? picture, string? extraLine)
     {
         var size = Layout.Scaled(72f);
         if (Lfp.PictureFor(picture) is { } path) LfpImage(path, size);
         else LfpPlaceholder(f.DisplayName, size);
+        var open = ImGui.IsItemClicked();
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            ImGui.SetTooltip("View profile");
+        }
         ImGui.SameLine();
         ImGui.BeginGroup();
         DrawLfpSummaryText(f, extraLine);
         ImGui.EndGroup();
-        if (f.Bio.Length > 0) ImGui.TextWrapped(f.Bio);
+        if (f.Bio.Length == 0) return open;
+
+        var (preview, cut) = LfpBioPreview(f.Bio);
+        ImGui.TextWrapped(preview);
+        if (cut)
+        {
+            using (ImRaii.PushColor(ImGuiCol.Text, Theme.AccentHover))
+                ImGui.TextUnformatted("Read more");
+            if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            open |= ImGui.IsItemClicked();
+        }
+        return open;
+    }
+
+    /// The bio cut to a few lines and characters, at a word break where there is one.
+    private static (string Text, bool Cut) LfpBioPreview(string bio)
+    {
+        var text = bio.Trim().Replace("\r", "");
+        var lines = text.Split('\n');
+        var cut = false;
+        if (lines.Length > LfpBioPreviewLines)
+        {
+            text = string.Join('\n', lines.Take(LfpBioPreviewLines));
+            cut = true;
+        }
+        var runes = text.EnumerateRunes().ToList();
+        if (runes.Count > LfpBioPreviewChars)
+        {
+            text = string.Concat(runes.Take(LfpBioPreviewChars).Select(r => r.ToString()));
+            var space = text.LastIndexOfAny([' ', '\n']);
+            if (space > LfpBioPreviewChars / 2) text = text[..space];
+            cut = true;
+        }
+        return (cut ? text.TrimEnd() + "…" : text, cut);
+    }
+
+    private void ViewLfp(LfpProfileFields fields, string? picture, LfpProfileWire? profile, LfpMatchState? match, string context)
+    {
+        lfpViewing = (fields, picture, profile, match, context);
+        lfpViewerOpening = true;
+    }
+
+    /// A profile at full size: big picture, every field, the whole bio, and the actions of where it was opened from.
+    private void DrawLfpViewer()
+    {
+        // ImGui keeps the ### in the id, so opening and drawing must both use it.
+        const string id = "###lfpProfileViewer";
+        if (lfpViewing is not { } v) return;
+        if (lfpViewerOpening)
+        {
+            ImGui.OpenPopup(id);
+            lfpViewerOpening = false;
+        }
+        var viewport = ImGui.GetMainViewport();
+        ImGui.SetNextWindowPos(viewport.GetCenter(), ImGuiCond.Appearing, new Vector2(0.5f));
+        ImGui.SetNextWindowSize(new Vector2(Layout.Scaled(460f), Layout.Scaled(560f)), ImGuiCond.Appearing);
+        var open = true;
+        if (!ImGui.BeginPopupModal($"{v.Fields.DisplayName}{id}", ref open))
+        {
+            if (!open) lfpViewing = null;
+            return;
+        }
+
+        var footer = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
+        using (var body = ImRaii.Child("lfpViewerBody", new Vector2(0, -footer)))
+        {
+            if (body)
+            {
+                var size = Layout.Scaled(200f);
+                ImGui.SetCursorPosX(MathF.Max(0, (ImGui.GetContentRegionAvail().X - size) / 2));
+                if (Lfp.PictureFor(v.Picture) is { } path) LfpImage(path, size);
+                else LfpPlaceholder(v.Fields.DisplayName, size);
+                ImGui.Spacing();
+                var character = v.Match?.PeerCharacterName is { } n ? $"Character: {n} @ {v.Match.PeerCharacterWorld}" : null;
+                DrawLfpSummaryText(v.Fields, character);
+                if (v.Fields.Bio.Length > 0)
+                {
+                    ImGui.Separator();
+                    ImGui.TextWrapped(v.Fields.Bio.Trim());
+                }
+            }
+        }
+
+        ImGui.Separator();
+        var close = false;
+        using (ImRaii.Disabled(Lfp.Busy))
+        {
+            if (v.Match is { IsActive: true } match)
+            {
+                if (ImGui.Button("Chat##lfpViewChat"))
+                {
+                    plugin.Chat.RequestOpen(match.LocalId);
+                    close = true;
+                }
+                ImGui.SameLine();
+            }
+            else if (v.Profile is { } profile && v.Context is "browse" or "code")
+            {
+                if (ImGui.Button("Like##lfpViewLike"))
+                {
+                    Lfp.Like(profile);
+                    close = true;
+                }
+                ImGui.SameLine();
+                if (v.Context == "browse" && ImGui.Button("Skip##lfpViewSkip"))
+                {
+                    Lfp.Skip(profile);
+                    close = true;
+                }
+                if (v.Context == "browse") ImGui.SameLine();
+            }
+        }
+        if (ImGui.Button("Close##lfpViewClose") || ImGui.IsKeyPressed(ImGuiKey.Escape)) close = true;
+        if (close)
+        {
+            lfpViewing = null;
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.EndPopup();
     }
 
     private static void DrawLfpSummaryText(LfpProfileFields f, string? extraLine)
@@ -442,8 +640,10 @@ public sealed partial class ModuleWindow
             {
                 if (!match.Seen) Status.Pill(StatusKind.Ok, "New match!");
                 var character = match.PeerCharacterName is { } n ? $"Character: {n} @ {match.PeerCharacterWorld}" : null;
-                DrawLfpSummary(match.Peer, match.PeerPicture, character);
+                if (DrawLfpSummary(match.Peer, match.PeerPicture, character)) ViewLfp(match.Peer, match.PeerPicture, null, match, "match");
                 ImGui.TextColored(Theme.TextMuted, $"Matched {TimeText.Ago(match.CreatedAt)}");
+                if (ImGui.Button("View profile")) ViewLfp(match.Peer, match.PeerPicture, null, match, "match");
+                ImGui.SameLine();
                 var unread = plugin.Chat.UnreadFor(match.LocalId);
                 if (ImGui.Button(unread > 0 ? $"Chat ({unread})" : "Chat")) plugin.Chat.RequestOpen(match.LocalId);
                 ImGui.SameLine();

@@ -64,8 +64,10 @@ npm run deploy:production                  # wrangler deploy --env production
 
 Tests run against `wrangler.toml`'s `env.local` (in-memory D1/R2 via miniflare), not staging/production.
 `worker/wrangler.toml`'s base block has no bindings and is never deployed directly - always target an
-explicit `--env`. `testing` is an isolated relay for trying changes without touching staging (own worker, D1, R2;
-plugin builds reach it only with `dotnet build -p:RelayTesting=true`; its D1 id is a placeholder until created).
+explicit `--env`. `testing` is an isolated relay for trying changes without touching staging (own worker, D1, R2). Plugin builds reach
+it with `dotnet build -p:RelayTesting=true`, and **every build from a `-testing` tag targets it automatically** (the
+csproj keys off `GITHUB_REF_NAME`), so a testing release needs the worker migrated and deployed to `--env testing`
+first (`npx wrangler d1 migrations apply RELAY_DB --remote --env testing`, `npx wrangler deploy --env testing`).
 `staging` is the environment the shipped plugin actually talks to
 (`RelayClient.RelayOrigin` in the plugin is hardcoded to `oathbound-relay-staging...workers.dev`);
 `production`'s D1 database ID is still the literal placeholder `REPLACE_WITH_PRODUCTION_D1_ID` and isn't

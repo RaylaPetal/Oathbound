@@ -209,7 +209,6 @@ export class DeviceHub extends DurableObject<Env> {
     ws.serializeAttachment({ state: "authed", challenge: newChallengeNonce(), openedAt: attachment.openedAt } satisfies Attachment);
     if (this.getMeta("everConnected") !== "1") this.setMeta("everConnected", "1");
     if (Array.isArray(body.features) && body.features.includes("chat")) this.setMeta("chatCapable", "1");
-    if (Array.isArray(body.features) && body.features.includes("match")) this.setMeta("matchCapable", "1");
     ws.send(JSON.stringify({ type: "auth-ok" }));
     await this.presence(ws, true);
     await this.flushHeld(ws);
@@ -370,7 +369,8 @@ export class DeviceHub extends DurableObject<Env> {
   /** A chat message for this hub's device from `sender`'s hub; stored while the device is away. */
   async deliverChat(frame: PeerFrame, sender: string, messageId: string): Promise<ChatResult> {
     const scope = frame.channel === "match" ? "match" : "pair";
-    if (this.getMeta(scope === "match" ? "matchCapable" : "chatCapable") !== "1") return "needs_update";
+    // A match is only ever made by clients that have match chat, so only pairing chat needs the capability check.
+    if (scope === "pair" && this.getMeta("chatCapable") !== "1") return "needs_update";
     const wire = JSON.stringify(scope === "match"
       ? { type: "frame", channel: "match", matchId: frame.pairIdHash, from: frame.from, seq: frame.seq, sentAt: frame.sentAt, nonce: frame.nonce, ciphertext: frame.ciphertext }
       : { type: "frame", ...frame });

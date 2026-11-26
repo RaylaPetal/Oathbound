@@ -78,6 +78,8 @@ public sealed class ChatConversation
     public int Unread { get; set; }
     /// The relay last said the partner can't receive chat yet.
     public bool PeerNeedsUpdate { get; set; }
+    /// Closed from the chat window: off the rail until a new message arrives or it's opened again. History stays.
+    public bool Closed { get; set; }
     /// Set for a Looking for pair match's conversation, whose PairingId is then the match's local id.
     public string? MatchId { get; set; }
     public List<ChatEntry> Messages { get; set; } = new();

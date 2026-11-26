@@ -75,7 +75,29 @@ public sealed class ChatService : IDisposable
 
     /// One per partner, active ones first (in config order), then ended ones that still have history. Pairings lists
     /// every active pairing with that partner (Owner and Sub of each other gives two); empty once they've all ended.
-    public IReadOnlyList<(ChatConversation Conversation, IReadOnlyList<PairingState> Pairings)> Conversations()
+    /// The open conversations, as the window lists them.
+    public IReadOnlyList<(ChatConversation Conversation, IReadOnlyList<PairingState> Pairings)> Conversations() =>
+        AllConversations().Where(c => !c.Conversation.Closed).ToList();
+
+    /// Conversations closed from the window, for reopening.
+    public IReadOnlyList<(ChatConversation Conversation, IReadOnlyList<PairingState> Pairings)> ClosedConversations() =>
+        AllConversations().Where(c => c.Conversation.Closed).ToList();
+
+    public void Close(Guid conversationId)
+    {
+        if (History.Find(conversationId) is not { Closed: false } conversation) return;
+        conversation.Closed = true;
+        History.MarkDirty(conversation);
+    }
+
+    private void Reopen(ChatConversation conversation)
+    {
+        if (!conversation.Closed) return;
+        conversation.Closed = false;
+        History.MarkDirty(conversation);
+    }
+
+    private IReadOnlyList<(ChatConversation Conversation, IReadOnlyList<PairingState> Pairings)> AllConversations()
     {
         var list = new List<(ChatConversation Conversation, List<PairingState> Pairings)>();
         foreach (var pairing in config.Pairings.Where(p => p.IsPaired))
@@ -176,6 +198,8 @@ public sealed class ChatService : IDisposable
                 break;
         }
         var conversation = History.ForMatch(match);
+        conversation.PeerNeedsUpdate = false;
+        Reopen(conversation);
         History.Add(conversation, entry);
         if (FocusedPairingId == conversation.PairingId) return;
         conversation.Unread++;
@@ -190,7 +214,13 @@ public sealed class ChatService : IDisposable
     public Guid ConversationIdFor(Guid pairingId) =>
         config.FindPairingById(pairingId) is { IsPaired: true } pairing ? History.For(pairing).PairingId : pairingId;
 
-    public void RequestOpen(Guid pairingId) => OpenRequested?.Invoke(ConversationIdFor(pairingId));
+    /// Opens (and reopens, if it was closed) a conversation in the chat window.
+    public void RequestOpen(Guid pairingId)
+    {
+        var id = ConversationIdFor(pairingId);
+        if (History.Find(id) is { } conversation) Reopen(conversation);
+        OpenRequested?.Invoke(id);
+    }
 
     public void MarkRead(Guid pairingId)
     {
@@ -421,6 +451,7 @@ public sealed class ChatService : IDisposable
     {
         var conversation = History.For(received.Pairing);
         conversation.PeerNeedsUpdate = false;
+        Reopen(conversation);
         var message = received.Message;
         var entry = new ChatEntry
         {

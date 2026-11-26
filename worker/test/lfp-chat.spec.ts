@@ -79,12 +79,13 @@ describe("match chat", () => {
     expect(await mailboxCount(m.sideB)).toBe(0);
   });
 
-  it("reports needs_update for a partner that never declared match", async () => {
+  it("delivers to a match partner whose connection didn't declare match (only new clients can match)", async () => {
     const m = await sides();
     const a = track(await connect(m.sideA, FEATURES));
-    track(await connect(m.sideB, ["chat"]));
+    const b = track(await connect(m.sideB, ["chat"]));
     a.send(matchChat(m.matchId, "a", 1));
-    expect((await a.next()).result).toBe("needs_update");
+    expect((await a.next()).result).toBe("delivered");
+    expect((await b.next()).channel).toBe("match");
   });
 
   it("refuses after unmatch, and unmatch purges stored messages with expired receipts", async () => {
