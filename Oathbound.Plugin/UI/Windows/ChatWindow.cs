@@ -191,11 +191,11 @@ public sealed class ChatWindow : Window, IDisposable
             var center = pos + new Vector2(size / 2);
             if (isSelected || hovered)
                 draw.AddCircle(center, size / 2 + Layout.Scaled(2.5f), ImGui.GetColorU32(isSelected ? Theme.AccentHover : Theme.TextMuted with { W = 0.5f }), 0, Layout.Scaled(2f));
-            Avatar(draw, center, size / 2, conversation, pairings.Count == 0);
+            Avatar(draw, center, size / 2, conversation, Ended(conversation, pairings));
             if (conversation.Unread > 0)
                 Badge(draw, center + new Vector2(size * 0.36f, -size * 0.36f), conversation.Unread);
             if (hovered)
-                Tip(pairings.Count == 0 ? $"{Name(conversation)} (ended)" : $"{Name(conversation)} - {Role(conversation, pairings)}");
+                Tip(Ended(conversation, pairings) ? $"{Name(conversation)} (ended)" : $"{Name(conversation)} - {Role(conversation, pairings)}");
             ImGui.Dummy(new Vector2(0, Layout.Scaled(4f)));
         }
     }
@@ -204,20 +204,26 @@ public sealed class ChatWindow : Window, IDisposable
 
     private void DrawConversation(ChatConversation conversation, IReadOnlyList<PairingState> pairings)
     {
-        var pairing = Chat.SendPairing(pairings);
+        var match = Chat.MatchFor(conversation);
+        var pairing = conversation.IsMatch ? null : Chat.SendPairing(pairings);
+        var writable = conversation.IsMatch ? match is { IsActive: true } : pairing is not null;
         var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
         Chat.FocusedPairingId = focused ? conversation.PairingId : null;
         if (focused) Chat.MarkRead(conversation.PairingId);
 
         DrawTopBar(conversation, pairings);
-        DrawNotice(conversation, pairing);
+        DrawNotice(conversation, pairing, match);
 
-        var inputBar = pairing is null ? 0f : InputBarHeight();
+        var inputBar = writable ? InputBarHeight() : 0f;
         Pane("messages", new Vector2(0, -inputBar), PaneBg, Layout.Scaled(12f), () => DrawMessages(conversation, pairings));
         TutorialService.Anchor(TutorialAnchors.ChatMessages);
 
-        if (pairing is not null) DrawInputBar(conversation, pairing);
+        if (writable) DrawInputBar(conversation, pairing, match);
     }
+
+    /// A pairing chat whose pairings all ended, or a match chat whose match ended.
+    private bool Ended(ChatConversation conversation, IReadOnlyList<PairingState> pairings) =>
+        conversation.IsMatch ? Chat.MatchFor(conversation) is not { IsActive: true } : pairings.Count == 0;
 
     private void DrawTopBar(ChatConversation conversation, IReadOnlyList<PairingState> pairings)
     {
@@ -231,11 +237,13 @@ public sealed class ChatWindow : Window, IDisposable
         var radius = Layout.Scaled(17f);
         var padX = Layout.Scaled(12f);
         var avatarCenter = start + new Vector2(padX + radius, height / 2);
-        Avatar(draw, avatarCenter, radius, conversation, pairings.Count == 0);
+        Avatar(draw, avatarCenter, radius, conversation, Ended(conversation, pairings));
 
         var textX = padX + radius * 2 + Layout.Scaled(10f);
         var lineHeight = ImGui.GetTextLineHeight();
-        var subtitle = pairings.Count == 0
+        var subtitle = conversation.IsMatch
+            ? Ended(conversation, pairings) ? "match ended" : string.IsNullOrWhiteSpace(conversation.PeerWorld) ? "Looking for pair match" : $"{conversation.PeerWorld}  ·  match"
+            : pairings.Count == 0
             ? "pairing ended"
             : string.IsNullOrWhiteSpace(conversation.PeerWorld) ? Role(conversation, pairings) : $"{conversation.PeerWorld}  ·  {Role(conversation, pairings)}";
         var small = ImGui.GetFontSize() * 0.86f;
@@ -273,10 +281,11 @@ public sealed class ChatWindow : Window, IDisposable
     }
 
     /// A slim strip under the top bar, only when something needs saying.
-    private void DrawNotice(ChatConversation conversation, PairingState? pairing)
+    private void DrawNotice(ChatConversation conversation, PairingState? pairing, LfpMatchState? match)
     {
         (Vector4 Color, FontAwesomeIcon Icon, string Text)? notice =
-            pairing is null ? (Theme.TextMuted, FontAwesomeIcon.Lock, "Your pairing has ended - this chat is read-only.")
+            conversation.IsMatch && match is not { IsActive: true } ? (Theme.TextMuted, FontAwesomeIcon.Lock, "This match has ended - this chat is read-only.")
+            : !conversation.IsMatch && pairing is null ? (Theme.TextMuted, FontAwesomeIcon.Lock, "Your pairing has ended - this chat is read-only.")
             : conversation.PeerNeedsUpdate ? (Theme.Caution, FontAwesomeIcon.ExclamationTriangle, $"{Name(conversation)} needs to update Oathbound before they can chat.")
             : !plugin.PeerMessenger.Connected ? (Theme.Caution, FontAwesomeIcon.Wifi, "Reconnecting to the relay - messages can't be sent until it's back.")
             : null;
@@ -301,8 +310,10 @@ public sealed class ChatWindow : Window, IDisposable
         var messages = conversation.Messages;
         if (messages.Count == 0)
         {
-            Centered(FontAwesomeIcon.Lock, "Say hi!",
-                $"Messages are end-to-end encrypted. If {Name(conversation)} is offline, yours wait on the relay for up to 7 days.");
+            Centered(conversation.IsMatch ? FontAwesomeIcon.Heart : FontAwesomeIcon.Lock, conversation.IsMatch ? "It's a match - say hi!" : "Say hi!",
+                conversation.IsMatch
+                    ? $"Messages are end-to-end encrypted. Your character stays private until you share it with the + button."
+                    : $"Messages are end-to-end encrypted. If {Name(conversation)} is offline, yours wait on the relay for up to 7 days.");
             lastMessageCount = 0;
             return;
         }
@@ -327,6 +338,7 @@ public sealed class ChatWindow : Window, IDisposable
             Action? retry = Chat.CanRetry(conversation, entry, pairings) ? () => RetryMessage(conversation, entry, pairings) : null;
             if (entry.Image != ChatImageState.None) ImageBubble(entry, when, retry);
             else Bubble(entry, when, retry);
+            if (entry is { Outgoing: false, Special: MatchPlaintext.InviteKind, InviteCode: { } code }) InviteActions(code);
             ImGui.PopID();
             previous = entry;
         }
@@ -589,6 +601,19 @@ public sealed class ChatWindow : Window, IDisposable
         FailureLine(entry, avail);
     }
 
+    /// Opening an invite runs the normal code pairing: they see who it's from and accept, then the inviter confirms.
+    private void InviteActions(string code)
+    {
+        if (ImGui.SmallButton("Open invite"))
+        {
+            plugin.SettingsWindow.ShowTab(SettingsTab.Identity);
+            Plugin.FireAndForget(plugin.CodePairingService.LookupAsync(code, System.Threading.CancellationToken.None));
+        }
+        if (ImGui.IsItemHovered())
+            Tip("Opens it in Settings > Identity & Pairing. You'll see the inviting character and choose to accept or decline.");
+        ImGui.Dummy(new Vector2(0, Layout.Scaled(2f)));
+    }
+
     private static (FontAwesomeIcon Icon, Vector4 Color, string Tooltip)? TickFor(ChatEntryState state) => state switch
     {
         ChatEntryState.Sending => (FontAwesomeIcon.Clock, MetaText, "Sending…"),
@@ -609,7 +634,7 @@ public sealed class ChatWindow : Window, IDisposable
     /// The pill and send button, plus a line under them for the counter or a send error when there is one.
     private float InputBarHeight() => Layout.Scaled(54f) + (InputHint() is null ? 0f : ImGui.GetFontSize() * 0.8f + Layout.Scaled(4f));
 
-    private void DrawInputBar(ChatConversation conversation, PairingState pairing)
+    private void DrawInputBar(ChatConversation conversation, PairingState? pairing, LfpMatchState? match)
     {
         var height = InputBarHeight();
         var start = ImGui.GetCursorScreenPos();
@@ -628,7 +653,8 @@ public sealed class ChatWindow : Window, IDisposable
         // The single-line field is vertically padded into a pill the same height as the send button.
         var framePadY = (fieldHeight - ImGui.GetTextLineHeight()) / 2;
         ImGui.SetCursorScreenPos(start + new Vector2(pad, (rowHeight - button) / 2));
-        DrawAttach(pairing, button);
+        if (match is not null) DrawMatchActions(match, button);
+        else DrawAttach(pairing!, button);
         var fieldX = pad + button + Layout.Scaled(6f);
         ImGui.SetCursorScreenPos(start + new Vector2(fieldX, (rowHeight - fieldHeight) / 2));
         using (ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, fieldHeight / 2))
@@ -647,13 +673,13 @@ public sealed class ChatWindow : Window, IDisposable
             // The buffer is in bytes; the character limit is checked on send so multi-byte text isn't cut early.
             var entered = ImGui.InputTextWithHint("##chatInput", $"Message {Name(conversation)}", ref draft, 4096, ImGuiInputTextFlags.EnterReturnsTrue);
             TutorialService.Anchor(TutorialAnchors.ChatInput);
-            if (entered) Send(pairing);
+            if (entered) Send(pairing, match);
         }
 
         var canSend = count > 0 && !over;
         ImGui.SetCursorScreenPos(start + new Vector2(width - pad - button, (rowHeight - button) / 2));
         var center = ImGui.GetCursorScreenPos() + new Vector2(button / 2);
-        if (ImGui.InvisibleButton("send", new Vector2(button)) && canSend) Send(pairing);
+        if (ImGui.InvisibleButton("send", new Vector2(button)) && canSend) Send(pairing, match);
         var hovered = ImGui.IsItemHovered();
         var fill = canSend ? (hovered ? Theme.AccentHover : Theme.Accent) : Incoming;
         draw.AddCircleFilled(center, button / 2, ImGui.GetColorU32(fill));
@@ -708,10 +734,59 @@ public sealed class ChatWindow : Window, IDisposable
         refocusInput = true;
     }
 
-    private void Send(PairingState pairing)
+    /// Share the character, or send a pairing invite made for this match. A match never sends pictures.
+    private void DrawMatchActions(LfpMatchState match, float size)
+    {
+        var open = GhostIcon("matchActions", FontAwesomeIcon.Plus, size, Theme.TextMuted, false);
+        if (open) ImGui.OpenPopup("matchMenu");
+        if (ImGui.IsItemHovered()) Tip("Share your character or invite them to pair");
+
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, PopupPadding);
+        var menu = ImGui.BeginPopup("matchMenu");
+        ImGui.PopStyleVar();
+        if (!menu) return;
+        if (ImGui.Selectable(match.SharedMyCharacter ? "Share my character again" : "Share my character"))
+        {
+            sendError = Chat.ShareCharacter(match);
+            lastMessageCount = -1;
+        }
+        if (ImGui.IsItemHovered()) Tip("Sends the character you're logged in on - name and world - to this match only.");
+        var role = plugin.Configuration.Role;
+        if (role != PluginRole.Sub && ImGui.Selectable("Invite them to pair as my Sub")) Invite(match, PairingDirection.OwnerSide);
+        if (role != PluginRole.Owner && ImGui.Selectable("Invite them to pair as my Owner")) Invite(match, PairingDirection.SubSide);
+        ImGui.EndPopup();
+    }
+
+    /// Makes a pairing code (replacing any unused one, as in Settings) and sends it sealed to the match.
+    private void Invite(LfpMatchState match, PairingDirection mine)
+    {
+        if (CodePairingService.CurrentCharacter(plugin.Configuration.TriggerPhrase) is not { } self)
+        {
+            sendError = "Log in to a character first.";
+            return;
+        }
+        var receiverRole = mine == PairingDirection.OwnerSide ? "sub" : "owner";
+        var service = plugin.CodePairingService;
+        Plugin.FireAndForget(System.Threading.Tasks.Task.Run(async () =>
+        {
+            var code = await service.CreateCodeAsync(mine, self, System.Threading.CancellationToken.None).ConfigureAwait(false);
+            await Plugin.Framework.RunOnFrameworkThread(() =>
+            {
+                if (code is null)
+                {
+                    sendError = service.LastError ?? "The pairing code couldn't be made.";
+                    return;
+                }
+                Chat.SendMatchInvite(match, code, receiverRole);
+                lastMessageCount = -1;
+            }).ConfigureAwait(false);
+        }));
+    }
+
+    private void Send(PairingState? pairing, LfpMatchState? match)
     {
         if (draft.Trim().Length == 0) return;
-        sendError = Chat.Send(pairing, draft);
+        sendError = match is not null ? Chat.SendMatch(match, draft) : Chat.Send(pairing!, draft);
         if (sendError is null) draft = "";
         refocusInput = true;
     }
@@ -733,6 +808,7 @@ public sealed class ChatWindow : Window, IDisposable
     /// "your Owner", "your Sub", or both when the two of you are each other's.
     private static string Role(ChatConversation conversation, IReadOnlyList<PairingState> pairings)
     {
+        if (conversation.IsMatch) return "your match";
         var directions = pairings.Count > 0 ? pairings.Select(p => p.Direction).Distinct().ToList() : [conversation.Direction];
         if (directions.Count > 1) return "your Owner and Sub";
         return directions[0] == PairingDirection.OwnerSide ? "your Sub" : "your Owner";

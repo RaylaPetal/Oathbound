@@ -7,6 +7,7 @@
  */
 export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "GET /v1/health": 2,
+  "POST /v1/presence/hello": 8,
 
   "POST /v1/invitations": 15,
   "GET /v1/invitations/:id": 4,
@@ -47,6 +48,25 @@ export const ROUTE_WEIGHTS: Readonly<Record<string, number>> = {
   "POST /v1/chat-images/upload": 10,
   "POST /v1/chat-images/fetch": 4,
 
+  "POST /v1/lfp/me": 8,
+  "PUT /v1/lfp/profile": 16,
+  "DELETE /v1/lfp/profile": 10,
+  "POST /v1/lfp/profile/refresh": 10,
+  "POST /v1/lfp/profile/code": 10,
+  "POST /v1/lfp/profile/picture": 12,
+  "DELETE /v1/lfp/profile/picture": 10,
+  "GET /v1/lfp/pictures/:id": 2,
+  "GET /v1/lfp/browse": 4,
+  "GET /v1/lfp/code/:id": 4,
+  "POST /v1/lfp/likes/:id": 22,
+  "DELETE /v1/lfp/likes/:id": 8,
+  "GET /v1/lfp/likes": 4,
+  "GET /v1/lfp/matches": 4,
+  "DELETE /v1/lfp/matches/:id": 14,
+  "POST /v1/lfp/blocks": 20,
+  "GET /v1/lfp/blocks": 4,
+  "DELETE /v1/lfp/blocks/:id": 8,
+
   "POST /v1/rulebook/key": 12,
   "POST /v1/rulebook/key/fetch": 4,
   "POST /v1/rulebook/upload": 13,
@@ -61,6 +81,10 @@ const ID_SEGMENT: Readonly<Record<string, number>> = { invitations: 2, backups: 
 
 export function routeKey(method: string, segments: readonly string[]): string {
   if (segments[1] === "pairs" && segments[2] === "status" && segments.length === 3) return `${method} /v1/pairs/status`;
+  if (segments[1] === "lfp") {
+    const idAt = segments.length === 4 && ["pictures", "code", "likes", "matches", "blocks"].includes(segments[2] ?? "") ? 3 : -1;
+    return `${method} /${segments.map((segment, i) => (i === idAt ? ":id" : segment)).join("/")}`;
+  }
   const idAt = segments[1] === "catalog" ? (segments[2] === "requests" ? ID_SEGMENT.requests : -1) : (ID_SEGMENT[segments[1] ?? ""] ?? -1);
   const shape = segments.map((segment, i) => (i === idAt ? ":id" : segment));
   return `${method} /${shape.join("/")}`;

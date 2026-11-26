@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oathbound.example/relay/schemas/lfp.schema.json",
+  "title": "Looking for pair",
+  "description": "Bodies of the /v1/lfp routes (collar/looking-for-pair). Every route is signed with the device key (request signing); reads skip the nonce. Limits and enumerations are in constants.json lookingForPair. Nothing here names a character, a world or a device key, except a client's own devicePublicKey in me and profile-put.",
+  "oneOf": [
+    { "$ref": "#/$defs/me" },
+    { "$ref": "#/$defs/profilePut" },
+    { "$ref": "#/$defs/picturePut" },
+    { "$ref": "#/$defs/blockPost" },
+    { "$ref": "#/$defs/meResult" },
+    { "$ref": "#/$defs/browseResult" },
+    { "$ref": "#/$defs/profileResult" },
+    { "$ref": "#/$defs/likeResult" },
+    { "$ref": "#/$defs/likesResult" },
+    { "$ref": "#/$defs/matchesResult" },
+    { "$ref": "#/$defs/blocksResult" }
+  ],
+  "$defs": {
+    "profileId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "matchId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "blockId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "code": { "description": "10 Crockford base32 characters, normalized (uppercase, no separators).", "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{10}$" },
+    "fields": {
+      "type": "object", "additionalProperties": false,
+      "required": ["displayName", "race", "gender", "role", "seeking", "bio"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "pronouns": { "type": ["string", "null"], "maxLength": 24 },
+        "race": { "enum": ["hyur", "elezen", "lalafell", "miqote", "roegadyn", "aura", "hrothgar", "viera"] },
+        "gender": { "enum": ["woman", "man", "nonbinary", "other"] },
+        "role": { "enum": ["owner", "sub", "switch"] },
+        "seeking": { "enum": ["owner", "sub", "either"] },
+        "dataCenter": { "enum": [null, "aether", "crystal", "dynamis", "primal", "chaos", "light", "shadow", "elemental", "gaia", "mana", "meteor", "materia"] },
+        "bio": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "profileView": {
+      "description": "What any player sees of a profile. picture is the path of GET /v1/lfp/pictures/{key}, or null.",
+      "type": "object", "additionalProperties": false,
+      "required": ["profileId", "fields", "picture", "activeAt"],
+      "properties": {
+        "profileId": { "$ref": "#/$defs/profileId" },
+        "fields": { "$ref": "#/$defs/fields" },
+        "picture": { "type": ["string", "null"], "pattern": "^/v1/lfp/pictures/[A-Za-z0-9_-]{43}$" },
+        "activeAt": { "$ref": "common.schema.json#/$defs/unixSeconds" }
+      }
+    },
+    "ownProfile": {
+      "description": "The caller's own profile: profileView plus what only its owner sees.",
+      "type": "object", "additionalProperties": false,
+      "required": ["profileId", "fields", "picture", "activeAt", "code", "visibility", "hidden", "listed"],
+      "properties": {
+        "profileId": true, "fields": true, "picture": true, "activeAt": true,
+        "code": { "$ref": "#/$defs/code" },
+        "visibility": { "enum": ["public", "private"] },
+        "hidden": { "type": "boolean" },
+        "listed": { "description": "False once activeAt is older than lookingForPair.listedForSeconds.", "type": "boolean" }
+      }
+    },
+    "matchView": {
+      "type": "object", "additionalProperties": false,
+      "required": ["matchId", "side", "createdAt", "endedAt", "peer", "peerMatchPublicKey"],
+      "properties": {
+        "matchId": { "$ref": "#/$defs/matchId" },
+        "side": { "description": "a is the member with the lexically smaller device key id.", "enum": ["a", "b"] },
+        "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+        "endedAt": { "type": ["integer", "null"], "minimum": 0 },
+        "peer": { "description": "The peer's current profile, or the snapshot taken at match time once it's gone.", "$ref": "#/$defs/profileView" },
+        "peerMatchPublicKey": { "$ref": "common.schema.json#/$defs/ecPublicKeyJwk" }
+      }
+    },
+    "me": {
+      "description": "POST /v1/lfp/me: registers the device key if the relay hasn't seen it, and returns the caller's profile.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "devicePublicKey"],
+      "properties": {
+        "type": { "const": "lfp-me" },
+        "schemaVersion": { "const": 1 },
+        "devicePublicKey": { "$ref": "common.schema.json#/$defs/ecPublicKeyJwk" }
+      }
+    },
+    "profilePut": {
+      "description": "PUT /v1/lfp/profile: create or replace the caller's profile.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "adultAttested", "visibility", "hidden", "fields", "matchPublicKey"],
+      "properties": {
+        "type": { "const": "lfp-profile" },
+        "schemaVersion": { "const": 1 },
+        "adultAttested": { "const": true },
+        "visibility": { "enum": ["public", "private"] },
+        "hidden": { "type": "boolean" },
+        "fields": { "$ref": "#/$defs/fields" },
+        "matchPublicKey": { "$ref": "common.schema.json#/$defs/ecPublicKeyJwk" }
+      }
+    },
+    "picturePut": {
+      "description": "POST /v1/lfp/profile/picture: replaces the picture. The bytes must be a PNG or JPEG no larger than lookingForPair.pictureMaxBytes.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "contentType", "dataBase64Url"],
+      "properties": {
+        "type": { "const": "lfp-picture" },
+        "schemaVersion": { "const": 1 },
+        "contentType": { "enum": ["image/png", "image/jpeg"] },
+        "dataBase64Url": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+      }
+    },
+    "blockPost": {
+      "description": "POST /v1/lfp/blocks: blocks the person behind a profile or a match.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion"],
+      "properties": {
+        "type": { "const": "lfp-block" },
+        "schemaVersion": { "const": 1 },
+        "profileId": { "$ref": "#/$defs/profileId" },
+        "matchId": { "$ref": "#/$defs/matchId" }
+      }
+    },
+    "meResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "profile"],
+      "properties": {
+        "type": { "const": "lfp-me-result" }, "schemaVersion": { "const": 1 },
+        "profile": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ownProfile" }] }
+      }
+    },
+    "browseResult": {
+      "description": "GET /v1/lfp/browse?cursor&role&seeking&dataCenter&race&gender.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "profiles", "nextCursor"],
+      "properties": {
+        "type": { "const": "lfp-browse-result" }, "schemaVersion": { "const": 1 },
+        "profiles": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/profileView" } },
+        "nextCursor": { "type": ["string", "null"] }
+      }
+    },
+    "profileResult": {
+      "description": "GET /v1/lfp/code/{code}, and the caller's own profile after PUT, refresh, new code or picture changes (with own: true).",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "profile"],
+      "properties": {
+        "type": { "const": "lfp-profile-result" }, "schemaVersion": { "const": 1 },
+        "profile": { "oneOf": [{ "$ref": "#/$defs/profileView" }, { "$ref": "#/$defs/ownProfile" }] }
+      }
+    },
+    "likeResult": {
+      "description": "POST /v1/lfp/likes/{profileId}. match is present when the like completed a match.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "matched"],
+      "properties": {
+        "type": { "const": "lfp-like-result" }, "schemaVersion": { "const": 1 },
+        "matched": { "type": "boolean" },
+        "match": { "$ref": "#/$defs/matchView" }
+      }
+    },
+    "likesResult": {
+      "description": "GET /v1/lfp/likes: the caller's own pending likes only.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "profiles"],
+      "properties": {
+        "type": { "const": "lfp-likes-result" }, "schemaVersion": { "const": 1 },
+        "profiles": { "type": "array", "items": { "$ref": "#/$defs/profileView" } }
+      }
+    },
+    "matchesResult": {
+      "description": "GET /v1/lfp/matches: active matches and ones that ended within lookingForPair.endedMatchRetentionSeconds.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "matches"],
+      "properties": {
+        "type": { "const": "lfp-matches-result" }, "schemaVersion": { "const": 1 },
+        "matches": { "type": "array", "items": { "$ref": "#/$defs/matchView" } }
+      }
+    },
+    "blocksResult": {
+      "description": "GET /v1/lfp/blocks. displayName is the blocked profile's name when the block was made.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "schemaVersion", "blocks"],
+      "properties": {
+        "type": { "const": "lfp-blocks-result" }, "schemaVersion": { "const": 1 },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["blockId", "displayName", "createdAt"],
+            "properties": {
+              "blockId": { "$ref": "#/$defs/blockId" },
+              "displayName": { "type": "string" },
+              "createdAt": { "$ref": "common.schema.json#/$defs/unixSeconds" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

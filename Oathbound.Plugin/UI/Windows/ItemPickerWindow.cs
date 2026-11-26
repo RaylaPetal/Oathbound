@@ -132,7 +132,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.Tshirt, modLabel is not null ? $"Changed items - {modLabel}" : slot == default ? "Item Library" : $"Item Library - {slot}");
         ImGui.SameLine();
         IconGlyph.WrappedDisabled("Choose any item valid for this slot - it does not need to be equipped or owned.");
-        ImGui.Separator();
+        using var card = Card.Begin("itemPickerCard", noScroll: true);
 
         ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##itemPickerSearch", "Search item name...", ref search, 128);

@@ -21,6 +21,10 @@ const perActiveClientDay = {
   pairStatusPolls: 48,
   otherSignedRequests: 20,
   d1RowsPerOtherRequest: 6,
+  // Looking for pair, averaged over every active client (most never open it): browse pages, profile and match
+  // reads, a daily refresh, likes, and the occasional profile edit, block or unmatch, at about 8 D1 rows each.
+  lfpRequests: 6,
+  d1RowsPerLfpRequest: 8,
 };
 const activeShare = 0.5;
 const activeMsPerEvent = 30;
@@ -31,7 +35,7 @@ for (const clients of profiles) {
   const active = clients * activeShare;
   const p = perActiveClientDay;
   const liveUnitsDay = active * (p.socketOpens + p.framesSent + p.hints);
-  const workerReq = active * (p.socketOpens + p.pairStatusPolls + p.otherSignedRequests) * days;
+  const workerReq = active * (p.socketOpens + p.pairStatusPolls + p.otherSignedRequests + p.lfpRequests) * days;
   // A frame: 1/20 for the incoming message, 1 for the hub-to-hub RPC. Opens and hints: 1 each.
   const chatDay = active * p.chatSent;
   const chatRpcs = p.chatSent * (1 / 20 + 1 + p.chatStoredShare);
@@ -39,7 +43,7 @@ for (const clients of profiles) {
   const doEvents = active * (p.socketOpens + p.hints + p.framesSent * 2 + p.chatSent * 2) * days;
   const gbSeconds = doEvents * (activeMsPerEvent / 1000) * gbPerObject;
   // Live units are charged by sampling into D1 (1 in 16 writes one row).
-  const d1Writes = active * (p.otherSignedRequests * p.d1RowsPerOtherRequest + (p.socketOpens + p.framesSent + p.hints + p.chatSent) / 16) * days;
+  const d1Writes = active * (p.otherSignedRequests * p.d1RowsPerOtherRequest + p.lfpRequests * p.d1RowsPerLfpRequest + (p.socketOpens + p.framesSent + p.hints + p.chatSent) / 16) * days;
   const overage =
     Math.max(0, workerReq - included.workerRequests) / 1e6 * 0.30 +
     Math.max(0, doReq - included.doRequests) / 1e6 * 0.15 +

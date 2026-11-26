@@ -1075,6 +1075,9 @@ public class PluginConfig : IPluginConfiguration
 
     public DeviceIdentityState DeviceIdentity { get; set; } = new();
 
+    /// The device key the relay last confirmed having on file through the presence hello; a reset key says hello again.
+    public string? PresenceHelloDeviceKeyId { get; set; }
+
     /// Persisted so `customtrigger revert` still works after a reload.
     public CustomTriggerEffectsState CustomTriggerEffects { get; set; } = new();
     public List<RevocationRetryEntry> RevocationOutbox { get; set; } = new();
@@ -1157,6 +1160,8 @@ public class PluginConfig : IPluginConfiguration
 
     /// Played when a chat message arrives, 1-16 as <se.1>-<se.16>; 0 = none.
     public int ChatSound { get; set; } = 2;
+
+    public LookingForPairState LookingForPair { get; set; } = new();
 
     /// Never transmitted; only alias names cross chat.
     public AliasBook Aliases { get; set; } = new();

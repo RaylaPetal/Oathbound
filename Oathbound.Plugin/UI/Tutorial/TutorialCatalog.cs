@@ -91,7 +91,7 @@ public static class TutorialCatalog
             new("Chat", "The speech bubble opens chat with your Sub - it works across worlds and data centers, and messages wait for them while they're offline. A red badge counts unread messages. Its own tour is behind the ? in the chat window.", TutorialAnchors.MainChat, n => n.Main(), "Shown once you're paired."),
             new("Safeword", "Your own safeword. Typing /obpanic always takes everything off you, whatever role you're in.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile opens a module: titles, outfits, animations, moodles, restraints, toys, custom triggers, the collar, the leash, the cage, games, the rulebook, reactions and sync. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
-            new("Favorites", "The Favorites tile, near the bottom of the grid, opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Favorites", "The star in the title bar opens everything you've starred, in one window.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Achievements", "Achievements mark your milestones. They're private: nothing about them is ever sent to anyone.", TutorialAnchors.NavAchievements, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
             new("Role & trigger phrase", "Your role (Owner, Sub or Switch), and the trigger phrase your chat Reactions start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
@@ -188,6 +188,12 @@ public static class TutorialCatalog
             new("Your strip order", "Which of your pieces come off first when you lose a strip round. Pieces held by restraints or locks are skipped.", S("gamesStrip"), n => n.Module("games")),
             new("Your cards", "Your own truths, dares and forfeits, and the starter cards you can turn off.", S("gamesDecks"), n => n.Module("games")),
         ],
+        ["lookingforpair"] =
+        [
+            Help("lookingforpair", "Find an Owner or a Sub: make a profile, browse others and like the ones you're interested in. When you both like each other it's a match, and you can chat."),
+            new("Before you start", "Looking for pair is for adults only. Confirm you're 18 or older and accept the community rules to begin.", S("lfpGate"), n => n.Module("lookingforpair"), "Shown until you've confirmed."),
+            new("Profile, browse and matches", "Profile is what others see: a display name, never your character. Public profiles are listed in Browse; a private one only by its code. Browse lets you like, skip or block. Likes stay private until it's mutual. Matches open a chat where you can share your character or send a pairing invite when you're ready.", S("lfpTabs"), n => n.Module("lookingforpair"), "Shown once you've confirmed."),
+        ],
         ["achievements"] =
         [
             Help("achievements", "Private milestones for trying Oathbound's features."),
@@ -251,7 +257,7 @@ public static class TutorialCatalog
             new("Chat", "The speech bubble opens chat with your Owner - it works across worlds and data centers, and messages wait for them while they're offline. A red badge counts unread messages. Its own tour is behind the ? in the chat window.", TutorialAnchors.MainChat, n => n.Main(), "Shown once you're paired."),
             new("Safeword", "Your safeword. Typing /obpanic takes everything off you at once, except a locked collar.", TutorialAnchors.MainSafeword, n => n.Main()),
             new("Modules", "Each tile is something your Owner can do to you. In each one you choose what's allowed - which outfits, animations, moodles, restraints. A greyed-out tile names the plugin it still needs - hover it.", TutorialAnchors.MainNav, n => n.Main()),
-            new("Favorites", "Starred commands are an Owner feature; as a Switch, the Favorites tile opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
+            new("Favorites", "Starred commands are an Owner feature; as a Switch, the star in the title bar opens yours.", TutorialAnchors.NavFavorites, n => n.Main()),
             new("Settings", "The cog opens Settings. The next steps walk through it.", TutorialAnchors.MainSettings, n => n.Main()),
             new("Role & trigger phrase", "Your role, and the trigger phrase your chat Reactions start with.", S("roleTrigger"), n => n.Settings(SettingsTab.Identity)),
             new("Characters", "Play more than one character? Link each one in the Characters tab so your Owner can reach you on it. Your restrictions follow you to every character, and you confirm each new character of your Owner's before it can send commands.", S("characters"), n => n.Settings(SettingsTab.Characters)),
@@ -329,6 +335,7 @@ public static class TutorialCatalog
         ],
         ["reactions"] = OwnerTours["reactions"],
         ["achievements"] = OwnerTours["achievements"],
+        ["lookingforpair"] = OwnerTours["lookingforpair"],
         ["games"] = OwnerTours["games"],
         ["rulebook"] =
         [

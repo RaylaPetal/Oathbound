@@ -149,6 +149,9 @@ public sealed partial class ModuleWindow : Window, IDisposable
             case "achievements":
                 DrawAchievementsModule();
                 break;
+            case "lookingforpair":
+                DrawLookingForPairModule();
+                break;
         }
     }
 
@@ -174,6 +177,7 @@ public sealed partial class ModuleWindow : Window, IDisposable
         ["reactions"] = new(FontAwesomeIcon.Magic, "Reactions", "Reactions", false),
         ["games"] = new(FontAwesomeIcon.Dice, "Games", "Games", false),
         ["achievements"] = new(FontAwesomeIcon.Trophy, "Achievements", "Achievements", false),
+        ["lookingforpair"] = new(FontAwesomeIcon.Heart, "Looking for pair", "Looking for pair", false),
     };
 
     /// The action is right-aligned, or wraps under the heading when the window is too narrow.

@@ -134,6 +134,25 @@ Cloudflare credentials, inspect only redacted aggregate telemetry, rotate Wrangl
 redeploy from a clean checkout. Ship a plugin update if the pinned hostname or protocol trust boundary must
 change. Device-key compromise is handled by the plugin's confirmed identity reset and fresh pairing flow.
 
+## Taking down a Looking for pair profile
+
+There is no in-plugin reporting. When someone reports a profile (by its profile code), remove it by hand. Use the
+environment you're acting on (`--env staging` shown; `--local --env local` to rehearse). Codes are stored
+normalized: uppercase, no dash, `I`/`L` as `1` and `O` as `0`.
+
+```
+npx wrangler d1 execute RELAY_DB --remote --env staging \
+  --command "SELECT profile_id, picture_key FROM lfp_profiles WHERE code = 'ABCDE12345'"
+# If picture_key isn't null:
+npx wrangler r2 object delete oathbound-relay-catalog-staging/lfp-pictures/<picture_key> --remote
+npx wrangler d1 execute RELAY_DB --remote --env staging --command \
+  "DELETE FROM lfp_likes WHERE from_profile = '<profile_id>' OR to_profile = '<profile_id>'; DELETE FROM lfp_profiles WHERE profile_id = '<profile_id>'"
+```
+
+This leaves the person's matches and the chats in them alone, and nothing stops the same install from making a new
+profile; the owner's plugin republishes its saved copy the next time it starts. To keep a profile down, tell them why
+through the support channel first.
+
 ## Free-tier capacity check
 
 Before widening access, model request volume using the load script and the conservative upper bounds of

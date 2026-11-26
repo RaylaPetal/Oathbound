@@ -12,11 +12,16 @@ import { consumeRulebookItem, fetchRulebookKey, publishRulebookKey, uploadRulebo
 import { health } from "./routes/health";
 import { fetchPictures, syncPictures, uploadPicture } from "./routes/pictures";
 import { fetchChatImage, uploadChatImage } from "./routes/chatImages";
+import {
+  block, browse, deleteProfile, fetchPicture, lfpMe, like, listBlocks, listLikes, listMatches, lookupCode, newProfileCode,
+  putPicture, putProfile, refreshProfile, removePicture, unblock, unlike, unmatch,
+} from "./routes/lfp";
 import { runScheduledCleanup } from "./scheduled";
 import { assertQuotaRemaining, enforceQuota, sampledUnits } from "./lib/quotas";
 import { originScope } from "./lib/origin";
 import { routeWeight } from "./lib/routeWeights";
 import { openSocket } from "./routes/socket";
+import { presenceHello } from "./routes/presence";
 
 export { DeviceHub } from "./hub/DeviceHub";
 
@@ -48,6 +53,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (method === "GET" && segments.length === 2 && segments[1] === "socket") return openSocket(request, env);
+
+  if (method === "POST" && segments.length === 3 && segments[1] === "presence" && segments[2] === "hello") return presenceHello(request, env);
 
   if (method === "GET" && segments.length === 2 && segments[1] === "health") {
     return health(env);
@@ -108,6 +115,34 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (segments[2] === "sync") return syncPictures(request, env);
     if (segments[2] === "upload") return uploadPicture(request, env);
     if (segments[2] === "fetch") return fetchPictures(request, env);
+  }
+
+  if (segments[1] === "lfp") {
+    const [, , what, id] = segments;
+    if (segments.length === 3) {
+      if (method === "POST" && what === "me") return lfpMe(request, env);
+      if (method === "PUT" && what === "profile") return putProfile(request, env);
+      if (method === "DELETE" && what === "profile") return deleteProfile(request, env);
+      if (method === "GET" && what === "browse") return browse(request, env);
+      if (method === "GET" && what === "likes") return listLikes(request, env);
+      if (method === "GET" && what === "matches") return listMatches(request, env);
+      if (method === "GET" && what === "blocks") return listBlocks(request, env);
+      if (method === "POST" && what === "blocks") return block(request, env);
+    }
+    if (segments.length === 4 && what === "profile") {
+      if (method === "POST" && id === "refresh") return refreshProfile(request, env);
+      if (method === "POST" && id === "code") return newProfileCode(request, env);
+      if (method === "POST" && id === "picture") return putPicture(request, env);
+      if (method === "DELETE" && id === "picture") return removePicture(request, env);
+    }
+    if (segments.length === 4 && id !== undefined) {
+      if (method === "GET" && what === "pictures") return fetchPicture(env, id);
+      if (method === "GET" && what === "code") return lookupCode(request, env, id);
+      if (method === "POST" && what === "likes") return like(request, env, id);
+      if (method === "DELETE" && what === "likes") return unlike(request, env, id);
+      if (method === "DELETE" && what === "matches") return unmatch(request, env, id);
+      if (method === "DELETE" && what === "blocks") return unblock(request, env, id);
+    }
   }
 
   if (segments[1] === "rulebook" && method === "POST") {

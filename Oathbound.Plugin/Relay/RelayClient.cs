@@ -534,6 +534,97 @@ public sealed class RelayClient : IDisposable
         return (body.Envelope, RelayCrypto.Base64UrlDecode(body.CiphertextBase64Url));
     }
 
+    // ---- Presence ----
+
+    /// Puts this install's key on file so its live connection can sign in, for an install that never paired.
+    public Task PresenceHelloAsync(CancellationToken ct) =>
+        SendSignedAsync<LfpDone>(HttpMethod.Post, "/v1/presence/hello", new PresenceHelloBody { DevicePublicKey = identity.GetPublicKeyJwk() }, ct);
+
+    // ---- Looking for pair ----
+
+    /// Introduces this device to the relay if it has never paired, and returns its own profile (null when none).
+    public async Task<LfpProfileWire?> LfpMeAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpMeResult>(HttpMethod.Post, "/v1/lfp/me", new LfpMeBody { DevicePublicKey = identity.GetPublicKeyJwk() }, ct).ConfigureAwait(false)).Profile;
+
+    public async Task<LfpProfileWire> LfpPutProfileAsync(LfpProfileFields fields, string visibility, bool hidden, EcPublicKeyJwk matchKey, CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Put, "/v1/lfp/profile", new LfpProfileBody
+        {
+            Visibility = visibility,
+            Hidden = hidden,
+            Fields = LfpFieldsWire.From(fields),
+            MatchPublicKey = matchKey,
+        }, ct).ConfigureAwait(false)).Profile;
+
+    public async Task<LfpProfileWire> LfpRefreshAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Post, "/v1/lfp/profile/refresh", null, ct).ConfigureAwait(false)).Profile;
+
+    public async Task<LfpProfileWire> LfpNewCodeAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Post, "/v1/lfp/profile/code", null, ct).ConfigureAwait(false)).Profile;
+
+    public Task LfpDeleteProfileAsync(CancellationToken ct) => SendSignedAsync<LfpDone>(HttpMethod.Delete, "/v1/lfp/profile", null, ct);
+
+    public async Task<LfpProfileWire> LfpPutPictureAsync(byte[] image, string contentType, CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Post, "/v1/lfp/profile/picture",
+            new LfpPictureBody { ContentType = contentType, DataBase64Url = RelayCrypto.Base64UrlEncode(image) }, ct).ConfigureAwait(false)).Profile;
+
+    public async Task<LfpProfileWire> LfpRemovePictureAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Delete, "/v1/lfp/profile/picture", null, ct).ConfigureAwait(false)).Profile;
+
+    /// `query` is already URL-encoded ("role=owner&cursor=...").
+    public Task<LfpBrowseResult> LfpBrowseAsync(string query, CancellationToken ct) =>
+        SendSignedAsync<LfpBrowseResult>(HttpMethod.Get, query.Length == 0 ? "/v1/lfp/browse" : $"/v1/lfp/browse?{query}", null, ct);
+
+    public async Task<LfpProfileWire> LfpLookupCodeAsync(string code, CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfileResult>(HttpMethod.Get, $"/v1/lfp/code/{Uri.EscapeDataString(code)}", null, ct).ConfigureAwait(false)).Profile;
+
+    public Task<LfpLikeResult> LfpLikeAsync(string profileId, CancellationToken ct) =>
+        SendSignedAsync<LfpLikeResult>(HttpMethod.Post, $"/v1/lfp/likes/{profileId}", null, ct);
+
+    public Task LfpUnlikeAsync(string profileId, CancellationToken ct) => SendSignedAsync<LfpDone>(HttpMethod.Delete, $"/v1/lfp/likes/{profileId}", null, ct);
+
+    public async Task<List<LfpProfileWire>> LfpLikesAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpProfilesResult>(HttpMethod.Get, "/v1/lfp/likes", null, ct).ConfigureAwait(false)).Profiles;
+
+    public async Task<List<LfpMatchWire>> LfpMatchesAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpMatchesResult>(HttpMethod.Get, "/v1/lfp/matches", null, ct).ConfigureAwait(false)).Matches;
+
+    public Task LfpUnmatchAsync(string matchId, CancellationToken ct) => SendSignedAsync<LfpDone>(HttpMethod.Delete, $"/v1/lfp/matches/{matchId}", null, ct);
+
+    public Task LfpBlockAsync(string? profileId, string? matchId, CancellationToken ct) =>
+        SendSignedAsync<LfpDone>(HttpMethod.Post, "/v1/lfp/blocks", new LfpBlockBody { ProfileId = profileId, MatchId = matchId }, ct);
+
+    public async Task<List<LfpBlockWire>> LfpBlocksAsync(CancellationToken ct) =>
+        (await SendSignedAsync<LfpBlocksResult>(HttpMethod.Get, "/v1/lfp/blocks", null, ct).ConfigureAwait(false)).Blocks;
+
+    public Task LfpUnblockAsync(string blockId, CancellationToken ct) => SendSignedAsync<LfpDone>(HttpMethod.Delete, $"/v1/lfp/blocks/{blockId}", null, ct);
+
+    /// A profile picture by its relay path. Unsigned: the random key in the path is the capability.
+    public async Task<(byte[] Bytes, string ContentType)> LfpFetchPictureAsync(string path, CancellationToken ct)
+    {
+        if (!path.StartsWith("/v1/lfp/pictures/", StringComparison.Ordinal)) throw new RelayException("invalid_request", null, "Not a profile picture path.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(RelayBaseUri, path));
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            throw new RelayException("network", null, $"Relay request failed: {ex.Message}");
+        }
+        using (response)
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw new RelayException("not_found", null, "That picture is gone.");
+            if (!response.IsSuccessStatusCode) throw new RelayException("invalid_request", null, $"Relay returned {(int)response.StatusCode}.");
+            var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            if (bytes.Length > LfpPictureMaxBytes) throw new RelayException("payload_too_large", null, "That picture is too large.");
+            return (bytes, response.Content.Headers.ContentType?.MediaType == "image/jpeg" ? "image/jpeg" : "image/png");
+        }
+    }
+
+    /// protocol/constants.json lookingForPair.pictureMaxBytes.
+    public const int LfpPictureMaxBytes = 196608;
+
     // ---- Transport ----
 
     private async Task<TResponse> SendSignedAsync<TResponse>(HttpMethod method, string path, object? body, CancellationToken ct)

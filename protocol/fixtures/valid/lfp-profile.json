@@ -1,0 +1,23 @@
+{
+  "type": "lfp-profile",
+  "schemaVersion": 1,
+  "adultAttested": true,
+  "visibility": "public",
+  "hidden": false,
+  "fields": {
+    "displayName": "Velvet",
+    "pronouns": "she/her",
+    "race": "miqote",
+    "gender": "woman",
+    "role": "sub",
+    "seeking": "owner",
+    "dataCenter": "light",
+    "bio": "Evening player, loves glamour and roleplay at the Gold Saucer."
+  },
+  "matchPublicKey": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+    "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+  }
+}

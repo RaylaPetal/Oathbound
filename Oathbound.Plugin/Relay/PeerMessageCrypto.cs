@@ -46,6 +46,31 @@ public sealed class ChatPlaintext
     };
 }
 
+/// A match chat message once decrypted. Must match protocol/schemas/peer-frame.schema.json#/$defs/matchPlaintext.
+public sealed class MatchPlaintext
+{
+    public const string TextKind = "text";
+    public const string CharacterKind = "character";
+    public const string InviteKind = "invite";
+
+    [JsonPropertyName("v")] public int Version { get; set; } = 1;
+    [JsonPropertyName("kind")] public string Kind { get; set; } = TextKind;
+    [JsonPropertyName("text"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Text { get; set; }
+    [JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; set; }
+    [JsonPropertyName("world"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? World { get; set; }
+    [JsonPropertyName("code"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Code { get; set; }
+    /// What the receiver of an invite would become: "owner" or "sub".
+    [JsonPropertyName("role"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Role { get; set; }
+
+    public bool IsWellFormed => Version == 1 && Kind switch
+    {
+        TextKind => Text is { Length: > 0 and <= PeerMessageCrypto.MaxChatChars } && Name is null && Code is null,
+        CharacterKind => Name is { Length: > 0 and <= 32 } && World is { Length: > 0 and <= 32 } && Text is null && Code is null,
+        InviteKind => Code is { Length: >= 16 and <= 24 } && Role is "owner" or "sub" && Text is null && Name is null,
+        _ => false,
+    };
+}
+
 /// Where a chat picture is on the relay and the key that opens it; only ever sent inside a sealed chat message.
 public sealed class ChatImageRef
 {
@@ -168,6 +193,46 @@ public static class PeerMessageCrypto
         {
             var plaintext = RelayCrypto.AesGcmDecrypt(key, RelayCrypto.Base64UrlDecode(nonce), RelayCrypto.Base64UrlDecode(ciphertext), ChatAad(header));
             var message = JsonSerializer.Deserialize<ChatPlaintext>(plaintext);
+            return message is { IsWellFormed: true } ? message : null;
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException or FormatException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// protocol/constants.json `matchChat`: static ECDH between the two match keys, its own label, epoch always 0.
+    private const string MatchInfoLabel = "oathbound-match-chat-v1";
+
+    public static byte[] DeriveMatchKey(RelayEcKeyPair ownMatchKey, EcPublicKeyJwk peerMatchPublic, string matchId) =>
+        CharacterRecordCrypto.DerivePairKey(ownMatchKey, peerMatchPublic, matchId, 0, MatchInfoLabel);
+
+    public static byte[] MatchAad(string matchId, string from, long seq, long sentAt) =>
+        Encoding.UTF8.GetBytes(CanonicalJson.Serialize(new Dictionary<string, object?>
+        {
+            ["channel"] = "match",
+            ["matchId"] = matchId,
+            ["from"] = from,
+            ["seq"] = seq,
+            ["sentAt"] = sentAt,
+        }));
+
+    public static (string Nonce, string Ciphertext) SealMatch(MatchPlaintext message, byte[] key, string matchId, string from, long seq, long sentAt)
+    {
+        if (!message.IsWellFormed)
+            throw new InvalidOperationException($"A message can be at most {MaxChatChars} characters.");
+        var nonce = RelayCrypto.RandomBytes(RelayCrypto.AeadNonceLengthBytes);
+        var ciphertext = RelayCrypto.AesGcmEncrypt(key, nonce, JsonSerializer.SerializeToUtf8Bytes(message), MatchAad(matchId, from, seq, sentAt));
+        return (RelayCrypto.Base64UrlEncode(nonce), RelayCrypto.Base64UrlEncode(ciphertext));
+    }
+
+    /// Null when it doesn't decrypt for this match and header, or isn't a kind this version knows.
+    public static MatchPlaintext? OpenMatch(byte[] key, string matchId, string from, long seq, long sentAt, string nonce, string ciphertext)
+    {
+        try
+        {
+            var plaintext = RelayCrypto.AesGcmDecrypt(key, RelayCrypto.Base64UrlDecode(nonce), RelayCrypto.Base64UrlDecode(ciphertext), MatchAad(matchId, from, seq, sentAt));
+            var message = JsonSerializer.Deserialize<MatchPlaintext>(plaintext);
             return message is { IsWellFormed: true } ? message : null;
         }
         catch (Exception ex) when (ex is CryptographicException or JsonException or FormatException or ArgumentException)

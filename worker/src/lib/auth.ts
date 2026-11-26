@@ -165,3 +165,17 @@ export function resolverFromStoredDeviceKeys(env: Env): PublicKeyResolver {
     return lookupDeviceKey(env, deviceKeyId);
   };
 }
+
+/**
+ * A device already on file, or one introducing itself with the key in `devicePublicKey`; for routes a device with no
+ * pairing may call (Looking for pair, presence). The caller remembers the key once the signature checks out.
+ */
+export function resolverFromStoredOrBodyKey(env: Env): PublicKeyResolver {
+  return async (deviceKeyId, bodyJson) => {
+    const { lookupDeviceKey } = await import("./deviceKeys");
+    const stored = await lookupDeviceKey(env, deviceKeyId);
+    if (stored) return stored;
+    const candidate = typeof bodyJson === "object" && bodyJson !== null ? (bodyJson as Record<string, unknown>).devicePublicKey : null;
+    return isEcPublicKeyJwk(candidate) ? candidate : null;
+  };
+}

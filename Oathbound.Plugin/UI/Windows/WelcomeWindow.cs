@@ -33,25 +33,29 @@ public sealed class WelcomeWindow : Window, IDisposable
     {
         var config = plugin.Configuration;
 
-        ImGui.TextWrapped("Welcome! Before you get started, choose your role and the trigger phrase that starts your chat Reactions - you can change either later in Settings.");
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
+        using (Card.Begin("welcomeCard", new Vector2(0, -ImGui.GetFrameHeightWithSpacing())))
+        {
+            ImGui.TextWrapped("Welcome! Before you get started, choose your role and the trigger phrase that starts your chat Reactions - you can change either later in Settings.");
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
 
-        var roleIndex = config.Role switch { PluginRole.Owner => 1, PluginRole.Switch => 2, _ => 0 };
-        if (ImGui.Combo("Role", ref roleIndex, RoleNames, RoleNames.Length))
-            config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
-        IconGlyph.HelpMarker("Sub receives commands, Owner sends them, Switch can do both. You can change this later.");
+            var roleIndex = config.Role switch { PluginRole.Owner => 1, PluginRole.Switch => 2, _ => 0 };
+            if (ImGui.Combo("Role", ref roleIndex, RoleNames, RoleNames.Length))
+                config.Role = roleIndex switch { 1 => PluginRole.Owner, 2 => PluginRole.Switch, _ => PluginRole.Sub };
+            IconGlyph.HelpMarker("Sub receives commands, Owner sends them, Switch can do both. You can change this later.");
 
-        ImGui.Spacing();
-        ImGui.InputTextWithHint("Trigger phrase", "e.g. command", ref triggerPhraseInput, 32);
-        IconGlyph.HelpMarker("Starts a chat phrase for your Reactions, e.g. \"collar kneel\". Commands from an Owner don't use it.");
+            ImGui.Spacing();
+            ImGui.InputTextWithHint("Trigger phrase", "e.g. command", ref triggerPhraseInput, 32);
+            IconGlyph.HelpMarker("Starts a chat phrase for your Reactions, e.g. \"collar kneel\". Commands from an Owner don't use it.");
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-        IconGlyph.WrappedDisabled("After you continue, a short guided tour shows you around. Every module also has its own tour behind the ? in its title bar.");
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            IconGlyph.WrappedDisabled("After you continue, a short guided tour shows you around. Every module also has its own tour behind the ? in its title bar.");
+        }
 
+        using var primary = Theme.PushPrimaryButton();
         if (ImGui.Button("Continue"))
         {
             config.TriggerPhrase = triggerPhraseInput;

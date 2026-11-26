@@ -46,6 +46,7 @@ public sealed class ChatService : IDisposable
         images = new ChatImageService(relay);
         messenger.ChatReceived += OnReceived;
         messenger.ChatResult += OnResult;
+        messenger.MatchChatReceived += OnMatchReceived;
         // Sent just before the last unload and never answered; a receipt that arrives later still corrects it.
         foreach (var conversation in History.All)
             foreach (var entry in conversation.Messages.Where(e => e.State == ChatEntryState.Sending))
@@ -64,6 +65,7 @@ public sealed class ChatService : IDisposable
         shutdown.Cancel();
         messenger.ChatReceived -= OnReceived;
         messenger.ChatResult -= OnResult;
+        messenger.MatchChatReceived -= OnMatchReceived;
         History.Tick(flush: true);
     }
 
@@ -84,9 +86,100 @@ public sealed class ChatService : IDisposable
             else list.Add((conversation, new List<PairingState> { pairing }));
         }
         var result = list.Select(l => (l.Conversation, (IReadOnlyList<PairingState>)l.Pairings)).ToList();
-        foreach (var ended in History.All.Where(c => c.Messages.Count > 0 && list.All(l => l.Conversation != c)).ToList())
+        foreach (var ended in History.All.Where(c => !c.IsMatch && c.Messages.Count > 0 && list.All(l => l.Conversation != c)).ToList())
             result.Add((ended, Array.Empty<PairingState>()));
+        // Matches after pairings: active ones, then ended ones that still have history. They never carry a pairing.
+        foreach (var match in config.LookingForPair.Matches.OrderBy(m => m.IsActive ? 0 : 1).ThenByDescending(m => m.CreatedAt))
+        {
+            if (match.IsActive) result.Add((History.ForMatch(match), Array.Empty<PairingState>()));
+            else if (History.Find(match.LocalId) is { Messages.Count: > 0 } ended) result.Add((ended, Array.Empty<PairingState>()));
+        }
         return result;
+    }
+
+    /// The match behind a match conversation, if it's still known.
+    public LfpMatchState? MatchFor(ChatConversation conversation) =>
+        conversation.IsMatch ? config.LookingForPair.FindMatch(conversation.PairingId) : null;
+
+    /// Null when it went out; otherwise why it couldn't be sent. Goes through the Gagged rewrite like pairing chat.
+    public string? SendMatch(LfpMatchState match, string text)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return null;
+        if (text.Length > PeerMessageCrypto.MaxChatChars)
+            return $"That message is too long - chat messages can be at most {PeerMessageCrypto.MaxChatChars} characters.";
+        var sent = gag.RewriteRelayChat(text);
+        SendMatchMessage(match, new MatchPlaintext { Text = sent }, sent, null);
+        return null;
+    }
+
+    /// Shares the character currently logged in, sealed for this match only. Main thread (reads the object table).
+    public string? ShareCharacter(LfpMatchState match)
+    {
+        if (CodePairingService.CurrentCharacter(null) is not { } me) return "Log in to a character first.";
+        SendMatchMessage(match, new MatchPlaintext { Kind = MatchPlaintext.CharacterKind, Name = me.Name, World = me.World },
+            $"You shared your character: {me.Name} @ {me.World}", MatchPlaintext.CharacterKind);
+        match.SharedMyCharacter = true;
+        config.Save();
+        return null;
+    }
+
+    /// Sends a pairing code made for this match. `receiverRole` is what they would become.
+    public void SendMatchInvite(LfpMatchState match, string code, string receiverRole)
+    {
+        var entry = SendMatchMessage(match, new MatchPlaintext { Kind = MatchPlaintext.InviteKind, Code = code, Role = receiverRole },
+            $"You sent a pairing invite: they'd be your {(receiverRole == "sub" ? "Sub" : "Owner")}. Code {code}", MatchPlaintext.InviteKind);
+        entry.InviteCode = code;
+        entry.InviteRole = receiverRole;
+    }
+
+    private ChatEntry SendMatchMessage(LfpMatchState match, MatchPlaintext message, string shownText, string? special)
+    {
+        var conversation = History.ForMatch(match);
+        var entry = new ChatEntry
+        {
+            Outgoing = true,
+            Text = shownText,
+            At = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            State = ChatEntryState.Sending,
+            Special = special,
+        };
+        var (id, failure) = messenger.SendMatchChat(match, message);
+        entry.MessageId = id;
+        if (failure is { } f) Fail(conversation, entry, f);
+        History.Add(conversation, entry);
+        return entry;
+    }
+
+    private void OnMatchReceived(MatchChatReceived received)
+    {
+        var match = received.Match;
+        var message = received.Message;
+        var entry = new ChatEntry { At = received.SentAt, State = ChatEntryState.Received };
+        switch (message.Kind)
+        {
+            case MatchPlaintext.CharacterKind:
+                match.PeerCharacterName = message.Name;
+                match.PeerCharacterWorld = message.World;
+                config.Save();
+                entry.Special = MatchPlaintext.CharacterKind;
+                entry.Text = $"{match.Peer.DisplayName} shared their character: {message.Name} @ {message.World}";
+                break;
+            case MatchPlaintext.InviteKind:
+                entry.Special = MatchPlaintext.InviteKind;
+                entry.InviteCode = message.Code;
+                entry.InviteRole = message.Role;
+                entry.Text = $"{match.Peer.DisplayName} sent you a pairing invite: you'd be their {(message.Role == "sub" ? "Sub" : "Owner")}.";
+                break;
+            default:
+                entry.Text = message.Text!;
+                break;
+        }
+        var conversation = History.ForMatch(match);
+        History.Add(conversation, entry);
+        if (FocusedPairingId == conversation.PairingId) return;
+        conversation.Unread++;
+        Notify(conversation, entry.Text);
     }
 
     /// The pairing a message to this partner goes out on: the active pairing when it's one of theirs.
@@ -230,6 +323,8 @@ public sealed class ChatService : IDisposable
     /// the partner still needs an update it failed for, and for a picture only while its local copy exists.
     public bool CanRetry(ChatConversation conversation, ChatEntry entry, IReadOnlyList<PairingState> pairings)
     {
+        if (conversation.IsMatch)
+            return entry is { Outgoing: true, State: ChatEntryState.NotDelivered, Special: null, Image: ChatImageState.None } && MatchFor(conversation) is { IsActive: true };
         if (!entry.Outgoing || entry.State != ChatEntryState.NotDelivered || SendPairing(pairings) is null)
             return false;
         if (entry.FailedNeedsUpdate && conversation.PeerNeedsUpdate)
@@ -243,6 +338,8 @@ public sealed class ChatService : IDisposable
     /// id and key from its kept copy, which is then gone from the failed message. Null, or why it couldn't.
     public string? Retry(ChatConversation conversation, ChatEntry entry, IReadOnlyList<PairingState> pairings)
     {
+        if (conversation.IsMatch)
+            return CanRetry(conversation, entry, pairings) && MatchFor(conversation) is { } match ? SendMatch(match, entry.Text) : "That message can't be sent again.";
         if (!CanRetry(conversation, entry, pairings) || SendPairing(pairings) is not { } pairing)
             return "That message can't be sent again.";
         if (entry.Image == ChatImageState.None)
@@ -346,7 +443,11 @@ public sealed class ChatService : IDisposable
         if (FocusedPairingId == conversation.PairingId) return;
 
         conversation.Unread++;
-        var text = message.Image is null ? message.Text : message.Text.Length > 0 ? $"[Picture] {message.Text}" : "Sent you a picture";
+        Notify(conversation, message.Image is null ? message.Text : message.Text.Length > 0 ? $"[Picture] {message.Text}" : "Sent you a picture");
+    }
+
+    private void Notify(ChatConversation conversation, string text)
+    {
         var preview = text.Length > 120 ? text[..120] + "..." : text;
         var notification = Plugin.NotificationManager.AddNotification(new Notification
         {

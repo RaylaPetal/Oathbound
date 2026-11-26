@@ -52,6 +52,29 @@ interface ProtocolConstants {
     deviceBurstWindowSeconds: number;
     deviceHourlyFrames: number;
   };
+  presence: {
+    onlineTtlSeconds: number;
+    rewriteAfterSeconds: number;
+    countRefreshSeconds: number;
+  };
+  lookingForPair: {
+    displayNameMinChars: number;
+    displayNameMaxChars: number;
+    pronounsMaxChars: number;
+    bioMaxChars: number;
+    races: string[];
+    genders: string[];
+    roles: string[];
+    seeking: string[];
+    dataCenters: string[];
+    visibility: string[];
+    browsePageSize: number;
+    pictureMaxBytes: number;
+    listedForSeconds: number;
+    refreshMinIntervalSeconds: number;
+    profileRetentionSeconds: number;
+    endedMatchRetentionSeconds: number;
+  };
   peerChat: {
     maxTextChars: number;
     storedTtlSeconds: number;
@@ -129,3 +152,25 @@ export const CHAT_IMAGE_MAX_CIPHERTEXT_BYTES = PROTOCOL.peerChat.image.maxCipher
 export const CHAT_IMAGES_PER_PAIR_MAX = PROTOCOL.peerChat.image.storedPerPairMax;
 export const CHAT_IMAGES_PER_PAIR_MAX_BYTES = PROTOCOL.peerChat.image.storedPerPairMaxBytes;
 export const CHAT_IMAGE_TTL_SECONDS = PROTOCOL.peerChat.image.storedTtlSeconds;
+
+const LFP = PROTOCOL.lookingForPair;
+export const LFP_DISPLAY_NAME_MIN_CHARS = LFP.displayNameMinChars;
+export const LFP_DISPLAY_NAME_MAX_CHARS = LFP.displayNameMaxChars;
+export const LFP_PRONOUNS_MAX_CHARS = LFP.pronounsMaxChars;
+export const LFP_BIO_MAX_CHARS = LFP.bioMaxChars;
+export const LFP_RACES: ReadonlySet<string> = new Set(LFP.races);
+export const LFP_GENDERS: ReadonlySet<string> = new Set(LFP.genders);
+export const LFP_ROLES: ReadonlySet<string> = new Set(LFP.roles);
+export const LFP_SEEKING: ReadonlySet<string> = new Set(LFP.seeking);
+export const LFP_DATA_CENTERS: ReadonlySet<string> = new Set(LFP.dataCenters);
+export const LFP_VISIBILITY: ReadonlySet<string> = new Set(LFP.visibility);
+export const LFP_BROWSE_PAGE_SIZE = LFP.browsePageSize;
+export const LFP_PICTURE_MAX_BYTES = LFP.pictureMaxBytes;
+export const LFP_LISTED_FOR_SECONDS = LFP.listedForSeconds;
+export const LFP_REFRESH_MIN_INTERVAL_SECONDS = LFP.refreshMinIntervalSeconds;
+export const LFP_PROFILE_RETENTION_SECONDS = LFP.profileRetentionSeconds;
+export const LFP_ENDED_MATCH_RETENTION_SECONDS = LFP.endedMatchRetentionSeconds;
+
+export const PRESENCE_ONLINE_TTL_SECONDS = PROTOCOL.presence.onlineTtlSeconds;
+export const PRESENCE_REWRITE_AFTER_SECONDS = PROTOCOL.presence.rewriteAfterSeconds;
+export const PRESENCE_COUNT_REFRESH_SECONDS = PROTOCOL.presence.countRefreshSeconds;

@@ -19,6 +19,8 @@ import {
 import { verifyEcdsaSignature } from "../lib/crypto";
 import { lookupDeviceKey } from "../lib/deviceKeys";
 import { logEvent } from "../lib/log";
+import { matchById } from "../lib/lfp";
+import { markOffline, markOnline, onlineCount } from "../lib/presence";
 import { pairAtEpoch } from "../lib/pairs";
 import { chargeChat, chargeLive } from "../lib/quotas";
 import { newChallengeNonce, socketAuthBaseString } from "./socketAuth";
@@ -30,12 +32,15 @@ export type DeliveryResult = "delivered" | "held" | "offline" | "needs_update" |
 export type ChatResult = "delivered" | "stored" | "mailbox_full" | "needs_update" | "over_limit" | "over_budget" | "refused";
 export type ChatReceipt = "delivered" | "expired";
 
-/** The fields the relay forwards; nonce and ciphertext are opaque to it. */
+/**
+ * The fields the relay forwards; nonce and ciphertext are opaque to it. A match frame carries its match id in
+ * pairIdHash with epoch 0, and a/b as its sides, so it shares the chat mailbox and receipts.
+ */
 export interface PeerFrame {
-  channel: "live" | "chat";
+  channel: "live" | "chat" | "match";
   pairIdHash: string;
   pairEpoch: number;
-  from: "owner" | "sub";
+  from: "owner" | "sub" | "a" | "b";
   seq: number;
   sentAt: number;
   nonce: string;
@@ -46,6 +51,12 @@ interface Attachment {
   state: "pending" | "authed";
   challenge: string;
   openedAt: number;
+}
+
+interface CachedMatch {
+  a: string;
+  b: string;
+  ended: boolean;
 }
 
 interface CachedPair {
@@ -60,6 +71,7 @@ const AEAD_NONCE = /^[A-Za-z0-9_-]{16}$/;
 const CIPHERTEXT = /^[A-Za-z0-9_-]{22,10944}$/;
 const MESSAGE_ID = /^[A-Za-z0-9_-]{1,32}$/;
 const PAIR_CACHE_SECONDS = 600;
+const PRESENCE_MIN_INTERVAL_SECONDS = 20;
 
 /**
  * One per device (addressed by its device key id). Holds that device's live connection with the hibernation API, so an
@@ -71,6 +83,7 @@ export class DeviceHub extends DurableObject<Env> {
   // Per-device send limits live in memory: a hub that hibernated wasn't sending, so losing them is harmless.
   private sendTimes: number[] = [];
   private chatTimes: number[] = [];
+  private lastPresenceAt = 0;
   // Messages are handled concurrently across awaits; chaining sends keeps one device's frames in order, which the
   // receiver's strictly-increasing seq check depends on.
   private sendChain: Promise<void> = Promise.resolve();
@@ -90,6 +103,12 @@ export class DeviceHub extends DurableObject<Env> {
       id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, message_id TEXT NOT NULL, pair_id_hash TEXT NOT NULL,
       pair_epoch INTEGER NOT NULL, frame TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS chat_mailbox_sender ON chat_mailbox (sender, pair_id_hash)`);
+    // Hubs created before match chat have no scope column; every row they hold is pairing chat.
+    if (!this.sql.exec<{ name: string }>(`PRAGMA table_info(chat_mailbox)`).toArray().some((c) => c.name === "scope")) {
+      this.sql.exec(`ALTER TABLE chat_mailbox ADD COLUMN scope TEXT NOT NULL DEFAULT 'pair'`);
+    }
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS match_cache (
+      match_id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, ended INTEGER NOT NULL, fetched_at INTEGER NOT NULL) WITHOUT ROWID`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS chat_receipts (
       id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, result TEXT NOT NULL, expires_at INTEGER NOT NULL)`);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -127,6 +146,7 @@ export class DeviceHub extends DurableObject<Env> {
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (!attachment) return this.reject(ws, "unauthorized");
     if (attachment.state === "pending") return this.authenticate(ws, attachment, body);
+    if (body.type === "presence") return this.presence(ws, false);
     if (body.type === "send") {
       const run = this.sendChain.then(() => this.send(ws, body));
       this.sendChain = run.catch(() => undefined);
@@ -137,10 +157,34 @@ export class DeviceHub extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, "closed"); } catch { /* already closed */ }
+    await this.offlineIfLast(ws);
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     try { ws.close(1011, "error"); } catch { /* already closed */ }
+    await this.offlineIfLast(ws);
+  }
+
+  /** A replaced connection closing leaves its successor online. */
+  private async offlineIfLast(closed: WebSocket): Promise<void> {
+    if ((closed.deserializeAttachment() as Attachment | null)?.state !== "authed") return;
+    if (this.authedSockets().some((s) => s !== closed && s.readyState === WebSocket.OPEN)) return;
+    const device = this.getMeta("device");
+    if (device) await markOffline(this.env, device).catch(() => logEvent("presence_failed"));
+  }
+
+  /** Marks the device online and tells it how many are. At most one a few seconds, so a looping client costs nothing. */
+  private async presence(ws: WebSocket, connected: boolean): Promise<void> {
+    const now = nowSeconds();
+    if (!connected && now - this.lastPresenceAt < PRESENCE_MIN_INTERVAL_SECONDS) return;
+    this.lastPresenceAt = now;
+    try {
+      await markOnline(this.env, this.getMeta("device")!, connected);
+      const { online, onlineAt } = await onlineCount(this.env);
+      ws.send(JSON.stringify({ type: "presence", online, onlineAt }));
+    } catch {
+      logEvent("presence_failed");
+    }
   }
 
   private async authenticate(ws: WebSocket, attachment: Attachment, body: Record<string, unknown>): Promise<void> {
@@ -165,7 +209,9 @@ export class DeviceHub extends DurableObject<Env> {
     ws.serializeAttachment({ state: "authed", challenge: newChallengeNonce(), openedAt: attachment.openedAt } satisfies Attachment);
     if (this.getMeta("everConnected") !== "1") this.setMeta("everConnected", "1");
     if (Array.isArray(body.features) && body.features.includes("chat")) this.setMeta("chatCapable", "1");
+    if (Array.isArray(body.features) && body.features.includes("match")) this.setMeta("matchCapable", "1");
     ws.send(JSON.stringify({ type: "auth-ok" }));
+    await this.presence(ws, true);
     await this.flushHeld(ws);
     await this.flushChat(ws);
     this.flushReceipts(ws);
@@ -191,6 +237,7 @@ export class DeviceHub extends DurableObject<Env> {
 
     const frame = parseFrame(body);
     if (frame?.channel === "chat") return this.sendChat(ws, id, frame);
+    if (frame?.channel === "match") return this.sendMatchChat(ws, id, frame);
     const now = nowSeconds();
     if (!frame || Math.abs(now - frame.sentAt) > PEER_FRAME_MAX_AGE_SECONDS + TIMESTAMP_TOLERANCE_SECONDS) return ack("refused");
     const self = this.getMeta("device")!;
@@ -223,6 +270,37 @@ export class DeviceHub extends DurableObject<Env> {
     if (!this.withinChatLimits(now)) return ack("over_limit");
     if (!(await chargeChat(this.env))) return ack("over_budget");
     ack(await this.hub(peer).deliverChat(frame, self, id));
+  }
+
+  private async sendMatchChat(ws: WebSocket, id: string, frame: PeerFrame): Promise<void> {
+    const ack = (result: ChatResult) => ws.send(JSON.stringify({ type: "ack", id, result }));
+    const now = nowSeconds();
+    if (frame.sentAt > now + TIMESTAMP_TOLERANCE_SECONDS || frame.sentAt < now - CHAT_STORED_TTL_SECONDS) return ack("refused");
+    const self = this.getMeta("device")!;
+
+    const match = await this.match(frame.pairIdHash);
+    const side = match?.a === self ? "a" : match?.b === self ? "b" : null;
+    if (!match || match.ended || !side || side !== frame.from) return ack("refused");
+    const peer = side === "a" ? match.b : match.a;
+
+    if (!this.withinChatLimits(now)) return ack("over_limit");
+    if (!(await chargeChat(this.env))) return ack("over_budget");
+    ack(await this.hub(peer).deliverChat(frame, self, id));
+  }
+
+  private async match(matchId: string): Promise<CachedMatch | null> {
+    const now = nowSeconds();
+    const cached = this.sql
+      .exec<{ a: string; b: string; ended: number; fetched_at: number }>(`SELECT a, b, ended, fetched_at FROM match_cache WHERE match_id = ?`, matchId)
+      .toArray()[0];
+    if (cached && now - cached.fetched_at < PAIR_CACHE_SECONDS) return { a: cached.a, b: cached.b, ended: cached.ended === 1 };
+
+    const row = await matchById(this.env, matchId);
+    if (!row) return null;
+    const match = { a: row.device_a, b: row.device_b, ended: row.ended_at !== null };
+    this.sql.exec(`INSERT OR REPLACE INTO match_cache (match_id, a, b, ended, fetched_at) VALUES (?, ?, ?, ?, ?)`,
+      matchId, match.a, match.b, match.ended ? 1 : 0, now);
+    return match;
   }
 
   private withinChatLimits(now: number): boolean {
@@ -291,8 +369,11 @@ export class DeviceHub extends DurableObject<Env> {
 
   /** A chat message for this hub's device from `sender`'s hub; stored while the device is away. */
   async deliverChat(frame: PeerFrame, sender: string, messageId: string): Promise<ChatResult> {
-    if (this.getMeta("chatCapable") !== "1") return "needs_update";
-    const wire = JSON.stringify({ type: "frame", ...frame });
+    const scope = frame.channel === "match" ? "match" : "pair";
+    if (this.getMeta(scope === "match" ? "matchCapable" : "chatCapable") !== "1") return "needs_update";
+    const wire = JSON.stringify(scope === "match"
+      ? { type: "frame", channel: "match", matchId: frame.pairIdHash, from: frame.from, seq: frame.seq, sentAt: frame.sentAt, nonce: frame.nonce, ciphertext: frame.ciphertext }
+      : { type: "frame", ...frame });
     let sent = false;
     for (const s of this.authedSockets()) {
       try { s.send(wire); sent = true; } catch { /* closing */ }
@@ -302,8 +383,8 @@ export class DeviceHub extends DurableObject<Env> {
     const stored = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM chat_mailbox WHERE sender = ? AND pair_id_hash = ?`, sender, frame.pairIdHash).one().n;
     if (stored >= CHAT_STORED_PER_SENDER_PER_PAIR_MAX) return "mailbox_full";
     const expiresAt = nowSeconds() + CHAT_STORED_TTL_SECONDS;
-    this.sql.exec(`INSERT INTO chat_mailbox (sender, message_id, pair_id_hash, pair_epoch, frame, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      sender, messageId, frame.pairIdHash, frame.pairEpoch, wire, expiresAt);
+    this.sql.exec(`INSERT INTO chat_mailbox (sender, message_id, pair_id_hash, pair_epoch, frame, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      sender, messageId, frame.pairIdHash, frame.pairEpoch, wire, expiresAt, scope);
     await this.scheduleAlarm(expiresAt);
     return "stored";
   }
@@ -321,9 +402,10 @@ export class DeviceHub extends DurableObject<Env> {
     await this.scheduleAlarm(expiresAt);
   }
 
-  /** The pairing ended: chat still waiting here for it is dropped, and its senders are told it expired. */
+  /** The pairing or match ended: chat still waiting here for it is dropped, and its senders are told it expired. */
   async purgeChat(pairIdHash: string): Promise<void> {
     this.sql.exec(`DELETE FROM pair_cache WHERE pair_id_hash = ?`, pairIdHash);
+    this.sql.exec(`DELETE FROM match_cache WHERE match_id = ?`, pairIdHash);
     const rows = this.sql
       .exec<{ sender: string; message_id: string }>(`SELECT sender, message_id FROM chat_mailbox WHERE pair_id_hash = ?`, pairIdHash)
       .toArray();
@@ -343,6 +425,14 @@ export class DeviceHub extends DurableObject<Env> {
     this.sql.exec(`DELETE FROM pair_cache WHERE pair_id_hash = ?`, pairIdHash);
     const wire = JSON.stringify({ type: "hint", pairIdHash, pairEpoch });
     for (const s of this.authedSockets()) s.send(wire);
+  }
+
+  /** collar/looking-for-pair: a match was made or ended for this device; the client re-reads its matches. */
+  async lfpHint(): Promise<void> {
+    const wire = JSON.stringify({ type: "hint", kind: "lfp" });
+    for (const s of this.authedSockets()) {
+      try { s.send(wire); } catch { /* closing */ }
+    }
   }
 
   /** Drops a cached pair row, so the next frame on it re-reads the relay's record. */
@@ -367,17 +457,22 @@ export class DeviceHub extends DurableObject<Env> {
 
   private async flushChat(ws: WebSocket): Promise<void> {
     const rows = this.sql
-      .exec<{ id: number; sender: string; message_id: string; pair_id_hash: string; pair_epoch: number; frame: string }>(
-        `SELECT id, sender, message_id, pair_id_hash, pair_epoch, frame FROM chat_mailbox ORDER BY id`)
+      .exec<{ id: number; sender: string; message_id: string; pair_id_hash: string; pair_epoch: number; frame: string; scope: string }>(
+        `SELECT id, sender, message_id, pair_id_hash, pair_epoch, frame, scope FROM chat_mailbox ORDER BY id`)
       .toArray();
     if (rows.length === 0) return;
     const self = this.getMeta("device");
     const live = new Map<string, boolean>();
     for (const row of rows) {
-      const key = `${row.pair_id_hash}:${row.pair_epoch}`;
+      const key = `${row.scope}:${row.pair_id_hash}:${row.pair_epoch}`;
       if (!live.has(key)) {
-        const pair = await this.pair(row.pair_id_hash, row.pair_epoch);
-        live.set(key, !!pair && !pair.revoked && (pair.owner === self || pair.sub === self) && (pair.owner === row.sender || pair.sub === row.sender));
+        if (row.scope === "match") {
+          const match = await this.match(row.pair_id_hash);
+          live.set(key, !!match && !match.ended && (match.a === self || match.b === self) && (match.a === row.sender || match.b === row.sender));
+        } else {
+          const pair = await this.pair(row.pair_id_hash, row.pair_epoch);
+          live.set(key, !!pair && !pair.revoked && (pair.owner === self || pair.sub === self) && (pair.owner === row.sender || pair.sub === row.sender));
+        }
       }
       let sent = false;
       if (live.get(key)) {
@@ -452,6 +547,16 @@ export class DeviceHub extends DurableObject<Env> {
 }
 
 function parseFrame(body: Record<string, unknown>): PeerFrame | null {
+  if (body.channel === "match") {
+    const { matchId, from, seq, sentAt, nonce, ciphertext } = body;
+    if (typeof matchId !== "string" || !HEX64.test(matchId)) return null;
+    if (from !== "a" && from !== "b") return null;
+    if (!Number.isSafeInteger(seq) || (seq as number) < 1) return null;
+    if (!Number.isSafeInteger(sentAt) || (sentAt as number) < 0) return null;
+    if (typeof nonce !== "string" || !AEAD_NONCE.test(nonce)) return null;
+    if (typeof ciphertext !== "string" || !CIPHERTEXT.test(ciphertext)) return null;
+    return { channel: "match", pairIdHash: matchId, pairEpoch: 0, from, seq: seq as number, sentAt: sentAt as number, nonce, ciphertext };
+  }
   const { pairIdHash, pairEpoch, from, seq, sentAt, nonce, ciphertext } = body;
   const channel = body.channel === undefined ? "live" : body.channel;
   if (channel !== "live" && channel !== "chat") return null;

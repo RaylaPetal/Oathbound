@@ -46,6 +46,9 @@ public enum ChatDelivery
 /// A chat message accepted from a pairing's peer; SentAt is the sender's clock, in unix seconds.
 public readonly record struct ChatReceived(PairingState Pairing, ChatPlaintext Message, long SentAt);
 
+/// A message accepted from a Looking for pair match.
+public readonly record struct MatchChatReceived(LfpMatchState Match, MatchPlaintext Message, long SentAt);
+
 /// The one way anything reaches a paired peer (collar/relay-messaging). Commands and notices are sealed for the pairing
 /// and sent on the live connection; nothing here touches game chat. Main thread only.
 public sealed class PeerMessenger
@@ -61,6 +64,8 @@ public sealed class PeerMessenger
     private readonly List<SafetyRetry> safetyRetries = new();
     private readonly Dictionary<(Guid, int), byte[]> keys = new();
     private readonly Dictionary<(Guid, int), byte[]> chatKeys = new();
+    private readonly Dictionary<string, byte[]> matchKeys = new();
+    private readonly MatchKeyService matchKey;
     /// Chat sends still waiting for their first ack; ids are random so a receipt sessions later can't be confused.
     private readonly Dictionary<string, DateTime> chatPending = new();
     private const string ChatIdPrefix = "c";
@@ -73,11 +78,12 @@ public sealed class PeerMessenger
 
     private sealed record SafetyRetry(Guid PairingId, string Text, DateTime GiveUpUtc);
 
-    public PeerMessenger(PluginConfig config, DeviceIdentityService identity, RelaySocket socket)
+    public PeerMessenger(PluginConfig config, DeviceIdentityService identity, RelaySocket socket, MatchKeyService matchKey)
     {
         this.config = config;
         this.identity = identity;
         this.socket = socket;
+        this.matchKey = matchKey;
         socket.MessageReceived += OnMessage;
         socket.StateChanged += OnStateChanged;
     }
@@ -96,6 +102,12 @@ public sealed class PeerMessenger
 
     /// Every result of a chat message this install sent, by the message id SendChat returned.
     public event Action<string, ChatDelivery>? ChatResult;
+
+    /// A message from a match partner. Only ever shown: nothing a match sends is applied.
+    public event Action<MatchChatReceived>? MatchChatReceived;
+
+    /// The relay says this install's matches changed.
+    public event Action? LfpHintReceived;
 
     public bool Connected => socket.State == RelaySocketState.Connected;
 
@@ -146,6 +158,49 @@ public sealed class PeerMessenger
             from = header.From,
             seq = header.Seq,
             sentAt = header.SentAt,
+            nonce,
+            ciphertext,
+        });
+        _ = socket.SendAsync(wire).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully && task.Result) return;
+            Plugin.Framework.RunOnFrameworkThread(() => ResolveChat(id, ChatDelivery.RelayUnreachable));
+        });
+        return (id, null);
+    }
+
+    /// Sends one message to a match. Same ids, acks and receipts as pairing chat (results follow through ChatResult).
+    public (string? MessageId, ChatDelivery? Failure) SendMatchChat(LfpMatchState match, MatchPlaintext message)
+    {
+        if (!match.IsActive) return (null, ChatDelivery.Refused);
+        if (!Connected) return (null, ChatDelivery.RelayUnreachable);
+
+        var seq = match.NextOutgoingSeq();
+        var sentAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + socket.ServerOffsetSeconds;
+        config.Save();
+        string nonce, ciphertext;
+        try
+        {
+            (nonce, ciphertext) = PeerMessageCrypto.SealMatch(message, MatchKeyFor(match), match.MatchId, match.Side, seq, sentAt);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Plugin.Log.Warning($"Match message not sent: {ex.Message}");
+            return (null, ChatDelivery.Refused);
+        }
+
+        var id = ChatIdPrefix + RelayCrypto.Base64UrlEncode(RelayCrypto.RandomBytes(12));
+        chatPending[id] = DateTime.UtcNow;
+        var wire = JsonSerializer.Serialize(new
+        {
+            type = "send",
+            id,
+            safety = false,
+            channel = "match",
+            matchId = match.MatchId,
+            from = match.Side,
+            seq,
+            sentAt,
             nonce,
             ciphertext,
         });
@@ -256,6 +311,9 @@ public sealed class PeerMessenger
             case "frame":
                 OnFrame(message);
                 break;
+            case "hint" when message.TryGetProperty("kind", out var kind) && kind.GetString() == "lfp":
+                LfpHintReceived?.Invoke();
+                break;
             case "hint":
                 if (message.TryGetProperty("pairIdHash", out var hash) && message.TryGetProperty("pairEpoch", out var epoch)
                     && epoch.TryGetInt32(out var e) && FindPairing(hash.GetString(), e) is { } hinted)
@@ -334,6 +392,11 @@ public sealed class PeerMessenger
 
     private void OnFrame(JsonElement frame)
     {
+        if (frame.TryGetProperty("channel", out var matchChannel) && matchChannel.GetString() == "match")
+        {
+            OnMatchFrame(frame);
+            return;
+        }
         if (!TryHeader(frame, out var header, out var nonce, out var ciphertext))
             return;
         if (frame.TryGetProperty("channel", out var channel) && channel.GetString() == "chat")
@@ -429,6 +492,79 @@ public sealed class PeerMessenger
         pairing.LastAcceptedChatSeq = header.Seq;
         config.Save();
         ChatReceived?.Invoke(new ChatReceived(pairing, message, header.SentAt));
+    }
+
+    /// Like pairing chat: no age limit, but the match, side and replay checks.
+    private void OnMatchFrame(JsonElement frame)
+    {
+        string matchId, from, nonce, ciphertext;
+        long seq, sentAt;
+        try
+        {
+            matchId = frame.GetProperty("matchId").GetString()!;
+            from = frame.GetProperty("from").GetString()!;
+            seq = frame.GetProperty("seq").GetInt64();
+            sentAt = frame.GetProperty("sentAt").GetInt64();
+            nonce = frame.GetProperty("nonce").GetString()!;
+            ciphertext = frame.GetProperty("ciphertext").GetString()!;
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            return;
+        }
+        if (matchId is null || from is null || nonce is null || ciphertext is null) return;
+
+        var match = config.LookingForPair.FindMatch(matchId);
+        if (match is not { IsActive: true })
+        {
+            Plugin.Log.Information("Match message ignored: no active match for it.");
+            return;
+        }
+        if (from != match.PeerSide)
+        {
+            Plugin.Log.Warning("Match message ignored: it claims this install's own side.");
+            return;
+        }
+        if (seq <= match.LastAcceptedSeq)
+        {
+            Plugin.Log.Warning("Match message ignored: replayed or out of order.");
+            return;
+        }
+
+        MatchPlaintext? message;
+        try
+        {
+            message = PeerMessageCrypto.OpenMatch(MatchKeyFor(match), matchId, from, seq, sentAt, nonce, ciphertext);
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+        if (message is null)
+        {
+            Plugin.Log.Warning("Match message ignored: it doesn't decrypt for this match.");
+            return;
+        }
+
+        match.LastAcceptedSeq = seq;
+        config.Save();
+        MatchChatReceived?.Invoke(new MatchChatReceived(match, message, sentAt));
+    }
+
+    private byte[] MatchKeyFor(LfpMatchState match)
+    {
+        if (matchKeys.TryGetValue(match.MatchId, out var key)) return key;
+        var peer = new EcPublicKeyJwk { Kty = "EC", Crv = "P-256", X = match.PeerMatchKeyX, Y = match.PeerMatchKeyY };
+        key = PeerMessageCrypto.DeriveMatchKey(matchKey.GetKey(), peer, match.MatchId);
+        matchKeys[match.MatchId] = key;
+        return key;
+    }
+
+    /// Drops a match's derived key once it has ended.
+    public void ForgetMatch(string matchId)
+    {
+        if (!matchKeys.Remove(matchId, out var key)) return;
+        Array.Clear(key);
     }
 
     private static bool TryHeader(JsonElement frame, out PeerFrameHeader header, out string nonce, out string ciphertext)

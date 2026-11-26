@@ -40,7 +40,7 @@ public sealed class CustomizePresetPickerWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.UserEdit, "Customize+ Profiles");
         ImGui.SameLine();
         IconGlyph.WrappedDisabled("Applied to your own character while this Gagged rule stays active.");
-        ImGui.Separator();
+        using var card = Card.Begin("customizePresetPickerCard");
 
         var result = plugin.CustomizePlusIpc.GetOwnProfiles();
         if (result.Status == CustomizePlusScanStatus.Unavailable)

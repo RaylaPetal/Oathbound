@@ -40,6 +40,7 @@ public sealed class FavoritesWindow : Window, IDisposable
         TutorialService.AnchorRect(TutorialAnchors.FavoritesHelp, windowPos + new Vector2(ImGui.GetWindowWidth() - titleBarHeight * 3f, 0),
             windowPos + new Vector2(ImGui.GetWindowWidth(), titleBarHeight));
 
+        using var card = Card.Begin("favoritesCard");
         var isOwnerMode = plugin.Configuration.ResolveActiveDirection() == PairingDirection.OwnerSide;
         if (!isOwnerMode)
         {
@@ -68,10 +69,15 @@ public sealed class FavoritesWindow : Window, IDisposable
             foreach (var cmd in favorites)
                 DrawFavoriteRow(cmd);
             ImGui.Unindent();
+            ImGui.Spacing();
         }
 
-        if (teleportFavorited)
+        if (teleportFavorited && ImGui.CollapsingHeader("Teleport###favTeleportGroup", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.Indent();
             DrawTeleportRow();
+            ImGui.Unindent();
+        }
     }
 
     private void DrawFavoriteRow(QuickCommand cmd)

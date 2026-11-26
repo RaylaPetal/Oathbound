@@ -30,6 +30,8 @@ import {
 import { type Channel, consumeItem, fetchRulebookKey, publishRulebookKey, uploadItem } from "./rulebook-helpers";
 import { fetchPictures, pictureId, syncPictures, uploadPicture } from "./picture-helpers";
 import { fetchChatImage, imageId, uploadChatImage } from "./chat-image-helpers";
+import { del as lfpDel, get as lfpGet, like as lfpLike, me as lfpMe, PNG, post as lfpPost, putProfile as lfpPut } from "./lfp-helpers";
+import { newDevice } from "./socket-helpers";
 import { ROUTE_WEIGHTS, routeKey } from "../src/lib/routeWeights";
 import { emptyTally, meteredFetcher, type WriteTally } from "./write-meter";
 
@@ -264,6 +266,76 @@ async function measureEveryRoute(): Promise<void> {
     await measure("POST /v1/rulebook/consume", async () => (await consumeItem(p, channel, 1)).r);
     await measure("POST /v1/mailbox/status", async () => (await postStatus(p, { mailbox: channel, sequence: 1, code: "decrypt_failed" })).r);
   }
+
+  // Presence: hello puts the key on file (the live connection then does the rest).
+  const pinger = await newDevice();
+  await measure("POST /v1/presence/hello", () =>
+    signedFetch("/v1/presence/hello", "POST", { type: "presence-hello", schemaVersion: 1, devicePublicKey: pinger.key.publicKeyJwk }, pinger.key.privateKey, pinger.id));
+
+  // Looking for pair: each write on its most expensive path.
+  const x = await newDevice();
+  const y = await newDevice();
+  const z = await newDevice();
+  await measure("POST /v1/lfp/me", () => lfpMe(x));
+  await lfpMe(y);
+  await lfpMe(z);
+  await measure("PUT /v1/lfp/profile", () => lfpPut(x));
+  await measure("PUT /v1/lfp/profile", () => lfpPut(x));
+  await lfpPut(y);
+  await lfpPut(z);
+  await env.RELAY_DB.prepare(`UPDATE lfp_profiles SET active_at = active_at - 7200 WHERE device_key_id = ?1`).bind(x.id).run();
+  await measure("POST /v1/lfp/profile/refresh", () => lfpPost(x, "/v1/lfp/profile/refresh"));
+  let xProfile!: { profileId: string; code: string; picture: string };
+  await measure("POST /v1/lfp/profile/code", async () => {
+    const r = await lfpPost(x, "/v1/lfp/profile/code");
+    xProfile = r.json.profile;
+    return r;
+  });
+  const lfpPicture = { type: "lfp-picture", schemaVersion: 1, contentType: "image/png", dataBase64Url: b64url(PNG) };
+  await measure("POST /v1/lfp/profile/picture", () => lfpPost(x, "/v1/lfp/profile/picture", lfpPicture));
+  await measure("POST /v1/lfp/profile/picture", async () => {
+    const r = await lfpPost(x, "/v1/lfp/profile/picture", lfpPicture);
+    xProfile = r.json.profile;
+    return r;
+  });
+  await measure("GET /v1/lfp/pictures/:id", async () => {
+    const r = await relayFetch(xProfile.picture);
+    await r.arrayBuffer();
+    return r;
+  });
+  await measure("DELETE /v1/lfp/profile/picture", () => lfpDel(x, "/v1/lfp/profile/picture"));
+  await measure("GET /v1/lfp/browse", () => lfpGet(y, "/v1/lfp/browse?role=sub"));
+  let yProfile!: { profileId: string };
+  await measure("GET /v1/lfp/code/:id", async () => {
+    const r = await lfpGet(y, `/v1/lfp/code/${xProfile.code}`);
+    return r;
+  });
+  yProfile = (await lfpMe(y)).json.profile;
+  const zProfile = (await lfpMe(z)).json.profile as { profileId: string };
+  await measure("POST /v1/lfp/likes/:id", () => lfpLike(y, xProfile.profileId));
+  await measure("GET /v1/lfp/likes", () => lfpGet(y, "/v1/lfp/likes"));
+  await measure("DELETE /v1/lfp/likes/:id", () => lfpDel(y, `/v1/lfp/likes/${xProfile.profileId}`));
+  await lfpLike(y, xProfile.profileId);
+  let matchId!: string;
+  await measure("POST /v1/lfp/likes/:id", async () => {
+    const r = await lfpLike(x, yProfile.profileId);
+    matchId = r.json.match.matchId;
+    return r;
+  });
+  await measure("GET /v1/lfp/matches", () => lfpGet(x, "/v1/lfp/matches"));
+  await measure("DELETE /v1/lfp/matches/:id", () => lfpDel(x, `/v1/lfp/matches/${matchId}`));
+  await lfpLike(z, xProfile.profileId);
+  await lfpLike(x, zProfile.profileId);
+  await lfpLike(z, yProfile.profileId);
+  await measure("POST /v1/lfp/blocks", () => lfpPost(x, "/v1/lfp/blocks", { type: "lfp-block", schemaVersion: 1, profileId: zProfile.profileId }));
+  let blockId!: string;
+  await measure("GET /v1/lfp/blocks", async () => {
+    const r = await lfpGet(x, "/v1/lfp/blocks");
+    blockId = r.json.blocks[0].blockId;
+    return r;
+  });
+  await measure("DELETE /v1/lfp/blocks/:id", () => lfpDel(x, `/v1/lfp/blocks/${blockId}`));
+  await measure("DELETE /v1/lfp/profile", () => lfpDel(z, "/v1/lfp/profile"));
 
   // Revocations last, since publishing one ends the pair.
   await measure("GET /v1/revocations/:id", () => signedFetch(`/v1/revocations/${p.pairIdHash}?sinceSequence=0`, "GET", undefined, p.owner.privateKey, p.ownerId));

@@ -59,6 +59,7 @@ everything instantly with their safeword.
 | 🧭 | **Teleport** | Bring your Sub to your side with one click, from anywhere outdoors: they change world, teleport (or travel to your housing ward), then walk, ride or fly right up to you. |
 | ↩️ | **Revert all** | One button in the Owner's header takes off everything you put on; gear goes back to what your Sub was wearing before. The collar and your pairing stay. |
 | 💬 | **Chat** | Talk with your partner in Oathbound's own 1:1 chat - across worlds and data centers, where `/tell` can't reach. If they're offline, your message waits for them (up to 7 days) and you see when it's delivered. Send pictures too - from a file or a snapshot of the game screen. It's end-to-end encrypted, and a gagged Sub's messages come out gagged. |
+| 💞 | **Looking for pair** | Not paired yet? Make a profile - a display name, pronouns, race, gender, whether you're an Owner, Sub or Switch and what you're looking for, an optional data center, a bio and an optional picture - and browse everyone else's. Public profiles are listed; a private one is seen only by people you give its code to. Like the ones you're interested in: nobody is told who liked them, but when two people like each other it's a **match** and you can chat, end-to-end encrypted. Your character stays private until you share it in the chat, and when you're ready you can send a pairing invite from there. Unmatch or block anyone, any time. For adults (18+) only. |
 | ⭐ | **Favorites & Sub Control** | Star the commands you use most, open them from the server info bar, or see every command in one panel. |
 | ☁️ | **Automatic sync** | The Sub's list of outfits, animations, moodles and restraints reaches the Owner by itself, end-to-end encrypted. |
 | 🏆 | **Achievements** | About sixty milestones for Owners and Subs - your first leash, an hour in a cage, a month collared, a thousand commands - with Bronze, Silver and Gold tiers and a few secrets. A popup and a sound mark each one. They're private: kept on your own computer and never sent to anyone, your partner included. |
@@ -347,8 +348,8 @@ plugin knows where to go. Like every command, it's encrypted for your paired Sub
 command likewise carries where the cage is.
 
 Commands, notices, chat, pairing, catalog sync, rulebooks and the collar warning go through a small Oathbound relay
-service. While you're logged in and paired, your plugin keeps one connection to it open, proven with your
-install's own key. Every command and notice is end-to-end encrypted for your pairing, and so are your catalog,
+service. While you're logged in, your plugin keeps one connection to it open, proven with your
+install's own key - paired or not, since that connection is also what counts you as online. Every command and notice is end-to-end encrypted for your pairing, and so are your catalog,
 the Owner's rulebook and the Sub's rulebook activity report: the relay never sees their contents or your
 character's name. It does see which anonymous pairing a message belongs to, when it was sent and how big it is,
 and it holds a message for at most two minutes if your partner's connection just dropped. Chat messages are
@@ -361,9 +362,23 @@ plain files like the rest of its settings; it isn't in your recovery backup. If 
 commands can't reach your partner, but your safeword, unpairing and everything already applied keep working. A Sub's restraint pictures go to their Owner the same way, as
 separately encrypted small copies: the relay keeps one only while that Sub's catalog still uses it, and only sees how
 many there are, their sizes and when they change - never the pictures or which restraint they belong to. While a Sub has a rulebook, their plugin uploads that
-encrypted activity report by itself, at most every 10 minutes and only when something changed. The relay also counts how many installs
-used it today or yesterday, as one anonymous number shown in the main window's header. It does keep,
+encrypted activity report by itself, at most every 10 minutes and only when something changed. The main window's header shows how many
+installs are online right now: the relay marks your install online while its connection is open (refreshed every 30
+minutes, or every 2 while the window is open) and offline when it closes, and keeps only that expiry and one
+anonymous total. Hovering it also shows how many installs used the relay today or yesterday. It does keep,
 under an anonymous id per pairing, whether that pairing has ended and whether a locked collar is still on.
+
+**Looking for pair** works differently, because a profile exists to be seen: the relay stores your profile fields and
+picture as you wrote them so other players can browse them, and anyone who sees your profile sees its picture. Your
+profile never contains your character's name or world, and other players never see your install's key. The relay
+does know which install a profile belongs to, which profiles you liked and blocked, and your matches - it uses that
+to keep likes private and blocks working. Likes are never shown to the person you liked. Match chat is end-to-end
+encrypted with a separate key made only for Looking for pair, waits up to 7 days for a partner who's offline, and is
+deleted when either of you unmatches or blocks. A character you share in a match chat is encrypted the same way. Your
+plugin refreshes your profile by itself once a day while you're logged in, and checks for new matches every 30 minutes
+or when the relay says something changed; nothing goes to anyone else. A profile not refreshed for 60 days stops being listed and loses its picture (your plugin restores both when you come
+back), and one not refreshed for a year is deleted. There's no in-plugin reporting yet: if someone makes you
+uncomfortable, block them.
 Each side of a pairing also leaves one small record there listing its linked characters and which one it's on,
 end-to-end encrypted so only your partner's plugin can read it. It's sent when you log into a linked character and
 when you change which characters are linked.

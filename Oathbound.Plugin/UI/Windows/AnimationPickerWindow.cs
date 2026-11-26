@@ -68,7 +68,7 @@ public sealed class AnimationPickerWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.TheaterMasks, "Animation Library");
         ImGui.SameLine();
         IconGlyph.WrappedDisabled("Choose the exact named option and trigger for this alias.");
-        ImGui.Separator();
+        using var card = Card.Begin("animationPickerCard", noScroll: true);
 
         var buttonWidth = Layout.Scaled(82);
         ImGui.SetNextItemWidth(Math.Max(1f, ImGui.GetContentRegionAvail().X - buttonWidth - ImGui.GetStyle().ItemSpacing.X));

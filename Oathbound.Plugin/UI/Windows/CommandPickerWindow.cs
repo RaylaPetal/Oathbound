@@ -49,7 +49,7 @@ public sealed class CommandPickerWindow : Window, IDisposable
         IconGlyph.Text(FontAwesomeIcon.Terminal, "Your commands");
         if (purpose.Length > 0)
             IconGlyph.WrappedDisabled(purpose);
-        ImGui.Separator();
+        using var card = Card.Begin("commandPickerCard", noScroll: true);
 
         var groups = QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands).Where(g => g.Commands.Count > 0).ToList();
         if (groups.Count == 0)

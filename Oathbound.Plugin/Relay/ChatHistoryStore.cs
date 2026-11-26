@@ -45,6 +45,12 @@ public sealed class ChatEntry
     public string? ImageFile { get; set; }
     public int ImageWidth { get; set; }
     public int ImageHeight { get; set; }
+
+    /// Match chat only: a shared character ("character") or a pairing invite ("invite"); null for text.
+    public string? Special { get; set; }
+    /// A received invite's pairing code and the role it offers the receiver ("owner" or "sub").
+    public string? InviteCode { get; set; }
+    public string? InviteRole { get; set; }
 }
 
 public enum ChatImageState
@@ -72,7 +78,11 @@ public sealed class ChatConversation
     public int Unread { get; set; }
     /// The relay last said the partner can't receive chat yet.
     public bool PeerNeedsUpdate { get; set; }
+    /// Set for a Looking for pair match's conversation, whose PairingId is then the match's local id.
+    public string? MatchId { get; set; }
     public List<ChatEntry> Messages { get; set; } = new();
+
+    public bool IsMatch => MatchId is not null;
 }
 
 /// Chat history, one file per pairing under the config folder, so a busy chat never rewrites the main config.
@@ -123,7 +133,7 @@ public sealed class ChatHistoryStore
     public ChatConversation For(PairingState pairing)
     {
         var matches = conversations.Values
-            .Where(c => c.PairingId == pairing.Id || (pairing.PeerDeviceKeyId is { } key && c.PeerDeviceKeyId == key))
+            .Where(c => !c.IsMatch && (c.PairingId == pairing.Id || (pairing.PeerDeviceKeyId is { } key && c.PeerDeviceKeyId == key)))
             .OrderBy(c => c.PairingId == pairing.Id ? 1 : 0)
             .ThenBy(c => c.PairingId)
             .ToList();
@@ -159,6 +169,23 @@ public sealed class ChatHistoryStore
         {
             conversation.PeerName = pairing.PeerName!;
             conversation.PeerWorld = pairing.PeerWorld ?? "";
+            MarkDirty(conversation);
+        }
+        return conversation;
+    }
+
+    /// A match's conversation, created on first use.
+    public ChatConversation ForMatch(LfpMatchState match)
+    {
+        if (!conversations.TryGetValue(match.LocalId, out var conversation))
+        {
+            conversation = new ChatConversation { PairingId = match.LocalId, MatchId = match.MatchId };
+            conversations[match.LocalId] = conversation;
+        }
+        if (conversation.PeerName != match.Label)
+        {
+            conversation.PeerName = match.Label;
+            conversation.PeerWorld = match.PeerCharacterWorld ?? "";
             MarkDirty(conversation);
         }
         return conversation;

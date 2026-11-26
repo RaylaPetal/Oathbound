@@ -37,7 +37,11 @@ public sealed class ChatImageService
 
     /// A PNG or JPEG fit to send: the original when it's already small enough, else scaled down and re-encoded as JPEG.
     /// Throws InvalidOperationException with a message for the user when it can't be.
-    public static async Task<Prepared> PrepareAsync(string sourcePath)
+    public static Task<Prepared> PrepareAsync(string sourcePath) =>
+        PrepareAsync(sourcePath, ChatImageCrypto.MaxSidePixels, ChatImageCrypto.MaxPlaintextBytes, "send");
+
+    /// `verb` finishes the user-facing messages ("too big to send").
+    public static async Task<Prepared> PrepareAsync(string sourcePath, int maxSide, int maxBytes, string verb)
     {
         byte[] original;
         try
@@ -48,20 +52,20 @@ public sealed class ChatImageService
         {
             throw new InvalidOperationException("That picture couldn't be read.");
         }
-        var extension = ExtensionFor(original) ?? throw new InvalidOperationException("Only PNG and JPEG pictures can be sent.");
+        var extension = ExtensionFor(original) ?? throw new InvalidOperationException($"Only PNG and JPEG pictures can be {(verb == "send" ? "sent" : "used")}.");
 
         using var source = await Plugin.TextureProvider.CreateFromImageAsync(original).ConfigureAwait(false);
-        if (source.Width <= ChatImageCrypto.MaxSidePixels && source.Height <= ChatImageCrypto.MaxSidePixels && original.Length <= ChatImageCrypto.MaxPlaintextBytes)
+        if (source.Width <= maxSide && source.Height <= maxSide && original.Length <= maxBytes)
             return new Prepared(original, extension, source.Width, source.Height);
 
         var jpeg = Plugin.TextureReadback.GetSupportedImageEncoderInfos()
             .FirstOrDefault(c => c.Extensions.Any(e => e.Equals(".jpg", StringComparison.OrdinalIgnoreCase) || e.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)));
         if (jpeg is null)
-            throw new InvalidOperationException($"That picture is too big to send (over {ChatImageCrypto.MaxPlaintextBytes / 1024} KB or {ChatImageCrypto.MaxSidePixels} px), and this system can't shrink pictures. Try a smaller one.");
+            throw new InvalidOperationException($"That picture is too big to {verb} (over {maxBytes / 1024} KB or {maxSide} px), and this system can't shrink pictures. Try a smaller one.");
 
         for (var frame = 1f; frame >= 0.25f; frame *= 0.8f)
         {
-            var scale = MathF.Min(1f, MathF.Min(ChatImageCrypto.MaxSidePixels * frame / source.Width, ChatImageCrypto.MaxSidePixels * frame / source.Height));
+            var scale = MathF.Min(1f, MathF.Min(maxSide * frame / source.Width, maxSide * frame / source.Height));
             using var scaled = await Plugin.TextureProvider.CreateFromExistingTextureAsync(source, new TextureModificationArgs
             {
                 NewWidth = Math.Max(1, (int)(source.Width * scale)),
@@ -74,11 +78,11 @@ public sealed class ChatImageService
                 using var stream = new MemoryStream();
                 await Plugin.TextureReadback.SaveToStreamAsync(scaled, jpeg.ContainerGuid, stream,
                     new Dictionary<string, object> { ["ImageQuality"] = quality }, leaveWrapOpen: true, leaveStreamOpen: true).ConfigureAwait(false);
-                if (stream.Length <= ChatImageCrypto.MaxPlaintextBytes)
+                if (stream.Length <= maxBytes)
                     return new Prepared(stream.ToArray(), ".jpg", scaled.Width, scaled.Height);
             }
         }
-        throw new InvalidOperationException("That picture couldn't be made small enough to send.");
+        throw new InvalidOperationException($"That picture couldn't be made small enough to {verb}.");
     }
 
     public static string FileNameFor(string imageId, Prepared image) => imageId + image.Extension;

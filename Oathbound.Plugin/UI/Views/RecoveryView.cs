@@ -173,16 +173,20 @@ public sealed class RecoveryCodeWindow : Window
     public override void Draw()
     {
         var code = plugin.BackupService.GetFormattedCode();
-        ImGui.TextWrapped("Restores your pairings after a reinstall or on a new PC. Save it somewhere safe, like a password manager.");
-        ImGui.Spacing();
-        using (ImRaii.PushColor(ImGuiCol.Text, Theme.Accent))
-            ImGui.TextUnformatted(code ?? "(unavailable)");
-        ImGui.SameLine();
-        if (code is not null && ImGui.Button("Copy##recoveryDialogCopy"))
-            ImGui.SetClipboardText(code);
-        ImGui.Spacing();
-        IconGlyph.WrappedDisabled("You can see it again any time in Settings > Identity & Pairing > Recovery code.");
-        ImGui.Spacing();
+        using (Section.Begin("recoveryCodeDialog"))
+        {
+            ImGui.TextWrapped("Restores your pairings after a reinstall or on a new PC. Save it somewhere safe, like a password manager.");
+            ImGui.Spacing();
+            using (ImRaii.PushColor(ImGuiCol.Text, Theme.Accent))
+                ImGui.TextUnformatted(code ?? "(unavailable)");
+            ImGui.SameLine();
+            if (code is not null && ImGui.Button("Copy##recoveryDialogCopy"))
+                ImGui.SetClipboardText(code);
+            ImGui.Spacing();
+            IconGlyph.WrappedDisabled("You can see it again any time in Settings > Identity & Pairing > Recovery code.");
+        }
+
+        using var primary = Theme.PushPrimaryButton();
         if (ImGui.Button("I saved it"))
         {
             plugin.BackupService.AcknowledgeCode();

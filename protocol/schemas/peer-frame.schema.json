@@ -9,8 +9,11 @@
     { "$ref": "#/$defs/authOk" },
     { "$ref": "#/$defs/send" },
     { "$ref": "#/$defs/frame" },
+    { "$ref": "#/$defs/matchSend" },
+    { "$ref": "#/$defs/matchFrame" },
     { "$ref": "#/$defs/ack" },
     { "$ref": "#/$defs/hint" },
+    { "$ref": "#/$defs/lfpHint" },
     { "$ref": "#/$defs/error" }
   ],
   "$defs": {
@@ -31,6 +34,58 @@
         "ciphertext": { "description": "AES-GCM ciphertext with tag, base64url.", "type": "string", "pattern": "^[A-Za-z0-9_-]{22,10944}$" }
       }
     },
+    "matchHeader": {
+      "description": "Routing fields of a match chat message (constants.json matchChat).",
+      "type": "object",
+      "required": ["channel", "matchId", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "channel": { "const": "match" },
+        "matchId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "from": { "enum": ["a", "b"] },
+        "seq": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "sentAt": { "$ref": "common.schema.json#/$defs/unixSeconds" },
+        "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16}$" },
+        "ciphertext": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22,10944}$" }
+      }
+    },
+    "matchSend": {
+      "description": "client -> relay: a match chat message for the other member of the match. Acks and receipts as for chat.",
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/matchHeader" }],
+      "required": ["type", "id", "channel", "matchId", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "type": { "const": "send" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$" },
+        "safety": { "const": false },
+        "channel": true, "matchId": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
+      }
+    },
+    "matchFrame": {
+      "description": "relay -> client: a match chat message, exactly as sent minus id and safety.",
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/matchHeader" }],
+      "required": ["type", "channel", "matchId", "from", "seq", "sentAt", "nonce", "ciphertext"],
+      "properties": {
+        "type": { "const": "frame" },
+        "channel": true, "matchId": true, "from": true, "seq": true, "sentAt": true, "nonce": true, "ciphertext": true
+      }
+    },
+    "lfpHint": {
+      "description": "relay -> client: a match was made or ended, or a block changed this device's matches; fetch GET /v1/lfp/matches.",
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "kind"],
+      "properties": { "type": { "const": "hint" }, "kind": { "const": "lfp" } }
+    },
+    "matchPlaintext": {
+      "description": "The decrypted ciphertext of a match-channel frame. role is what the receiver of an invite would become.",
+      "type": "object",
+      "required": ["v", "kind"],
+      "oneOf": [
+        { "properties": { "v": { "const": 1 }, "kind": { "const": "text" }, "text": { "type": "string", "minLength": 1, "maxLength": 1000 } }, "required": ["text"], "additionalProperties": false },
+        { "properties": { "v": { "const": 1 }, "kind": { "const": "character" }, "name": { "type": "string", "minLength": 1, "maxLength": 32 }, "world": { "type": "string", "minLength": 1, "maxLength": 32 } }, "required": ["name", "world"], "additionalProperties": false },
+        { "properties": { "v": { "const": 1 }, "kind": { "const": "invite" }, "code": { "type": "string", "minLength": 16, "maxLength": 24 }, "role": { "enum": ["owner", "sub"] } }, "required": ["code", "role"], "additionalProperties": false }
+      ]
+    },
     "challenge": {
       "description": "relay -> client, once on connect.",
       "type": "object", "additionalProperties": false,
@@ -49,7 +104,7 @@
         "type": { "const": "auth" },
         "deviceKeyId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" },
-        "features": { "description": "What this client supports; \"chat\" lets the relay forward and store chat for it.", "type": "array", "items": { "enum": ["chat"] }, "uniqueItems": true }
+        "features": { "description": "What this client supports; \"chat\" lets the relay forward and store chat for it, \"match\" match chat (constants.json matchChat).", "type": "array", "items": { "enum": ["chat", "match"] }, "uniqueItems": true }
       }
     },
     "authOk": {

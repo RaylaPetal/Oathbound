@@ -9,29 +9,26 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.3.1", "2026-11-23", "Know what happened",
+        new("0.3.4.0", "2026-11-26", "Looking for pair",
         [
             new("New",
             [
-                "Owners: every command now tells you how it went - applied, refused with the reason (like \"Outfit is off\" or \"caged\"), or \"sent, not confirmed\" if your Sub's plugin doesn't answer. Banners, Tie off / Untie and your status estimate follow what really happened, not just what you sent.",
-                "Rulebooks: when your Sub accepts or declines a version, you see it within seconds - and a decline can say why. Subs get a badge on the Rulebook tile while a new version or oath is waiting.",
-                "Catalogs and rulebooks only count as delivered once the other side has actually read them. If something couldn't be read, the sender sees why and sends it again, and the problem stays on screen until it's fixed.",
-                "Owners: \"Get latest\" replaces Check now and Request refresh - one button that asks your Sub's plugin for its newest catalog right away.",
-                "Chat: an undelivered message now has a Retry.",
+                "Looking for pair: not paired yet? Make a profile - display name, pronouns, race, gender, whether you're an Owner, Sub or Switch and what you're looking for, an optional data center, a bio and a picture - and browse everyone else's. For adults (18+) only.",
+                "Profiles are public (listed in Browse) or private (seen only with your profile code). Your character's name and world are never on it.",
+                "Like the profiles you're interested in. Nobody is told who liked them - but when two people like each other it's a match, and you both get a notice.",
+                "A match gets its own end-to-end encrypted chat in the Chat window. Share your character when you're ready, and send a pairing invite right from the chat with the + button.",
+                "Unmatch or block anyone at any time. A block hides you from each other for good, even if they make a new profile code.",
+                "The header now shows how many Oathbound players are online right now, refreshed every couple of minutes while the main window is open.",
             ]),
-            new("Easier to find your way",
+            new("Changed",
             [
-                "Hints take you where they point, with a button: Go to Sync, or straight to the right Settings tab.",
-                "A greyed-out Send always tells you why when you hover it.",
-                "Deleting something asks first, and \"Clear all\" is now \"Clear imported\" - it keeps what you wrote yourself.",
-                "Colours mean one thing each: red for problems, amber for cautions, blue for information.",
-                "One set of words everywhere: points and milestones in rulebooks, \"Unlock outfit\", \"Full Body Cuffed\", and no more leftovers from when commands were tells.",
-                "Toy triggers pick their pattern from a list, so a typo can't break them. Restraint editors share one Save / Discard. Every ? starts a tour, and Achievements has one now.",
-                "Paired Subs can change their trigger phrase again.",
+                "Favorites moved from the module grid to the star in the main window's title bar.",
+                "Dialogs and windows share the same card look.",
             ]),
             new("Good to know",
             [
-                "The new confirmations need this update on both sides. With a partner who hasn't updated yet, everything works as before - you just won't see the confirmations.",
+                "This is a testing build. To be counted as online and use Looking for pair, Oathbound now keeps its relay connection while you're logged in, even with no pairing. It only checks in every 30 minutes and never says who you are.",
+                "There's no in-plugin reporting yet - if someone makes you uncomfortable, block them.",
             ]),
         ]);
 }

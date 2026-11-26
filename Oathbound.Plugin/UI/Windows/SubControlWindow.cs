@@ -58,13 +58,6 @@ public sealed class SubControlWindow : Window, IDisposable
             return;
         }
 
-        using var colors = ImRaii.PushColor(ImGuiCol.Header, Theme.TileBg)
-            .Push(ImGuiCol.HeaderHovered, Theme.TileBgHover)
-            .Push(ImGuiCol.HeaderActive, Theme.TileBgHover)
-            .Push(ImGuiCol.FrameBg, Theme.TileBg)
-            .Push(ImGuiCol.FrameBgHovered, Theme.TileBgHover);
-        using var rounding = ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding);
-
         var pairing = plugin.Configuration.GetActivePairing();
         estimate = pairing is { Direction: PairingDirection.OwnerSide } ? plugin.OwnerStatusEstimates.ForBanner(pairing) : null;
         collarLocked = pairing is null || plugin.OwnerCollarStatus.For(pairing) is not { } collar || collar.State != CollarStatusReporter.Unlocked;
@@ -413,9 +406,10 @@ public sealed class SubControlWindow : Window, IDisposable
         // Drawn after the contents so it can sit in the middle of the tile, however many lines they took.
         ImGui.SetCursorScreenPos(new Vector2(max.X - pad - SendButtonSize, (min.Y + max.Y - SendButtonSize) / 2));
         bool clicked;
-        var accent = tint ?? Theme.Accent;
         using (ImRaii.Disabled(!enabled))
-        using (ImRaii.PushColor(ImGuiCol.Button, accent with { W = 0.8f }).Push(ImGuiCol.ButtonHovered, tint ?? Theme.AccentHover).Push(ImGuiCol.ButtonActive, accent))
+        using (tint is { } tinted
+                   ? ImRaii.PushColor(ImGuiCol.Button, tinted with { W = 0.8f }).Push(ImGuiCol.ButtonHovered, tinted).Push(ImGuiCol.ButtonActive, tinted)
+                   : Theme.PushPrimaryButton())
             clicked = IconGlyph.CenteredButton("send", FontAwesomeIcon.PaperPlane, SendButtonSize, new Vector4(1f, 1f, 1f, 1f));
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(tooltip);

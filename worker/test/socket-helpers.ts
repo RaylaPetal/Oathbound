@@ -6,6 +6,8 @@ export class TestSocket {
   private readonly queue: Record<string, unknown>[] = [];
   private waiters: ((m: Record<string, unknown>) => void)[] = [];
   closed: { code: number; reason: string } | null = null;
+  /** The online count the relay sends right after auth-ok. */
+  presence: Record<string, unknown> | null = null;
   private closeWaiters: (() => void)[] = [];
 
   constructor(readonly ws: WebSocket) {
@@ -88,6 +90,9 @@ export async function connect(device: Device, features?: string[]): Promise<Test
   socket.send({ type: "auth", deviceKeyId: device.id, signature, ...(features ? { features } : {}) });
   const ok = await socket.next();
   if (ok.type !== "auth-ok") throw new Error(`auth failed: ${JSON.stringify(ok)}`);
+  const presence = await socket.next();
+  if (presence.type !== "presence") throw new Error(`expected presence: ${JSON.stringify(presence)}`);
+  socket.presence = presence;
   return socket;
 }
 

@@ -40,6 +40,16 @@ export const QUOTA_LIMITS = {
   deviceSafeword: { windowSeconds: 3600, maxCount: 30 },
   // One per login on a linked character per pairing, plus list changes and retries.
   deviceCharacters: { windowSeconds: 3600, maxCount: 30 },
+  // collar/looking-for-pair, per device (protocol/constants.json lookingForPair).
+  lfpProfileWrite: { windowSeconds: 86400, maxCount: 20 },
+  lfpPictureUpload: { windowSeconds: 86400, maxCount: 5 },
+  lfpLike: { windowSeconds: 86400, maxCount: 100 },
+  lfpBlock: { windowSeconds: 86400, maxCount: 50 },
+  lfpBrowse: { windowSeconds: 3600, maxCount: 60 },
+  lfpCodeLookup: { windowSeconds: 3600, maxCount: 30 },
+  lfpRead: { windowSeconds: 3600, maxCount: 120 },
+  // Withdrawing a like, unmatching and unblocking.
+  lfpOps: { windowSeconds: 3600, maxCount: 60 },
   endpointGlobal: { windowSeconds: 60, maxCount: 6000 },
   catalogUploadBytes: { windowSeconds: 3600, maxCount: 20, maxBytes: 8 * 1024 * 1024 },
   // catalog-pictures: a first publish after updating sends every picture once (dozens at most 64 KB each); after

@@ -115,6 +115,7 @@ public sealed class Plugin : IDalamudPlugin
     public RelaySocket RelaySocket { get; }
     public PeerMessenger PeerMessenger { get; }
     public ChatService Chat { get; }
+    public LookingForPairService LookingForPair { get; }
     public PairingService PairingService { get; }
     public CodePairingService CodePairingService { get; }
     public BackupService BackupService { get; }
@@ -150,7 +151,7 @@ public sealed class Plugin : IDalamudPlugin
     public OwnerCageStatusStore OwnerCageStatus { get; }
     public OwnerSafewordAlerts OwnerSafewordAlerts { get; }
     public BlindfoldService BlindfoldService { get; }
-    public RelayActivity RelayActivity { get; } = new();
+    public RelayActivity RelayActivity { get; }
     private readonly CollarStatusReporter collarStatusReporter;
     public CharacterRecordService CharacterRecords { get; }
     public StatusIndicatorState StatusIndicators { get; }
@@ -227,8 +228,13 @@ public sealed class Plugin : IDalamudPlugin
         RevocationService = new RevocationService(Configuration, RelayClient, DeviceIdentityService);
         RelaySocket = new RelaySocket(RelayClient.RelayOrigin, () => DeviceIdentityService.DeviceKeyId, DeviceIdentityService.GetSigningKey,
             action => Framework.RunOnFrameworkThread(action), message => Log.Information(message));
-        PeerMessenger = new PeerMessenger(Configuration, DeviceIdentityService, RelaySocket);
+        Configuration.LookingForPair ??= new();
+        var matchKeys = new MatchKeyService(Configuration);
+        PeerMessenger = new PeerMessenger(Configuration, DeviceIdentityService, RelaySocket, matchKeys);
+        RelayActivity = new RelayActivity(Configuration, RelayClient, RelaySocket);
         Chat = new ChatService(Configuration, PeerMessenger, ChatGagService, RelayClient);
+        LookingForPair = new LookingForPairService(Configuration, RelayClient, matchKeys, PeerMessenger);
+        LookingForPair.OpenChatRequested += Chat.RequestOpen;
 
         TitleCommand = new TitleCommand(Configuration, HonorificIpc, RuntimeState);
         // Built before Outfit/Follow/Restraint/Collar, which hold their attached moodles through it.
@@ -568,6 +574,7 @@ public sealed class Plugin : IDalamudPlugin
         ActionBlockService.Dispose();
         cageExitGuard.Dispose();
         ChatWindow.Dispose();
+        LookingForPair.Dispose();
         Chat.Dispose();
         ChatGagService.Dispose();
         IntifaceIpc.Dispose();
@@ -649,8 +656,14 @@ public sealed class Plugin : IDalamudPlugin
             panicHotkeyWasPressed = isPressed;
         }
 
-        RelaySocket.Wanted = ClientState.IsLoggedIn && Configuration.ActivePairings.Any(p => p.PairIdHash is not null);
+        // Every logged-in install keeps its connection, which is what makes it count as online; an idle one costs nothing.
+        RelaySocket.Wanted = ClientState.IsLoggedIn && (RelayActivity.Introduced || Configuration.ActivePairings.Any(p => p.PairIdHash is not null) || LookingForPair.WantsConnection);
         PeerMessenger.Tick();
+        if (ClientState.IsLoggedIn)
+        {
+            LookingForPair.Tick();
+            RelayActivity.Tick(CollarWindow.IsOpen);
+        }
         commandReceiptSender.Tick();
         OwnerReceipts.Tick();
         Chat.Tick();

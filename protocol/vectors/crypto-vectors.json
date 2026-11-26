@@ -332,5 +332,20 @@
     "additionalAuthenticatedDataUtf8": "oathbound-chat-image-v1|yMfGxcTDwsHAv769vLu6uQ",
     "plaintextHex": "89504e470d0a1a0a0000000d49484452",
     "blobBase64Url": "QEFCQ0RFRkdISUpL1VmG2alKZDBRSvGYUrk6G_P2lPr81csb5CiMBnzgek4"
+  },
+  "matchChat": {
+    "description": "Match chat (collar/match-chat): static ECDH between the two members' match keys (not device keys), salt SHA-256(UTF-8 matchId + \"|0\"), HKDF-SHA256 info \"oathbound-match-chat-v1\" + matchId + \"0\", AES-256-GCM with AAD = JCS of {channel: \"match\", matchId, from: \"a\" | \"b\", seq, sentAt}.",
+    "matchId": "3c1f9a0b7d2e4f6a8b9c0d1e2f3a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5",
+    "from": "a",
+    "seq": 1700004000789,
+    "sentAt": 1700004000,
+    "sharedSecretHex": "5a3e91c07b44d2f6e18a09bc3d7f2e6541a8c9d0b2e3f4a5968778695a4b3c2d",
+    "saltSha256Hex": "95a2a589ee4a350638beb749f2e2e1795677fb9053b0c0da857d44ad9e75f56b",
+    "infoUtf8": "oathbound-match-chat-v13c1f9a0b7d2e4f6a8b9c0d1e2f3a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c50",
+    "derivedAesKeyHex": "0a4f192828b723ca9f6006ed115e6b00b814a3e3e217156b8f2828d23edfc0a4",
+    "additionalAuthenticatedDataCanonicalJson": "{\"channel\":\"match\",\"from\":\"a\",\"matchId\":\"3c1f9a0b7d2e4f6a8b9c0d1e2f3a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5\",\"sentAt\":1700004000,\"seq\":1700004000789}",
+    "plaintextUtf8": "{\"v\":1,\"kind\":\"text\",\"text\":\"Hi! Loved your bio - Light DC too?\"}",
+    "nonceBase64Url": "EBESExQVFhcYGRob",
+    "ciphertextWithTagBase64Url": "kqwVQ0uZlKCRO0ICbXh1znzRS_qp3LhsRLWf7QuPgCKqvCUeyX6Jta-nLOd691bYtKvcGKqo6PpHE20-MtSTjBTePK1_yAIuuwMHB3GSlGe5"
   }
 }

@@ -42,12 +42,9 @@ public class CollarWindow : Window, IDisposable
         ("rulebook", FontAwesomeIcon.Book, "Rulebook"),
         ("reactions", FontAwesomeIcon.Magic, "Reactions"),
         ("sync", FontAwesomeIcon.CloudDownloadAlt, "Sync"),
-        (FavoritesNavId, FontAwesomeIcon.Star, "Favorites"),
         ("achievements", FontAwesomeIcon.Trophy, "Achievements"),
+        ("lookingforpair", FontAwesomeIcon.Heart, "Looking for pair"),
     ];
-
-    /// Opens FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
-    private const string FavoritesNavId = "favorites";
 
     public CollarWindow(Plugin plugin, ModuleWindow moduleWindow) : base("Oathbound###CollarWindow")
     {
@@ -71,6 +68,13 @@ public class CollarWindow : Window, IDisposable
             Icon = FontAwesomeIcon.LifeRing,
             Click = _ => HelpLinks.RequestOpen(),
             ShowTooltip = () => ImGui.SetTooltip("Help & bug reports"),
+        });
+        // FavoritesWindow, not QuickAccessMenu's popup, whose links only make sense outside the main window.
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Star,
+            Click = _ => plugin.FavoritesWindow.IsOpen = true,
+            ShowTooltip = () => ImGui.SetTooltip("Favorites"),
         });
     }
 
@@ -108,10 +112,11 @@ public class CollarWindow : Window, IDisposable
         LastPosition = ImGui.GetWindowPos();
         LastSize = ImGui.GetWindowSize();
 
-        // Title-bar buttons aren't ImGui items, so the area of the close button and our three buttons (cog among them)
-        // is reported by position.
+        // Title-bar buttons aren't ImGui items, so their areas are reported by position: the close button and our four
+        // (cog among them), and the star, added last and so drawn leftmost.
         var titleBarHeight = ImGui.GetFrameHeight();
-        TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
+        TutorialService.AnchorRect(TutorialAnchors.MainSettings, LastPosition + new Vector2(LastSize.X - titleBarHeight * 5f, 0), LastPosition + new Vector2(LastSize.X, titleBarHeight));
+        TutorialService.AnchorRect(TutorialAnchors.NavFavorites, LastPosition + new Vector2(LastSize.X - titleBarHeight * 5f, 0), LastPosition + new Vector2(LastSize.X - titleBarHeight * 4f, titleBarHeight));
 
         HelpLinks.Draw(plugin);
         DrawCharacterHeader();
@@ -121,12 +126,15 @@ public class CollarWindow : Window, IDisposable
         // Dependency gating is re-evaluated every frame so a tile re-enables once its plugin appears.
         var rulebookWaiting = plugin.RulebookService.NeedsAttention();
         var clicked = NavBar.Draw(NavItems, id => DependencyGates.ModuleBlockedReason(plugin, id),
-            id => id switch { FavoritesNavId => TutorialAnchors.NavFavorites, "achievements" => TutorialAnchors.NavAchievements, _ => null },
-            id => id == "rulebook" && rulebookWaiting ? ("!", "A rulebook version or an oath offer is waiting for your answer.") : null);
+            id => id == "achievements" ? TutorialAnchors.NavAchievements : null,
+            id => id switch
+            {
+                "rulebook" when rulebookWaiting => ("!", "A rulebook version or an oath offer is waiting for your answer."),
+                "lookingforpair" when plugin.LookingForPair.UnseenMatches is var n and > 0 => (n.ToString(), n == 1 ? "You have a new match." : $"You have {n} new matches."),
+                _ => null,
+            });
         TutorialService.Anchor(TutorialAnchors.MainNav);
-        if (clicked == FavoritesNavId)
-            plugin.FavoritesWindow.IsOpen = true;
-        else if (clicked is not null)
+        if (clicked is not null)
             moduleWindow.Show(clicked);
 
         // Not on the appearing frame: widths aren't settled, so wrapped text measures far too tall.
@@ -138,9 +146,11 @@ public class CollarWindow : Window, IDisposable
     /// Right-aligned on the name's line when it fits, else on its own line, so it never pushes the name aside.
     private void DrawRelayActivity()
     {
-        if (plugin.RelayActivity.Current is not { } count)
+        var activity = plugin.RelayActivity;
+        var online = activity.OnlineNow;
+        if (online is null && activity.Current is null)
             return;
-        var text = $"{count} active";
+        var text = online is { } now ? $"{now} online" : $"{activity.Current} active";
         var dot = ImGui.GetTextLineHeight() * 0.35f;
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var width = dot * 2 + spacing + ImGui.CalcTextSize(text).X;
@@ -159,7 +169,9 @@ public class CollarWindow : Window, IDisposable
         ImGui.SameLine(0, spacing);
         ImGui.TextDisabled(text);
         if (hovered || ImGui.IsItemHovered())
-            ImGui.SetTooltip("Oathbound players whose plugin used the relay today or yesterday. Counts installs, never who they are.");
+            ImGui.SetTooltip((online is not null ? "Oathbound players in game right now, updated every couple of minutes while this window is open." : "Oathbound players whose plugin used the relay today or yesterday.")
+                + (online is not null && activity.Current is { } recent ? $"\n{recent} used it today or yesterday." : "")
+                + "\nCounts installs, never who they are.");
     }
 
     /// The support icons sit right-aligned under the relay count; the details wrap short of them.

@@ -55,32 +55,27 @@ public static class NavBar
     private static string? DrawItem((string Id, FontAwesomeIcon Icon, string Tooltip) item, Vector2 size, string? disabledReason, (string Text, string Tooltip)? badge)
     {
         string? result = null;
-        using (ImRaii.PushColor(ImGuiCol.Button, Theme.TileBg))
-        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, Theme.TileBgHover))
-        using (ImRaii.PushStyle(ImGuiStyleVar.FrameRounding, Theme.TileRounding))
+        // Wraps the whole cell so icon and label dim with the button.
+        using (ImRaii.Disabled(disabledReason is not null))
         {
-            // Wraps the whole cell so icon and label dim with the button.
-            using (ImRaii.Disabled(disabledReason is not null))
-            {
-                ImGui.BeginGroup();
-                var start = ImGui.GetCursorPos();
-                if (ImGui.Button($"##{item.Id}", size))
-                    result = item.Id;
+            ImGui.BeginGroup();
+            var start = ImGui.GetCursorPos();
+            if (ImGui.Button($"##{item.Id}", size))
+                result = item.Id;
 
-                ImGui.SetCursorPos(start + new Vector2(Layout.Scaled(8f), size.Y / 2 - Layout.Scaled(8f)));
-                using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
-                    ImGui.TextUnformatted(item.Icon.ToIconString());
-                ImGui.SameLine();
-                ImGui.TextUnformatted(item.Tooltip);
-                ImGui.EndGroup();
-            }
-
-            if (badge is { } b)
-                Badge.OnLastItem(b.Text);
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip((disabledReason is null ? item.Tooltip : $"{item.Tooltip} - unavailable. {disabledReason}")
-                    + (badge is { } tip ? $"\n{tip.Tooltip}" : ""));
+            ImGui.SetCursorPos(start + new Vector2(Layout.Scaled(8f), size.Y / 2 - Layout.Scaled(8f)));
+            using (ImRaii.PushFont(Plugin.PluginInterface.UiBuilder.FontIcon))
+                ImGui.TextUnformatted(item.Icon.ToIconString());
+            ImGui.SameLine();
+            ImGui.TextUnformatted(item.Tooltip);
+            ImGui.EndGroup();
         }
+
+        if (badge is { } b)
+            Badge.OnLastItem(b.Text);
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip((disabledReason is null ? item.Tooltip : $"{item.Tooltip} - unavailable. {disabledReason}")
+                + (badge is { } tip ? $"\n{tip.Tooltip}" : ""));
 
         return result;
     }

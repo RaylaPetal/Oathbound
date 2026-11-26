@@ -1,6 +1,9 @@
 import type { Env } from "./env";
 import {
   ACTIVE_DEVICE_RECOMPUTE_SECONDS,
+  LFP_ENDED_MATCH_RETENTION_SECONDS,
+  LFP_LISTED_FOR_SECONDS,
+  LFP_PROFILE_RETENTION_SECONDS,
   NONCE_RETENTION_SECONDS,
   nowSeconds,
   PICTURE_IDLE_EXPIRY_SECONDS,
@@ -162,6 +165,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
 
   const removedPictures = await removeExpiredPictures(env, now);
   const removedChatImages = await removeExpiredChatImages(env, now);
+  const lfp = await cleanUpLookingForPair(env, now);
 
   const removedNonces = await env.RELAY_DB.prepare(
     `DELETE FROM nonces WHERE seen_at <= ?1`,
@@ -197,6 +201,7 @@ export async function runScheduledCleanup(env: Env): Promise<void> {
     removedRevokedStatuses: removedRevokedStatuses.meta.changes ?? 0,
     removedPictures,
     removedChatImages,
+    ...lfp,
     removedNonces: removedNonces.meta.changes ?? 0,
     activeDevices: active,
     removedQuotaCounters: removedQuotaCounters.meta.changes ?? 0,
@@ -227,6 +232,44 @@ async function removeExpiredPictures(env: Env, now: number): Promise<number> {
       .run();
   }
   return expired.results.length;
+}
+
+/**
+ * collar/looking-for-pair: the picture of a profile no longer listed (its client re-uploads it on refresh), profiles
+ * idle past retention with their pending likes, and matches ended past retention. Bounded per run.
+ */
+async function cleanUpLookingForPair(env: Env, now: number): Promise<Record<string, number>> {
+  const unlisted = await env.RELAY_DB.prepare(
+    `SELECT profile_id, picture_key FROM lfp_profiles WHERE picture_key IS NOT NULL AND active_at <= ?1 LIMIT 200`,
+  )
+    .bind(now - LFP_LISTED_FOR_SECONDS)
+    .all<{ profile_id: string; picture_key: string }>();
+  for (const row of unlisted.results) {
+    await env.RELAY_CATALOG_BUCKET.delete(`lfp-pictures/${row.picture_key}`);
+    await env.RELAY_DB.prepare(`UPDATE lfp_profiles SET picture_key = NULL, picture_type = NULL WHERE profile_id = ?1`)
+      .bind(row.profile_id)
+      .run();
+  }
+
+  const idle = await env.RELAY_DB.prepare(`SELECT profile_id FROM lfp_profiles WHERE active_at <= ?1 LIMIT 200`)
+    .bind(now - LFP_PROFILE_RETENTION_SECONDS)
+    .all<{ profile_id: string }>();
+  for (const row of idle.results) {
+    await env.RELAY_DB.batch([
+      env.RELAY_DB.prepare(`DELETE FROM lfp_likes WHERE from_profile = ?1 OR to_profile = ?1`).bind(row.profile_id),
+      env.RELAY_DB.prepare(`DELETE FROM lfp_profiles WHERE profile_id = ?1`).bind(row.profile_id),
+    ]);
+  }
+
+  const endedMatches = await env.RELAY_DB.prepare(`DELETE FROM lfp_matches WHERE ended_at IS NOT NULL AND ended_at <= ?1`)
+    .bind(now - LFP_ENDED_MATCH_RETENTION_SECONDS)
+    .run();
+
+  return {
+    removedLfpPictures: unlisted.results.length,
+    removedLfpProfiles: idle.results.length,
+    removedLfpMatches: endedMatches.meta.changes ?? 0,
+  };
 }
 
 /** Chat pictures past their TTL, and every chat picture of a revoked or missing pair epoch. Bounded per run. */

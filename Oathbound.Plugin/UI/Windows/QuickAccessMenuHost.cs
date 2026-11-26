@@ -30,5 +30,12 @@ public sealed class QuickAccessMenuHost : Window, IDisposable
         ImGui.SetNextWindowSize(Vector2.One, ImGuiCond.Always);
     }
 
-    public override void Draw() => QuickAccessMenu.Draw(plugin);
+    /// Pushed inside Draw rather than PreDraw so the invisible host itself never gets a border; the popup begun here
+    /// reads the style at its own Begin.
+    public override void Draw()
+    {
+        Theme.PushWindowStyle();
+        QuickAccessMenu.Draw(plugin);
+        Theme.PopWindowStyle();
+    }
 }

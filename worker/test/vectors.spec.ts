@@ -304,6 +304,27 @@ describe("cross-runtime crypto vectors", () => {
     await expect(crypto.subtle.decrypt(params, messageKey, ciphertext)).rejects.toThrow();
   });
 
+  it("derives the match chat key under its own label and decrypts the sample match message", async () => {
+    const v = vectors.matchChat;
+    const enc = new TextEncoder();
+    expect(v.infoUtf8).toBe("oathbound-match-chat-v1" + v.matchId + "0");
+    const salt = await crypto.subtle.digest("SHA-256", enc.encode(v.matchId + "|0"));
+    expect(Buffer.from(salt).toString("hex")).toBe(v.saltSha256Hex);
+    const hk = await crypto.subtle.importKey("raw", Buffer.from(v.sharedSecretHex, "hex"), "HKDF", false, ["deriveBits"]);
+    const keyBits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: enc.encode(v.infoUtf8) }, hk, 256);
+    expect(Buffer.from(keyBits).toString("hex")).toBe(v.derivedAesKeyHex);
+
+    const aad = toCanonicalJson({ channel: "match", matchId: v.matchId, from: v.from, seq: v.seq, sentAt: v.sentAt });
+    expect(aad).toBe(v.additionalAuthenticatedDataCanonicalJson);
+    const key = await crypto.subtle.importKey("raw", keyBits, "AES-GCM", false, ["decrypt"]);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Buffer.from(v.nonceBase64Url, "base64url"), additionalData: enc.encode(aad), tagLength: 128 },
+      key,
+      Buffer.from(v.ciphertextWithTagBase64Url, "base64url"),
+    );
+    expect(JSON.parse(new TextDecoder().decode(plaintext))).toMatchObject({ v: 1, kind: "text" });
+  });
+
   it("decrypts the sample chat picture blob and binds it to its id", async () => {
     const v = vectors.chatImage;
     const enc = new TextEncoder();

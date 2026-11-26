@@ -44,19 +44,23 @@ public sealed class ChangelogWindow : Window, IDisposable
 
     public override void Draw()
     {
-        IconGlyph.Text(FontAwesomeIcon.Gift, $"You're on {CurrentVersion}");
-        ImGui.Separator();
-
-        var footer = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
-        using (var list = ImRaii.Child("##changelogList", new Vector2(-1, -footer)))
+        var entry = Changelog.Latest;
+        var footer = ImGui.GetFrameHeightWithSpacing();
+        using (Card.Begin("changelogCard", new Vector2(0, -footer)))
         {
-            if (list)
+            using (ImRaii.PushColor(ImGuiCol.Text, Theme.AccentHover))
+                IconGlyph.Text(FontAwesomeIcon.Gift, $"{entry.Version}  -  {entry.Title}");
+            ImGui.SameLine();
+            ImGui.TextDisabled(entry.Date);
+            if (entry.Version != CurrentVersion)
+                IconGlyph.WrappedDisabled($"You're on {CurrentVersion}.");
+            ImGui.Spacing();
+
+            for (var i = 0; i < entry.Sections.Length; i++)
             {
-                var entry = Changelog.Latest;
-                ImGui.TextColored(Theme.AccentHover, $"{entry.Version}  -  {entry.Title}  ({entry.Date})");
-                foreach (var section in entry.Sections)
+                var section = entry.Sections[i];
+                using (Section.Begin($"changelog{i}", section.Heading))
                 {
-                    Section.SubHeading(section.Heading);
                     foreach (var item in section.Items)
                     {
                         ImGui.Bullet();
@@ -67,8 +71,11 @@ public sealed class ChangelogWindow : Window, IDisposable
             }
         }
 
-        if (ImGui.Button("Got it"))
-            IsOpen = false;
+        using (Theme.PushPrimaryButton())
+        {
+            if (ImGui.Button("Got it"))
+                IsOpen = false;
+        }
         ImGui.SameLine();
         if (ImGui.Button("Join the Oathbound Discord"))
             Dalamud.Utility.Util.OpenLink(SupportLinks.DiscordUrl);
