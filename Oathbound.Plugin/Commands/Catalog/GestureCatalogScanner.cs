@@ -17,8 +17,12 @@ public readonly record struct PenumbraOptionScanResult(int TotalMods, IReadOnlyL
 public sealed record PenumbraOptionScanEntry(string Id, string ModDirectory, string ModName, string GroupName,
     string OptionName, int GroupOrder, int OptionOrder, Dictionary<string, List<string>> GroupSelections,
     bool ModEnabled, IReadOnlyList<string> Paths);
+/// ChangedItemIds is what the mod offers with the saved choices; ItemNames gives each one its piece name.
 public sealed record PenumbraModScanEntry(string Id, string ModDirectory, string ModName,
-    Dictionary<string, List<string>> SavedSelections, bool ModEnabled, IReadOnlySet<uint> ChangedItemIds);
+    Dictionary<string, List<string>> SavedSelections, bool ModEnabled, IReadOnlySet<uint> ChangedItemIds,
+    IReadOnlyDictionary<uint, string> ItemNames);
+/// One option's replaced game paths. Default is the mod's always-on files; Active follows the saved choices.
+public sealed record ModOptionFiles(string GroupName, string OptionName, bool Default, bool Active, IReadOnlyList<string> Paths);
 
 /// Reads Penumbra's option manifests directly, keeping author-facing option names.
 public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
@@ -82,6 +86,7 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
     public (int TotalMods, IReadOnlyList<PenumbraModScanEntry> Entries, string? Error) ScanMods(IEnumerable<string> directories)
     {
         var mods = ipc.TryGetModList();
+        var root = ipc.TryGetModDirectory();
         var collection = ipc.TryGetLocalPlayerCollectionId();
         if (mods is null || collection is null)
             return (mods?.Count ?? 0, [], "Penumbra or the local-player collection is not ready.");
@@ -90,9 +95,12 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
         {
             if (!mods.TryGetValue(directory, out var name)) continue;
             var (enabled, selections) = ipc.TryGetCurrentSettings(collection.Value, directory);
+            var changed = ipc.TryGetChangedItemIds(directory, name);
+            var modPath = root is null ? null : Path.Combine(root, directory);
+            var options = modPath is not null && Directory.Exists(modPath) ? ReadOptionFiles(modPath, name, selections) : [];
+            var (offered, names) = RestraintPieceNamer.Resolve(name, options, changed);
             entries.Add(new PenumbraModScanEntry(StableModId(directory), directory, name,
-                selections ?? new Dictionary<string, List<string>>(), enabled,
-                ipc.TryGetChangedItemIds(directory, name)));
+                selections ?? new Dictionary<string, List<string>>(), enabled, offered, names));
         }
         return (mods.Count, entries, null);
     }
@@ -180,6 +188,12 @@ public sealed class GestureCatalogScanner(PenumbraIpc ipc, PluginConfig config)
 
     public static string StableModId(string directory) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(directory.Trim().Replace('\\', '/').ToLowerInvariant())))[..16].ToLowerInvariant();
+
+    public static IReadOnlyList<ModOptionFiles> ReadOptionFiles(string modPath, string modName, Dictionary<string, List<string>>? current) =>
+        ReadGroups(modPath, modName, current)
+            .SelectMany(g => g.Options.Select(o => new ModOptionFiles(g.Name, o.Name, g.Implicit,
+                g.Implicit || g.Selected.Contains(o.Name), o.Paths.ToList())))
+            .ToList();
 
     private sealed record Option(string Name, IEnumerable<string> Paths);
     private sealed record Group(string Name, bool Multi, bool Implicit, List<Option> Options, HashSet<string> Selected);

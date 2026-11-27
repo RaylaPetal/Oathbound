@@ -840,6 +840,9 @@ public sealed class Plugin : IDalamudPlugin
         }
         foreach (var cmd in Configuration.QuickCommands.Restraints.Where(c => c.RestraintRules is { Count: > 0 }))
         {
+            // Its command is built per piece at send time; rebuilding here would turn it into a rules-only restraint.
+            if (UI.RestraintPieces.IsPickAtSend(cmd))
+                continue;
             foreach (var rule in cmd.RestraintRules!.Where(r => r.AnimationId is not null && r.AnimationLabel is null))
                 if (Configuration.GestureMapping.ImportedPeerCatalog.TryGetValue(rule.AnimationId!, out var entry))
                     rule.AnimationLabel = CommandSelector.GestureSelector(entry, Configuration.GestureMapping.ImportedPeerCatalog.Values);

@@ -449,6 +449,11 @@ public class QuickCommand
     /// Null keeps a legacy captured-device command.
     public string? RestraintCatalogId { get; set; }
     public ulong? RestraintItemId { get; set; }
+    /// A mod restraint whose item is chosen at each send from the mod's pieces; Command stays empty and ForPiece
+    /// builds what's sent.
+    public bool RestraintPickAtSend { get; set; }
+    /// The piece last sent from a pick-at-send restraint, preselected next time.
+    public ulong? RestraintLastPick { get; set; }
     /// Sent as a redraw request: the Sub's character is redrawn when the restraint goes on and comes off.
     public bool RestraintRedraw { get; set; }
 
@@ -464,6 +469,22 @@ public class QuickCommand
     public Vector3? TitleGlow { get; set; }
 
     public bool IsFavorite { get; set; }
+
+    /// An unsaved copy that sends one piece of a pick-at-send mod restraint. The piece's name goes into the label, so
+    /// feedback and the Owner's estimate name it.
+    public QuickCommand ForPiece(ulong itemId, string pieceName)
+    {
+        var copy = (QuickCommand)MemberwiseClone();
+        var label = $"{Label}: {pieceName}";
+        copy.Label = label.Length > 80 ? label[..80].TrimEnd() : label;
+        copy.RestraintItemId = itemId;
+        copy.RestraintPickAtSend = false;
+        copy.IsFavorite = false;
+        copy.Command = RestraintCatalogId is { } catalogId && RestraintRules is { Count: > 0 } rules
+            ? Commands.RestraintCommand.BuildCatalogLockCommand(catalogId, copy.Label, itemId, rules, RestraintRedraw)
+            : "";
+        return copy;
+    }
 
     /// Sent as `moodle:"..."`. Null = the Sub's own default.
     public string? MoodleOverride { get; set; }
@@ -980,7 +1001,10 @@ public class RestraintCatalogEntry
     public string ModName { get; set; } = "";
     public Dictionary<string, List<string>> GroupSelections { get; set; } = new();
     public bool ModEnabled { get; set; }
+    /// The items the mod offers with its saved choices; only these are accepted in a restraint command.
     public List<uint> ChangedItemIds { get; set; } = new();
+    /// Item id (as text, for JSON) to the name of the one mod option that replaces it.
+    public Dictionary<string, string> ItemNames { get; set; } = new();
     public string Label => ModName;
 }
 
@@ -990,12 +1014,19 @@ public class RestraintCatalogExportEntry
     public string Id { get; set; } = "";
     public string ModName { get; set; } = "";
     public List<uint> ChangedItemIds { get; set; } = new();
+    /// Null from an older Sub. Keys are item ids as text.
+    public Dictionary<string, string>? ItemNames { get; set; }
     public string Label => ModName;
 
     public static RestraintCatalogExportEntry From(RestraintCatalogEntry entry) => new()
     {
         Id = entry.Id, ModName = entry.ModName, ChangedItemIds = entry.ChangedItemIds,
+        ItemNames = entry.ItemNames.Count == 0 ? null : entry.ItemNames,
     };
+
+    /// The piece name for an item, or null when the Sub didn't name it.
+    public string? PieceName(ulong itemId) =>
+        ItemNames is not null && ItemNames.TryGetValue(itemId.ToString(System.Globalization.CultureInfo.InvariantCulture), out var name) ? name : null;
 }
 
 [Serializable]

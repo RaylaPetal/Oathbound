@@ -316,12 +316,12 @@ public sealed partial class ModuleWindow
             && (config.RestraintMapping.ConfiguredMods.Any(m => m != created && string.Equals(m.Alias.Trim(), alias, StringComparison.OrdinalIgnoreCase))
                 || config.RestraintMapping.Devices.Values.Any(d => string.Equals(d.Name.Trim(), alias, StringComparison.OrdinalIgnoreCase))))
             Status.Line(StatusKind.Caution, "Another restraint already uses this alias - only one of them will respond to it.");
-        TextWithActions($"Glamourer item: {(draft.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
+        var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
+        TextWithActions($"Glamourer item: {(draft.ItemId is { } equippedItem ? PieceLabel(equippedItem, catalogEntry?.ItemNames) : "(none chosen)")}", ButtonWidth("Choose item..."));
         if (ImGui.Button($"Choose item...##{key}"))
-        {
-            var catalogEntry = config.RestraintMapping.LocalCatalog.GetValueOrDefault(created.CatalogId);
-            plugin.ItemPickerWindow.OpenForItemIds(draft.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) => draft.ItemId = chosenId);
-        }
+            plugin.ItemPickerWindow.OpenForItemIds(draft.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) => draft.ItemId = chosenId, catalogEntry?.ItemNames);
+        if (catalogEntry is not null && draft.ItemId is { } chosenItem && !catalogEntry.ChangedItemIds.Contains((uint)chosenItem))
+            Status.Line(StatusKind.Caution, "This mod no longer offers this item (it may be switched off in Penumbra) - it will be refused until you choose another.");
 
         Section.SubHeading("Restrictions");
         DrawRestraintRuleCheckboxes(draft.Rules, key, forOwner: false, allowCustomizePreset: true);

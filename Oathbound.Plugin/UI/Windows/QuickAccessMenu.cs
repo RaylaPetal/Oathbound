@@ -170,7 +170,23 @@ public static class QuickAccessMenu
     private static void DrawFavoriteMenuItem(Plugin plugin, QuickCommand cmd)
     {
         var label = OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label;
-        DrawSendMenuItem(plugin, new SendSpec($"fav_{cmd.Label}_{cmd.Command}", label) { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd) });
+        if (!RestraintPieces.IsPickAtSend(cmd))
+        {
+            DrawSendMenuItem(plugin, new SendSpec($"fav_{cmd.Label}_{cmd.Command}", label) { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd) });
+            return;
+        }
+        if (!ImGui.BeginMenu($"{label}##favPieces_{cmd.Label}"))
+            return;
+        var pieces = RestraintPieces.Of(plugin.Configuration, cmd);
+        if (pieces.Count == 0)
+            ImGui.TextDisabled("No pieces shared");
+        foreach (var piece in pieces)
+        {
+            var copy = cmd.ForPiece(piece.ItemId, piece.Name);
+            if (DrawSendMenuItem(plugin, new SendSpec($"fav_{cmd.Label}_{piece.ItemId}", piece.Name) { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, copy) }))
+                RestraintPieces.Sent(plugin.Configuration, cmd, copy);
+        }
+        ImGui.EndMenu();
     }
 
     /// The popup closes on click, so a failure is reported as a notification.
@@ -181,14 +197,17 @@ public static class QuickAccessMenu
             Custom = SendNotice.Teleport(plugin),
         });
 
-    private static void DrawSendMenuItem(Plugin plugin, SendSpec spec)
+    /// True when it was clicked and the send ran.
+    private static bool DrawSendMenuItem(Plugin plugin, SendSpec spec)
     {
         var gate = SendGate.Evaluate(plugin, spec);
         bool clicked;
         using (ImRaii.Disabled(!gate.Enabled))
             clicked = ImGui.MenuItem($"{spec.Label}##{spec.Id}");
         SendGate.Tooltip(gate);
-        if (clicked && gate.Enabled)
-            SendGate.Run(plugin, spec);
+        if (!clicked || !gate.Enabled)
+            return false;
+        SendGate.Run(plugin, spec);
+        return true;
     }
 }

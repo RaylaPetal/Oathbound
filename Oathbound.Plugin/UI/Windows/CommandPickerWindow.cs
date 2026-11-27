@@ -51,7 +51,11 @@ public sealed class CommandPickerWindow : Window, IDisposable
             IconGlyph.WrappedDisabled(purpose);
         using var card = Card.Begin("commandPickerCard", noScroll: true);
 
-        var groups = QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands).Where(g => g.Commands.Count > 0).ToList();
+        // A pick-at-send restraint is offered once per piece, so what's chosen always sends one.
+        var groups = QuickAccessMenu.CategorizedAll(plugin.Configuration.QuickCommands)
+            .Select(g => (g.Label, Commands: g.Commands
+                .SelectMany(c => RestraintPieces.IsPickAtSend(c) ? RestraintPieces.Expand(plugin.Configuration, c) : [c]).ToList()))
+            .Where(g => g.Commands.Count > 0).ToList();
         if (groups.Count == 0)
         {
             IconGlyph.WrappedDisabled("No saved commands yet. Save some in the modules first.");

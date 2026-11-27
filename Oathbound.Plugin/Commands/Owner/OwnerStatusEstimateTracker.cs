@@ -271,9 +271,12 @@ public sealed class OwnerStatusEstimateTracker : IDisposable
                 slot = KnownSlotFor(reference);
                 break;
             case "catalog":
-                if (!RestraintCommand.TryParseCatalogCommand(remainder, out _, out reference, out var catalogItemId, out rules)) return;
+                if (!RestraintCommand.TryParseCatalogCommand(remainder, out var catalogId, out reference, out var catalogItemId, out rules)) return;
                 slot = catalogItemId == 0 ? null : GlamourerIpc.GetItemSlot((uint)catalogItemId);
-                break;
+                // The Sub swaps one piece of a mod for another, so the earlier piece from it is off.
+                estimate.RemoveCatalogRestraint(catalogId);
+                estimate.MarkRestrained(reference, rules, restraintLock, at, slot, catalogId);
+                return;
             case "wear":
                 if (!RestraintCommand.TryParseWearCommand(remainder, out var wearSlot, out var wearItemId, out reference, out rules)) return;
                 slot = wearSlot ?? (wearItemId is { } id ? GlamourerIpc.GetItemSlot((uint)id) : null);
@@ -385,6 +388,8 @@ public sealed class EstimatedRestraint
     public string Reference { get; internal set; } = "";
     /// Null when the Owner's client doesn't know which gear slot it uses.
     public ApiEquipSlot? Slot { get; internal set; }
+    /// The Sub's restraint mod it came from; null for anything else.
+    public string? CatalogId { get; internal set; }
     public bool Gagged { get; internal set; }
     public bool Blindfolded { get; internal set; }
     /// What its rules draw; None when the rules aren't known.
@@ -462,6 +467,7 @@ public sealed class OwnerStatusEstimate
         {
             Reference = r.Reference,
             Slot = r.Slot,
+            CatalogId = r.CatalogId,
             Gagged = r.Gagged,
             Blindfolded = r.Blindfolded,
             Cuffs = r.Cuffs,
@@ -543,7 +549,7 @@ public sealed class OwnerStatusEstimate
     public bool Any => Gagged || Restrained || Leashed;
 
     /// The Sub's client refuses a second restraint on a taken slot, so one sent for a known taken slot isn't added.
-    internal void MarkRestrained(string reference, List<RestraintRuleAssignment>? rules, RestraintLock restraintLock, DateTime at, ApiEquipSlot? slot = null)
+    internal void MarkRestrained(string reference, List<RestraintRuleAssignment>? rules, RestraintLock restraintLock, DateTime at, ApiEquipSlot? slot = null, string? catalogId = null)
     {
         if (slot is not null && restraints.Any(r => r.Slot == slot && !string.Equals(r.Reference, reference.Trim(), StringComparison.OrdinalIgnoreCase)))
             return;
@@ -552,6 +558,7 @@ public sealed class OwnerStatusEstimate
         {
             Reference = reference.Trim(),
             Slot = slot,
+            CatalogId = catalogId,
             Gagged = rules?.Any(r => r.Kind == RestraintRuleKind.Gagged) == true,
             Blindfolded = rules?.Any(r => r.Kind == RestraintRuleKind.Blindfolded) == true,
             Cuffs = CuffSets.Drawn(rules),
@@ -560,6 +567,9 @@ public sealed class OwnerStatusEstimate
             HasKey = restraintLock.Key is not null,
         });
     }
+
+    internal void RemoveCatalogRestraint(string catalogId) =>
+        restraints.RemoveAll(r => r.CatalogId is not null && string.Equals(r.CatalogId, catalogId, StringComparison.OrdinalIgnoreCase));
 
     internal void RemoveRestraint(string reference) =>
         restraints.RemoveAll(r => string.Equals(r.Reference, reference.Trim(), StringComparison.OrdinalIgnoreCase));

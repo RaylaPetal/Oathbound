@@ -27,6 +27,8 @@ public sealed partial class ModuleWindow
         public string Name = "";
         public string Alias = "";
         public ulong? ItemId;
+        /// Owner mod restraints only: the piece is chosen at each send instead of ItemId.
+        public bool PickAtSend;
         public AttachedMoodleRef? Moodle;
         public string? MoodleOverride;
         public bool Redraw;
@@ -60,6 +62,7 @@ public sealed partial class ModuleWindow
         {
             Name = source.Label,
             ItemId = source.RestraintItemId,
+            PickAtSend = source.RestraintPickAtSend,
             MoodleOverride = source.MoodleOverride,
             Redraw = source.RestraintRedraw,
             Rules = FromRules(source.RestraintRules),
@@ -74,7 +77,8 @@ public sealed partial class ModuleWindow
             || RulesDiffer(source.Rules);
 
         public bool IsDirty(QuickCommand source) =>
-            Name.Trim() != source.Label.Trim() || ItemId != source.RestraintItemId || MoodleOverride != source.MoodleOverride
+            Name.Trim() != source.Label.Trim() || ItemId != source.RestraintItemId || PickAtSend != source.RestraintPickAtSend
+            || MoodleOverride != source.MoodleOverride
             || Redraw != source.RestraintRedraw || RulesDiffer(source.RestraintRules);
 
         public void Apply(ConfiguredModRestraint target)
@@ -101,10 +105,16 @@ public sealed partial class ModuleWindow
         {
             var rules = BuildRules();
             target.Label = Name.Trim();
-            target.RestraintItemId = ItemId;
+            target.RestraintPickAtSend = PickAtSend && target.RestraintCatalogId is not null;
+            target.RestraintItemId = target.RestraintPickAtSend ? null : ItemId;
             target.MoodleOverride = MoodleOverride;
             target.RestraintRedraw = Redraw;
             target.RestraintRules = rules;
+            if (target.RestraintPickAtSend)
+            {
+                target.Command = "";
+                return;
+            }
             if (rules.Count == 0)
                 return;
             target.Command = target.RestraintCatalogId is { } catalogId

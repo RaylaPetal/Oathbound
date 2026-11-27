@@ -18,6 +18,8 @@ public sealed class ItemPickerWindow : Window, IDisposable
     private Action<uint, string>? onChosen;
     private ApiEquipSlot slot;
     private List<(uint ItemId, string Name)> slotItems = [];
+    /// Piece name to the game item it is, shown under the name when they differ.
+    private Dictionary<uint, string> gameNames = [];
     private string? modLabel;
 
     public ItemPickerWindow(Plugin plugin) : base("Choose item###CollarItemPicker")
@@ -37,6 +39,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         onChosen = chosen;
         search = "";
         slotItems = EnumerateSlotItems(slot);
+        gameNames = [];
         IsOpen = true;
     }
 
@@ -47,6 +50,7 @@ public sealed class ItemPickerWindow : Window, IDisposable
         onChosen = chosen;
         search = "";
         slotItems = EnumerateAllItems();
+        gameNames = [];
         IsOpen = true;
     }
 
@@ -60,17 +64,16 @@ public sealed class ItemPickerWindow : Window, IDisposable
         OpenForItemIds(name, ids, chosen);
     }
 
-    public void OpenForItemIds(string name, IReadOnlySet<uint> ids, Action<uint, string> chosen)
+    /// `pieceNames` (item id as text to piece name) comes from the Sub's scan; unnamed items show their game name.
+    public void OpenForItemIds(string name, IReadOnlySet<uint> ids, Action<uint, string> chosen, IReadOnlyDictionary<string, string>? pieceNames = null)
     {
         this.slot = default;
         modLabel = name;
         onChosen = chosen;
         search = "";
-        var sheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-        slotItems = sheet.Where(item => ids.Contains(item.RowId) && item.EquipSlotCategory.ValueNullable is not null)
-            .Select(item => (ItemId: item.RowId, Name: item.Name.ExtractText()))
-            .Where(item => !string.IsNullOrWhiteSpace(item.Name))
-            .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        var pieces = Commands.RestraintPieceNamer.ListPieces(ids, pieceNames);
+        slotItems = pieces.Select(p => (p.ItemId, p.Name)).ToList();
+        gameNames = pieces.Where(p => p.Name != p.GameName).ToDictionary(p => p.ItemId, p => p.GameName);
         IsOpen = true;
     }
 
@@ -140,7 +143,8 @@ public sealed class ItemPickerWindow : Window, IDisposable
         var filter = search.Trim();
         var visible = filter.Length == 0
             ? slotItems
-            : slotItems.Where(i => i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            : slotItems.Where(i => i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                || gameNames.TryGetValue(i.ItemId, out var game) && game.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
 
         IconGlyph.WrappedDisabled(modLabel is not null ? $"{visible.Count} shown / {slotItems.Count} equipment items changed by this mod" : slot == default ? $"{visible.Count} shown / {slotItems.Count} equipment items" : $"{visible.Count} shown / {slotItems.Count} valid for {slot}");
         ImGui.Separator();
@@ -155,6 +159,8 @@ public sealed class ItemPickerWindow : Window, IDisposable
                 onChosen?.Invoke(itemId, name);
                 IsOpen = false;
             }
+            if (gameNames.TryGetValue(itemId, out var gameName))
+                ImGui.TextDisabled($"  {gameName}");
         }
     }
 }

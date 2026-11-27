@@ -63,7 +63,7 @@ public sealed partial class ModuleWindow
         if (!changed)
             return;
         cmd.RestraintRedraw = redraw;
-        if (cmd.RestraintRules is { Count: > 0 } rules)
+        if (cmd.RestraintRules is { Count: > 0 } rules && !RestraintPieces.IsPickAtSend(cmd))
             cmd.Command = cmd.RestraintCatalogId is { } catalogId && cmd.RestraintItemId is { } itemId
                 ? RestraintCommand.BuildCatalogLockCommand(catalogId, cmd.Label, itemId, rules, redraw)
                 : RestraintCommand.BuildLockCommand(cmd.Label, rules, redraw);
@@ -360,6 +360,12 @@ public sealed partial class ModuleWindow
         var name = row?.Name.ExtractText();
         return string.IsNullOrWhiteSpace(name) ? $"Item #{itemId}" : name;
     }
+
+    /// A restraint mod's piece name for the item, with the game item's name when they differ.
+    private static string PieceLabel(ulong itemId, IReadOnlyDictionary<string, string>? pieceNames) =>
+        pieceNames is not null && pieceNames.TryGetValue(itemId.ToString(System.Globalization.CultureInfo.InvariantCulture), out var piece)
+            ? $"{piece} ({GetItemName(itemId)})"
+            : GetItemName(itemId);
 
     private static RestraintRuleEditState FromRules(List<RestraintRuleAssignment>? rules)
     {

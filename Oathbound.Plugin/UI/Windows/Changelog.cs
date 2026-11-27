@@ -9,28 +9,23 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.4.1", "2026-11-26", "Looking for pair",
+        new("0.3.4.2", "2026-11-27", "Restraint packs",
         [
             new("New",
             [
-                "Looking for pair: not paired yet? Make a profile - display name, pronouns, race, gender, whether you're an Owner, Sub or Switch and what you're looking for, an optional data center, a bio and a picture - and browse everyone else's. For adults (18+) only.",
-                "Profiles are public (listed in Browse) or private (seen only with your profile code). Your character's name and world are never on it.",
-                "Like the profiles you're interested in. Nobody is told who liked them - but when two people like each other it's a match, and you both get a notice.",
-                "A match gets its own end-to-end encrypted chat. Share your character when you're ready, and send a pairing invite right from the chat with the + button.",
-                "View profile opens anyone's full profile with a bigger picture and their whole bio; cards show just the start.",
-                "Unmatch or block anyone at any time. A block hides you from each other for good, even if they make a new profile code.",
-                "The header shows how many Oathbound players are online right now, refreshed every couple of minutes while the main window is open.",
-                "Chat: close a conversation with the X to tidy the list. It comes back when a new message arrives, or reopen it from the folder button.",
+                "Restraint packs: an Owner can make one restraint for a whole mod pack, like a gag pack, and pick the piece each time they send it. Tick \"Chosen when sending\" in the restraint's Name & item section.",
+                "The piece picker is next to the send button, in Favorites, and a submenu in Quick Access. Rulebook consequences, ladder stages and game cards list each piece on its own.",
+                "Restraint mod items are named after the mod itself: each gag in a gag pack by its option name, and single-piece mods like cuffs by the mod's name, instead of the base game item's name.",
+                "Sending another piece of a pack while one is on swaps it: the old piece comes off and the new one goes on with the new lock. If the new one can't go on, the old one stays as it was.",
             ]),
             new("Changed",
             [
-                "Favorites moved from the module grid to the star in the main window's title bar.",
-                "Dialogs and windows share the same card look.",
+                "A Sub's client only accepts restraint items the shared mod offers. A piece you switch off in Penumbra stops being offered after the next scan.",
             ]),
             new("Good to know",
             [
-                "To be counted as online and use Looking for pair, Oathbound now keeps its relay connection while you're logged in, even with no pairing. It only checks in every 30 minutes and never says who you are.",
-                "There's no in-plugin reporting yet - if someone makes you uncomfortable, block them.",
+                "Subs: nothing to set up per piece. Keep the pack in your restraint folder; its pieces and their names reach your Owner with the catalog.",
+                "Pieces get names once the Sub is on this version and the catalog has synced again.",
             ]),
         ]);
 }

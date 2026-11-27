@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -75,9 +76,12 @@ public sealed class RestraintCommand
         config.RestraintMapping.LocalCatalog = result.Entries.ToDictionary(e => e.Id, e => new RestraintCatalogEntry
         {
             Id = e.Id, ModDirectory = e.ModDirectory, ModName = e.ModName,
-            GroupSelections = e.SavedSelections, ModEnabled = e.ModEnabled, ChangedItemIds = e.ChangedItemIds.ToList(),
+            GroupSelections = e.SavedSelections, ModEnabled = e.ModEnabled, ChangedItemIds = e.ChangedItemIds.Order().ToList(),
+            ItemNames = e.ItemNames.ToDictionary(x => x.Key.ToString(CultureInfo.InvariantCulture), x => x.Value),
         });
         catalogStore.Save(config);
+        foreach (var e in result.Entries.Where(e => e.ItemNames.Count > 0))
+            Plugin.Log.Debug($"Restraint mod \"{e.ModName}\": {e.ChangedItemIds.Count} items offered, {e.ItemNames.Count} named ({string.Join(", ", e.ItemNames.Values.Distinct().Take(8))}).");
         if (!config.CatalogScans.Restraints)
         {
             config.CatalogScans.Restraints = true;
@@ -96,8 +100,19 @@ public sealed class RestraintCommand
         try
         {
             entry = JsonSerializer.Deserialize<RestraintCatalogExportEntry>(Encoding.UTF8.GetString(Convert.FromBase64String(line[ExportPrefix.Length..])));
-            return entry is { Id.Length: 16, ModName.Length: > 0 and <= 160 }
-                && entry.Id.All(char.IsAsciiLetterOrDigit);
+            if (entry is not { Id.Length: 16, ModName.Length: > 0 and <= 160 } || !entry.Id.All(char.IsAsciiLetterOrDigit))
+                return false;
+            // Names are shown in the Owner's UI and put into command labels, so only clean names for offered items.
+            if (entry.ItemNames is { } names)
+            {
+                var offered = entry.ChangedItemIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToHashSet();
+                entry.ItemNames = names
+                    .Where(x => offered.Contains(x.Key))
+                    .Select(x => (x.Key, Name: RestraintPieceNamer.Clean(x.Value)))
+                    .Where(x => x.Name.Length > 0)
+                    .ToDictionary(x => x.Key, x => x.Name);
+            }
+            return true;
         }
         catch { return false; }
     }
@@ -396,7 +411,15 @@ public sealed class RestraintCommand
         var runtimeId = CatalogRuntimeId(catalogId);
         var redraw = TakePendingRedraw();
         if (activeCatalogOverrides.ContainsKey(runtimeId))
-            Replay(runtimeId, rules);
+        {
+            if (FindWorn(runtimeId) is { ItemId: { } wornItem } worn && wornItem != itemId)
+            {
+                if (!SwapCatalogItem(worn, itemId, rules, moodleOverride, redraw))
+                    return false;
+            }
+            else
+                Replay(runtimeId, rules);
+        }
         else if (!ApplyCatalog(catalogId, itemId, rules, moodleOverride, redraw: redraw))
             return false;
         reference ??= config.RestraintMapping.ConfiguredMods.FirstOrDefault(m => m.CatalogId == catalogId)?.Name
@@ -404,6 +427,32 @@ public sealed class RestraintCommand
         Track(CatalogRecord(catalogId, itemId, reference, rules, moodleOverride, redraw));
         SetLock(runtimeId, restraintLock);
         return true;
+    }
+
+    /// A mod's restraints share one runtime id, so another of its pieces replaces the one on: the old piece comes off and
+    /// the new one goes on. If the new one can't, the old one is put back as it was, lock included.
+    private bool SwapCatalogItem(WornRestraint worn, ulong itemId, List<RestraintRuleAssignment> rules, string? moodleOverride, bool redraw)
+    {
+        var catalogId = worn.CatalogId!;
+        if (!config.RestraintMapping.LocalCatalog.TryGetValue(catalogId, out var entry) || itemId > uint.MaxValue
+            || !entry.ChangedItemIds.Contains((uint)itemId))
+        {
+            LastFailureReason = "that item isn't part of the shared restraint mod";
+            LastFailureCode = RefusalCode.Unavailable;
+            return false;
+        }
+
+        ReleaseDevice(worn.RuntimeId);
+        if (ApplyCatalog(catalogId, itemId, rules, moodleOverride, redraw: redraw))
+            return true;
+
+        var (reason, code) = (LastFailureReason, LastFailureCode);
+        if (worn.ItemId is { } oldItem && ApplyCatalog(catalogId, oldItem, worn.Rules, worn.MoodleOverride, redraw: worn.Redraw))
+            Track(worn);
+        else
+            Plugin.Log.Warning($"Restraint swap failed and the previous piece of \"{worn.Reference}\" couldn't be put back.");
+        (LastFailureReason, LastFailureCode) = (reason, code);
+        return false;
     }
 
     private static string SlotHolder(string runtimeId) => $"{Owner}:{runtimeId}";
@@ -441,6 +490,13 @@ public sealed class RestraintCommand
         if (!config.RestraintMapping.LocalCatalog.TryGetValue(catalogId, out var entry))
         {
             LastFailureReason = "that shared restraint is stale or no longer allowed";
+            return false;
+        }
+        // Without this, a command could lock any game item into a slot under a shared mod's name.
+        if (itemId > uint.MaxValue || !entry.ChangedItemIds.Contains((uint)itemId))
+        {
+            LastFailureReason = "that item isn't part of the shared restraint mod";
+            LastFailureCode = RefusalCode.Unavailable;
             return false;
         }
         var runtimeId = CatalogRuntimeId(catalogId);

@@ -3,6 +3,7 @@ using Oathbound.Plugin.Commands;
 using Oathbound.Plugin.Config;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using System.Numerics;
@@ -82,9 +83,19 @@ public sealed class FavoritesWindow : Window, IDisposable
 
     private void DrawFavoriteRow(QuickCommand cmd)
     {
-        var spec = new SendSpec($"fav_{cmd.Label}_{cmd.Command}", "Send") { Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, cmd) };
+        var pickAtSend = RestraintPieces.IsPickAtSend(cmd);
         ImGui.BeginGroup();
-        SendButton.Draw(plugin, spec);
+        // Drawn before the send button so its choice is what this frame sends.
+        var piece = pickAtSend ? RestraintPieces.DrawCombo(plugin.Configuration, $"fav_{cmd.Label}", cmd, 180 * ImGuiHelpers.GlobalScale) : null;
+        if (pickAtSend)
+            ImGui.SameLine();
+        var spec = new SendSpec($"fav_{cmd.Label}_{cmd.Command}", "Send")
+        {
+            Command = OwnerMoodleOverride.ForFavoriteSend(plugin.Configuration, piece ?? cmd),
+            BlockedReason = pickAtSend && piece is null ? "Choose which piece to send." : null,
+        };
+        if (SendButton.Draw(plugin, spec) && piece is not null)
+            RestraintPieces.Sent(plugin.Configuration, cmd, piece);
         ImGui.SameLine();
         ImGui.TextUnformatted(OwnerLockOption.DescribeFavorite(cmd) is { } favoriteLock ? $"{cmd.Label}  · {favoriteLock}" : cmd.Label);
         ImGui.EndGroup();

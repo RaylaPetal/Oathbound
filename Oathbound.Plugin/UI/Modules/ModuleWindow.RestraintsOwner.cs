@@ -58,7 +58,9 @@ public sealed partial class ModuleWindow
     private List<ListDetailItem> BuildOwnerRestraintItems(List<QuickCommand> quick)
     {
         var sent = plugin.OwnerStatusEstimates.ForActivePairing?.Restraints;
-        string? Marker(string label) => sent?.FirstOrDefault(r => string.Equals(r.Reference, label, StringComparison.OrdinalIgnoreCase)) is { } r
+        // A pick-at-send restraint's pieces are sent as "<label>: <piece>".
+        string? Marker(string label) => sent?.FirstOrDefault(r => string.Equals(r.Reference, label, StringComparison.OrdinalIgnoreCase)
+                || r.Reference?.StartsWith(label + ": ", StringComparison.OrdinalIgnoreCase) == true) is { } r
             ? r.ExpiresAtUtc is { } until ? $"sent, {TimeText.Left(until)}" : "sent"
             : null;
 
@@ -211,7 +213,8 @@ public sealed partial class ModuleWindow
         var mod = cmd.RestraintCatalogId is not null;
         ImGui.PushID($"restraintQuick_{key}");
         var hasRules = cmd.RestraintRules is { Count: > 0 };
-        var hasEquipment = !mod || cmd.RestraintItemId > 0 && GlamourerIpc.GetItemSlot((uint)cmd.RestraintItemId.Value) is not null;
+        var pickAtSend = RestraintPieces.IsPickAtSend(cmd);
+        var hasEquipment = !mod || pickAtSend || cmd.RestraintItemId > 0 && GlamourerIpc.GetItemSlot((uint)cmd.RestraintItemId.Value) is not null;
         var catalogAvailable = cmd.RestraintCatalogId is not { } availableCatalogId ||
             plugin.Configuration.RestraintMapping.ImportedPeerCatalog.ContainsKey(availableCatalogId) ||
             (plugin.Configuration.Role == PluginRole.Sub && plugin.Configuration.RestraintMapping.LocalCatalog.ContainsKey(availableCatalogId));
@@ -252,15 +255,21 @@ public sealed partial class ModuleWindow
             IconGlyph.WrappedDisabled("Your Sub's picture for this restraint hasn't downloaded yet - Get latest on the Sync tab tries again.");
 
         Section.SubHeading("Send");
-        SendButton.Draw(plugin, new SendSpec($"enable_{cmd.Label}", mod ? "Enable & lock" : "Send")
+        var piece = pickAtSend ? RestraintPieces.DrawCombo(plugin.Configuration, $"restraintQuick_{cmd.Label}", cmd, Scaled(220)) : null;
+        if (pickAtSend)
+            ImGui.SameLine();
+        var toSend = piece ?? cmd;
+        if (SendButton.Draw(plugin, new SendSpec($"enable_{cmd.Label}", mod ? "Enable & lock" : "Send")
         {
-            Command = OwnerMoodleOverride.ForSend(plugin.Configuration, cmd),
+            Command = OwnerMoodleOverride.ForSend(plugin.Configuration, toSend),
             BlockedReason = dirty ? SaveFirstReason
                 : !hasRules ? "Set and save its rules first."
                 : !hasEquipment ? "Choose the Glamourer item this mod should equip, and save."
                 : !catalogAvailable ? "This restraint mod is no longer in your Sub's shared catalog."
+                : pickAtSend && piece is null ? "Choose which piece to send."
                 : null,
-        });
+        }) && piece is not null)
+            RestraintPieces.Sent(plugin.Configuration, cmd, piece);
         OwnerLockOption.DrawStacked($"restraintQuick_{cmd.Label}", cmd, plugin.Configuration);
         if (!hasRules)
             Status.Line(StatusKind.Caution, "No rules assigned yet - set them below and save before enabling it.");
@@ -277,12 +286,17 @@ public sealed partial class ModuleWindow
             : "Your own name for this restraint - never matched against anything on your Sub's side.");
         if (mod)
         {
-            TextWithActions($"Glamourer item: {(draft.ItemId is { } equippedItem ? GetItemName(equippedItem) : "(none chosen)")}", ButtonWidth("Choose item..."));
-            if (ImGui.Button("Choose item...##restraintQuick"))
+            var catalogEntry = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.GetValueOrDefault(cmd.RestraintCatalogId ?? "");
+            ImGui.Checkbox("Chosen when sending##restraintQuickPickAtSend", ref draft.PickAtSend);
+            IconGlyph.HelpMarker("One restraint for the whole mod: pick which piece to send next to the send button. Useful for packs with many pieces, like a gag pack. Rules, moodle and lock apply to whichever piece you send.");
+            if (!draft.PickAtSend)
             {
-                var catalogEntry = plugin.Configuration.RestraintMapping.ImportedPeerCatalog.GetValueOrDefault(cmd.RestraintCatalogId ?? "");
-                plugin.ItemPickerWindow.OpenForItemIds(draft.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) => draft.ItemId = chosenId);
+                TextWithActions($"Glamourer item: {(draft.ItemId is { } equippedItem ? PieceLabel(equippedItem, catalogEntry?.ItemNames) : "(none chosen)")}", ButtonWidth("Choose item..."));
+                if (ImGui.Button("Choose item...##restraintQuick"))
+                    plugin.ItemPickerWindow.OpenForItemIds(draft.Name, catalogEntry?.ChangedItemIds.ToHashSet() ?? [], (chosenId, _) => draft.ItemId = chosenId, catalogEntry?.ItemNames);
             }
+            else if (catalogEntry is not null)
+                IconGlyph.WrappedDisabled($"{RestraintPieces.Of(plugin.Configuration, cmd).Count} pieces shared for this mod.");
         }
 
         Section.SubHeading("Restrictions");
@@ -294,7 +308,7 @@ public sealed partial class ModuleWindow
         IconGlyph.HelpMarker(OwnerRedrawHelp);
 
         var name = draft.Name.Trim();
-        var draftEquipment = !mod || draft.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)draft.ItemId.Value) is not null;
+        var draftEquipment = !mod || draft.PickAtSend || draft.ItemId > 0 && GlamourerIpc.GetItemSlot((uint)draft.ItemId.Value) is not null;
         var invalid = name.Length == 0 ? "Give it a name."
             : list.Any(x => x != cmd && string.Equals(x.Label, name, StringComparison.OrdinalIgnoreCase)) ? "You already have a restraint with this name."
             : !HasAnyRule(draft.Rules) ? "Choose at least one rule."

@@ -397,7 +397,10 @@ public sealed partial class ModuleWindow
         Add("Animations", q.Gestures, ShortAnimationLabel);
         Add("Moodles", q.Moodles, c => MoodlesTextFormat.StripMarkup(c.Label));
         Add("Moodles", q.CustomMoodles, c => $"{MoodlesTextFormat.StripMarkup(c.Label)} (yours)");
-        Add("Restraints", q.Restraints.Where(r => r.RestraintRules is { Count: > 0 } || r.RestraintCatalogId is null));
+        // A pick-at-send restraint is stored as one of its pieces.
+        Add("Restraints", q.Restraints
+            .SelectMany(r => RestraintPieces.IsPickAtSend(r) ? RestraintPieces.Expand(plugin.Configuration, r) : [r])
+            .Where(r => r.RestraintRules is { Count: > 0 } || r.RestraintCatalogId is null));
         Add("Custom Triggers", q.Aliases);
         return list;
     }
