@@ -17,16 +17,23 @@ public enum RelaySocketState
 
 /// This install's one live connection to the relay (protocol/constants.json `socketAuth`). Opens while `Wanted` is
 /// true, answers the relay's challenge with the device key, and reconnects with a growing, randomized delay. Every
-/// event is raised through `dispatch`, which the plugin points at the framework thread.
+/// event is raised through `dispatch`, which the plugin points at the framework thread. Keep-alive is the text `ping`,
+/// which the relay answers `pong` without waking the hub; a connection that answers nothing within the pong deadline
+/// is treated as dead.
 public sealed class RelaySocket : IDisposable
 {
-    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(30);
+    /// protocol/constants.json `socketAuth.keepAliveSeconds` and `pongTimeoutSeconds`.
+    private static readonly TimeSpan PingInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PongTimeout = TimeSpan.FromSeconds(20);
+    private const string Ping = "ping";
     private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MinBackoff = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(60);
     /// A connection that stayed up this long resets the backoff.
     private static readonly TimeSpan StableAfter = TimeSpan.FromSeconds(60);
     private const int MaxMessageBytes = 32 * 1024;
+    /// UTC ticks of the last frame of any kind from the relay, `pong` included: proof the connection is alive.
+    private long lastReceivedTicks;
 
     private readonly Uri socketBase;
     private readonly Func<string?> deviceKeyId;
@@ -147,8 +154,9 @@ public sealed class RelaySocket : IDisposable
 
         SetState(RelaySocketState.Connecting);
         var ws = new ClientWebSocket();
-        // Protocol-level keep-alive: the relay answers these without waking or billing.
-        ws.Options.KeepAliveInterval = KeepAlive;
+        // No protocol-level keep-alive: .NET sends unsolicited pongs for it, which Cloudflare doesn't document as
+        // wake-free. The text ping in KeepAliveAsync is.
+        ws.Options.KeepAliveInterval = TimeSpan.Zero;
         socket = ws;
         using (var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
@@ -179,18 +187,45 @@ public sealed class RelaySocket : IDisposable
 
         SetState(RelaySocketState.Connected);
         log("Relay connection open.");
-        while (!ct.IsCancellationRequested && wanted)
+        using var connection = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var keepAlive = KeepAliveAsync(ws, connection.Token);
+        try
         {
-            using var message = await ReceiveAsync(ws, ct).ConfigureAwait(false);
-            if (message is null) return;
-            var element = message.RootElement.Clone();
-            if (element.ValueKind == JsonValueKind.Object && MessageReceived is { } handler)
-                dispatch(() => handler(element));
+            while (!ct.IsCancellationRequested && wanted)
+            {
+                using var message = await ReceiveAsync(ws, ct).ConfigureAwait(false);
+                if (message is null) return;
+                var element = message.RootElement.Clone();
+                if (element.ValueKind == JsonValueKind.Object && MessageReceived is { } handler)
+                    dispatch(() => handler(element));
+            }
+        }
+        finally
+        {
+            connection.Cancel();
+            try { await keepAlive.ConfigureAwait(false); } catch { /* ended with the connection */ }
         }
     }
 
-    /// Null when the relay closed the connection.
-    private static async Task<JsonDocument?> ReceiveAsync(ClientWebSocket ws, CancellationToken ct)
+    /// Sends `ping` every <see cref="PingInterval"/>. If nothing at all arrives within <see cref="PongTimeout"/> of
+    /// one, the socket is aborted, which ends the receive loop and starts the normal reconnect.
+    private async Task KeepAliveAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(PingInterval - PongTimeout, ct).ConfigureAwait(false);
+            var sentAt = DateTime.UtcNow.Ticks;
+            if (!await SendAsync(Ping, ct).ConfigureAwait(false)) return;
+            await Task.Delay(PongTimeout, ct).ConfigureAwait(false);
+            if (Interlocked.Read(ref lastReceivedTicks) >= sentAt) continue;
+            log("Relay connection stopped answering; reconnecting.");
+            ws.Abort();
+            return;
+        }
+    }
+
+    /// Null when the relay closed the connection. Every frame received, JSON or not, stamps <see cref="lastReceivedTicks"/>.
+    private async Task<JsonDocument?> ReceiveAsync(ClientWebSocket ws, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(8192);
         try
@@ -210,6 +245,7 @@ public sealed class RelaySocket : IDisposable
                 if (result.MessageType == WebSocketMessageType.Close) return null;
                 total += result.Count;
                 if (!result.EndOfMessage) continue;
+                Interlocked.Exchange(ref lastReceivedTicks, DateTime.UtcNow.Ticks);
                 if (result.MessageType != WebSocketMessageType.Text) { total = 0; continue; }
                 try
                 {
@@ -217,7 +253,7 @@ public sealed class RelaySocket : IDisposable
                 }
                 catch (JsonException)
                 {
-                    // The relay's plain "pong" or anything else that isn't JSON.
+                    // The relay's plain "pong" (already counted as liveness) or anything else that isn't JSON.
                     total = 0;
                 }
             }

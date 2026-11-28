@@ -150,7 +150,11 @@ Role only changes what a client does with incoming commands and what it declares
 
 - **Live messaging** (`collar/relay-messaging`): each install keeps one WebSocket (`RelaySocket.cs`) to its own
   `DeviceHub` Durable Object (`worker/src/hub/`, one per device key id, hibernation API so idle connections cost
-  nothing). The hub sends a challenge the client signs with its device key (`socketAuth` in `protocol/`), then
+  nothing). Durable Object awake time is what's billed (the account shares 400k GB-s a month with PoseKit's relay and
+  bills overage in whole $12.50 units), so nothing may wake an idle hub. Keep-alive is the text `ping` every 30 s,
+  auto-answered `pong` without waking. Never use .NET's `KeepAliveInterval`. No pong within 20 s means a dead socket.
+  The hub sets no alarm per connection: a late auth is refused, and stale pending sockets are swept when the hub runs
+  anyway. The hub sends a challenge the client signs with its device key (`socketAuth` in `protocol/`), then
   forwards `send` frames to the other member's hub after checking pair membership and side, holds a frame up to
   120s for a peer that just dropped, and acks `delivered|held|offline|needs_update|over_limit|over_budget|refused`.
   Frames are sealed by `PeerMessageCrypto` with a key from static ECDH between the two device keys; the AAD binds

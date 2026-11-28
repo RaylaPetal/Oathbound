@@ -1,8 +1,19 @@
-import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DeviceHub } from "../src/hub/DeviceHub";
 import { relayFetch } from "./helpers";
 import { connect, livePair, newDevice, openSocket, signChallenge, type TestSocket } from "./socket-helpers";
+
+/** Moves every socket's open time on the device's hub into the past, as if its auth deadline had passed. */
+async function backdatePending(device: string): Promise<void> {
+  const stub = env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(device));
+  await runInDurableObject(stub, (_hub: DeviceHub, state) => {
+    for (const ws of state.getWebSockets()) {
+      const a = ws.deserializeAttachment() as { state: string; openedAt: number };
+      if (a.state === "pending") ws.serializeAttachment({ ...a, openedAt: a.openedAt - 60 });
+    }
+  });
+}
 
 const open: TestSocket[] = [];
 const track = (s: TestSocket | null) => { if (s) open.push(s); return s; };
@@ -71,19 +82,30 @@ describe("live connection", () => {
     expect((await s.next()).raw).toBe("pong");
   });
 
-  it("closes a connection that doesn't answer the challenge in time", async () => {
+  it("closes a connection that doesn't answer the challenge in time once the hub next runs", async () => {
     const { owner } = await livePair();
     const s = track((await openSocket(owner.id)).socket)!;
     await s.next();
-    const stub = env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(owner.id));
-    await runInDurableObject(stub, (_hub: DeviceHub, state) => {
-      for (const ws of state.getWebSockets()) {
-        const a = ws.deserializeAttachment() as { openedAt: number };
-        ws.serializeAttachment({ ...a, openedAt: a.openedAt - 60 });
-      }
-    });
-    await runDurableObjectAlarm(stub);
+    await backdatePending(owner.id);
+    track(await connect(owner));
     expect((await s.next()).code).toBe("unauthorized");
     await s.waitClosed();
+  });
+
+  it("refuses an auth that arrives after the deadline", async () => {
+    const { owner } = await livePair();
+    const s = track((await openSocket(owner.id)).socket)!;
+    const challenge = await s.next();
+    await backdatePending(owner.id);
+    s.send({ type: "auth", deviceKeyId: owner.id, signature: await signChallenge(owner.key.privateKey, owner.id, challenge.nonce as string) });
+    expect((await s.next()).code).toBe("unauthorized");
+    await s.waitClosed();
+  });
+
+  it("sets no alarm for a normal connection, so an idle hub can hibernate", async () => {
+    const { owner } = await livePair();
+    track(await connect(owner));
+    const stub = env.DEVICE_HUB.get(env.DEVICE_HUB.idFromName(owner.id));
+    expect(await runInDurableObject(stub, (_hub: DeviceHub, state) => state.storage.getAlarm())).toBeNull();
   });
 });

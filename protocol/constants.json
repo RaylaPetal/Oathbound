@@ -24,7 +24,8 @@
     "challengeNonce": "128 random bits, base64url without padding (22 characters)",
     "authTimeoutSeconds": 10,
     "keepAliveSeconds": 30,
-    "keepAliveNote": "WebSocket protocol keep-alive frames; the relay never wakes for them. The text message \"ping\" is answered \"pong\" without waking the relay either."
+    "pongTimeoutSeconds": 20,
+    "keepAliveNote": "The client sends the text message \"ping\" every keepAliveSeconds; the relay answers \"pong\" without waking the hub (Durable Object awake time is what's billed). No protocol-level keep-alive frames: .NET sends those as unsolicited pongs, which Cloudflare doesn't document as wake-free. A connection that answers nothing within pongTimeoutSeconds of a ping is dead."
   },
   "peerMessage": {
     "description": "collar/relay-messaging: a frame between the two devices of a pairing. Static ECDH between the two device keys (as pairCharactersInfo) with its own HKDF info; the relay forwards it unread.",

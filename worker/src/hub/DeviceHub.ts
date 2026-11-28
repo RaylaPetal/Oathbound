@@ -122,13 +122,16 @@ export class DeviceHub extends DurableObject<Env> {
       return new Response(null, { status: 400 });
     }
     this.setMeta("device", device);
+    this.closeStalePending();
 
     const { 0: client, 1: server } = new WebSocketPair();
     const attachment: Attachment = { state: "pending", challenge: newChallengeNonce(), openedAt: nowSeconds() };
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(attachment);
     server.send(JSON.stringify({ type: "challenge", nonce: attachment.challenge, serverTime: attachment.openedAt }));
-    await this.scheduleAlarm(attachment.openedAt + SOCKET_AUTH_TIMEOUT_SECONDS);
+    // No alarm for the auth deadline: one per connection woke the hub again ~10 s later, just as it could hibernate,
+    // and Durable Object awake time is what the account is billed for. A late auth is refused in authenticate(), and an
+    // abandoned pending socket hibernates for free until the next connection or alarm sweeps it.
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -492,14 +495,11 @@ export class DeviceHub extends DurableObject<Env> {
     }
   }
 
-  // ---- alarm: auth timeouts, held-frame and chat expiry ---------------------------------------------------------
+  // ---- alarm: held-frame and chat expiry, plus a pending-socket sweep while awake -------------------------------
 
   override async alarm(): Promise<void> {
     const now = nowSeconds();
-    for (const s of this.ctx.getWebSockets()) {
-      const a = s.deserializeAttachment() as Attachment | null;
-      if (a?.state === "pending" && now - a.openedAt >= SOCKET_AUTH_TIMEOUT_SECONDS) this.reject(s, "unauthorized");
-    }
+    this.closeStalePending();
 
     const expired = this.sql
       .exec<{ id: number; sender: string; message_id: string }>(`SELECT id, sender, message_id FROM held_frames WHERE expires_at <= ?`, now)
@@ -523,12 +523,17 @@ export class DeviceHub extends DurableObject<Env> {
     const nextHeld = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM held_frames`).one().t;
     const nextChat = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM chat_mailbox`).one().t;
     const nextReceipt = this.sql.exec<{ t: number | null }>(`SELECT MIN(expires_at) AS t FROM chat_receipts`).one().t;
-    const nextAuth = this.ctx.getWebSockets()
-      .map((s) => s.deserializeAttachment() as Attachment | null)
-      .filter((a): a is Attachment => a?.state === "pending")
-      .map((a) => a.openedAt + SOCKET_AUTH_TIMEOUT_SECONDS);
-    const next = [nextHeld, nextChat, nextReceipt, ...nextAuth].filter((t): t is number => typeof t === "number");
+    const next = [nextHeld, nextChat, nextReceipt].filter((t): t is number => typeof t === "number");
     if (next.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...next), now + 1) * 1000);
+  }
+
+  /** Closes sockets that never authenticated within the deadline. Runs only when the hub is awake anyway. */
+  private closeStalePending(): void {
+    const now = nowSeconds();
+    for (const s of this.ctx.getWebSockets()) {
+      const a = s.deserializeAttachment() as Attachment | null;
+      if (a?.state === "pending" && now - a.openedAt >= SOCKET_AUTH_TIMEOUT_SECONDS) this.reject(s, "unauthorized");
+    }
   }
 
   private async scheduleAlarm(atSeconds: number): Promise<void> {

@@ -9,7 +9,7 @@ public sealed record ChangelogEntry(string Version, string Date, string Title, C
 public static class Changelog
 {
     public static readonly ChangelogEntry Latest =
-        new("0.3.4.2", "2026-11-27", "Restraint packs",
+        new("0.3.4.3", "2026-11-28", "Restraint packs",
         [
             new("New",
             [
@@ -21,6 +21,7 @@ public static class Changelog
             new("Changed",
             [
                 "A Sub's client only accepts restraint items the shared mod offers. A piece you switch off in Penumbra stops being offered after the next scan.",
+                "The connection to the relay is steadier: it stays up instead of quietly reconnecting every minute or two, and a dead connection is noticed and replaced within about 20 seconds.",
             ]),
             new("Good to know",
             [
